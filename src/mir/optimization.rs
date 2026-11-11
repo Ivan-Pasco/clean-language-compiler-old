@@ -677,14 +677,6 @@ impl OptimizationPass for ControlFlowSimplificationPass {
             stats.blocks_eliminated += 1;
         }
 
-        // Remove the unreachable ids from every surviving block's predecessor set.
-        if !unreachable.is_empty() {
-            let dead_set: HashSet<BasicBlockId> = unreachable.into_iter().collect();
-            for block in function.blocks.values_mut() {
-                block.predecessors.retain(|p| !dead_set.contains(p));
-            }
-        }
-
         Ok(stats)
     }
 
@@ -759,8 +751,6 @@ mod tests {
             label: None,
             instructions: vec![],
             terminator,
-            predecessors: HashSet::new(),
-            successors: HashSet::new(),
             location: dummy_loc(),
         }
     }

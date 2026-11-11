@@ -142,8 +142,6 @@ impl MirBuilder {
             label: Some("entry".to_string()),
             instructions: Vec::new(),
             terminator: MirTerminator::Unreachable, // Will be replaced
-            predecessors: HashSet::new(),
-            successors: HashSet::new(),
             location: tast_function.location.clone(),
         };
 
@@ -766,8 +764,6 @@ impl MirBuilder {
                 terminator: MirTerminator::Return {
                     value: Some(MirOperand::Value(result_vid)),
                 },
-                predecessors: HashSet::new(),
-                successors: HashSet::new(),
                 location: loc.clone(),
             },
         );
@@ -958,8 +954,6 @@ impl MirBuilder {
                     label: label.map(str::to_string),
                     instructions,
                     terminator,
-                    predecessors: HashSet::new(),
-                    successors: HashSet::new(),
                     location: loc.clone(),
                 },
             );

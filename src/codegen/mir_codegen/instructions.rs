@@ -2788,9 +2788,6 @@ impl MirCodeGenerator<'_> {
             // Bitwise operations (only valid for integers)
             MirBinaryOp::And => Instruction::I32And,
             MirBinaryOp::Or => Instruction::I32Or,
-            MirBinaryOp::Xor => Instruction::I32Xor,
-            MirBinaryOp::Shl => Instruction::I32Shl,
-            MirBinaryOp::Shr => Instruction::I32ShrS,
         };
 
         self.current_instructions.push(instruction);
@@ -2815,9 +2812,6 @@ impl MirCodeGenerator<'_> {
             MirBinaryOp::Ge => Instruction::I64GeS,
             MirBinaryOp::And => Instruction::I64And,
             MirBinaryOp::Or => Instruction::I64Or,
-            MirBinaryOp::Xor => Instruction::I64Xor,
-            MirBinaryOp::Shl => Instruction::I64Shl,
-            MirBinaryOp::Shr => Instruction::I64ShrS,
         };
         self.current_instructions.push(instruction);
     }
@@ -2903,16 +2897,6 @@ impl MirCodeGenerator<'_> {
                 // Logical not: x == 0
                 self.current_instructions.push(Instruction::I32Const(0));
                 self.current_instructions.push(Instruction::I32Eq);
-            }
-            MirUnaryOp::BitNot => {
-                // Bitwise not: x ^ -1
-                if is_i64 {
-                    self.current_instructions.push(Instruction::I64Const(-1));
-                    self.current_instructions.push(Instruction::I64Xor);
-                } else {
-                    self.current_instructions.push(Instruction::I32Const(-1));
-                    self.current_instructions.push(Instruction::I32Xor);
-                }
             }
             // BOOK: required-operator - Required is handled specially in MirOperation::UnaryOp
             MirUnaryOp::Required => {

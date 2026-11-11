@@ -19,8 +19,6 @@ fn empty_start_program() -> MirProgram {
         label: None,
         instructions: vec![],
         terminator: MirTerminator::Return { value: None },
-        predecessors: Default::default(),
-        successors: Default::default(),
         location: Default::default(),
     };
     let function = MirFunction {

@@ -386,7 +386,7 @@ impl MirBuilder {
                 // Build value expression
                 let value_id = self.build_expression(context, value)?;
 
-                // Handle assignment target - for now, only support simple variable assignments
+                // Assignment target: a variable, a property or a list element
                 match &target.kind {
                     TastExpressionKind::Variable { symbol_id: _, name } => {
                         // NOTE: Check the ACTUAL MIR type of the value,
@@ -480,8 +480,6 @@ impl MirBuilder {
                                         label: Some(format!("guard_{}_trap", name)),
                                         instructions: Vec::new(),
                                         terminator: MirTerminator::Trap,
-                                        predecessors: HashSet::new(),
-                                        successors: HashSet::new(),
                                         location: location.clone(),
                                     },
                                 );
@@ -493,8 +491,6 @@ impl MirBuilder {
                                         label: Some(format!("guard_{}_continue", name)),
                                         instructions: Vec::new(),
                                         terminator: MirTerminator::Unreachable,
-                                        predecessors: HashSet::new(),
-                                        successors: HashSet::new(),
                                         location: location.clone(),
                                     },
                                 );
@@ -1001,8 +997,6 @@ impl MirBuilder {
                                     label: Some("ensure_trap".to_string()),
                                     instructions: Vec::new(),
                                     terminator: MirTerminator::Trap,
-                                    predecessors: HashSet::new(),
-                                    successors: HashSet::new(),
                                     location: location.clone(),
                                 },
                             );
@@ -1014,8 +1008,6 @@ impl MirBuilder {
                                     label: Some("ensure_continue".to_string()),
                                     instructions: Vec::new(),
                                     terminator: MirTerminator::Unreachable,
-                                    predecessors: HashSet::new(),
-                                    successors: HashSet::new(),
                                     location: location.clone(),
                                 },
                             );
@@ -1129,8 +1121,6 @@ impl MirBuilder {
                         label: Some("continue".to_string()),
                         instructions: Vec::new(),
                         terminator: MirTerminator::Unreachable, // Will be replaced
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
                         location: location.clone(),
                     },
                 );
@@ -1165,8 +1155,6 @@ impl MirBuilder {
                         label: Some("then".to_string()),
                         instructions: Vec::new(),
                         terminator: MirTerminator::Unreachable, // Will be replaced
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
                         location: location.clone(),
                     },
                 );
@@ -1297,8 +1285,6 @@ impl MirBuilder {
                             label: Some("else".to_string()),
                             instructions: Vec::new(),
                             terminator: MirTerminator::Unreachable, // Will be replaced
-                            predecessors: HashSet::new(),
-                            successors: HashSet::new(),
                             location: location.clone(),
                         },
                     );
@@ -1490,8 +1476,6 @@ impl MirBuilder {
                             label: Some(label.to_string()),
                             instructions: Vec::new(),
                             terminator: MirTerminator::Unreachable, // Will be replaced
-                            predecessors: HashSet::new(),
-                            successors: HashSet::new(),
                             location: location.clone(),
                         },
                     );
@@ -1866,8 +1850,6 @@ impl MirBuilder {
                             label: Some(label.to_string()),
                             instructions: Vec::new(),
                             terminator: MirTerminator::Unreachable, // Will be replaced
-                            predecessors: HashSet::new(),
-                            successors: HashSet::new(),
                             location: location.clone(),
                         },
                     );
@@ -2104,8 +2086,6 @@ impl MirBuilder {
                         label: Some("require_trap".to_string()),
                         instructions: Vec::new(),
                         terminator: MirTerminator::Trap, // WASM unreachable trap for contract violation
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
                         location: location.clone(),
                     },
                 );
@@ -2118,8 +2098,6 @@ impl MirBuilder {
                         label: Some("require_continue".to_string()),
                         instructions: Vec::new(),
                         terminator: MirTerminator::Unreachable, // Will be replaced
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
                         location: location.clone(),
                     },
                 );
@@ -2269,8 +2247,6 @@ impl MirBuilder {
                     label: Some(label.to_string()),
                     instructions: Vec::new(),
                     terminator: MirTerminator::Unreachable, // Will be replaced
-                    predecessors: HashSet::new(),
-                    successors: HashSet::new(),
                     location: location.clone(),
                 },
             );

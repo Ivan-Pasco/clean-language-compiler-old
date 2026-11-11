@@ -672,8 +672,6 @@ impl MirBuilder {
                     label: Some(label.to_string()),
                     instructions: Vec::new(),
                     terminator: MirTerminator::Unreachable,
-                    predecessors: HashSet::new(),
-                    successors: HashSet::new(),
                     location: location.clone(),
                 },
             );

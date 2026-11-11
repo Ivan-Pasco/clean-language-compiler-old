@@ -1370,9 +1370,6 @@ impl MirBuilder {
             BinaryOperator::And => MirBinaryOp::And,
             BinaryOperator::Or => MirBinaryOp::Or,
 
-            // Bitwise operators (And/Or work on integers, lowered to i32.and/i32.or in WASM)
-            // The type system ensures these are used on integer types
-
             // CRITICAL: These operators should NEVER reach here - they must be handled in build_expression
             BinaryOperator::Power => {
                 panic!("BUG: Power operator should be handled in build_expression as runtime function call, not converted to MIR operator")

@@ -144,8 +144,6 @@ impl MirBuilder {
                     label: Some(label.to_string()),
                     instructions: Vec::new(),
                     terminator: MirTerminator::Unreachable,
-                    predecessors: HashSet::new(),
-                    successors: HashSet::new(),
                     location: location.clone(),
                 },
             );
@@ -283,8 +281,6 @@ impl MirBuilder {
                     label: Some(format!("rule_{}_trap", rule_idx)),
                     instructions: Vec::new(),
                     terminator: MirTerminator::Trap, // WASM unreachable trap for contract violation
-                    predecessors: HashSet::new(),
-                    successors: HashSet::new(),
                     location: rule_expr.location.clone(),
                 },
             );
@@ -297,8 +293,6 @@ impl MirBuilder {
                     label: Some(format!("rule_{}_continue", rule_idx)),
                     instructions: Vec::new(),
                     terminator: MirTerminator::Unreachable, // Will be replaced
-                    predecessors: HashSet::new(),
-                    successors: HashSet::new(),
                     location: rule_expr.location.clone(),
                 },
             );
@@ -1269,8 +1263,6 @@ impl MirBuilder {
                     label: Some(label.to_string()),
                     instructions: Vec::new(),
                     terminator: MirTerminator::Unreachable,
-                    predecessors: HashSet::new(),
-                    successors: HashSet::new(),
                     location: location.clone(),
                 },
             );

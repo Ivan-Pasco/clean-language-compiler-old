@@ -30,8 +30,6 @@ fn program_referencing(missing: MirOperand) -> MirProgram {
             location: Default::default(),
         }],
         terminator: MirTerminator::Return { value: None },
-        predecessors: Default::default(),
-        successors: Default::default(),
         location: Default::default(),
     };
     let mut locals = HashMap::new();

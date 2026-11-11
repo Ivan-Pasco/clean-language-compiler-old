@@ -6,7 +6,7 @@
 use crate::ast::SourceLocation;
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::ConcreteType;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
 /// Unique identifier for basic blocks
@@ -223,12 +223,6 @@ pub struct MirBasicBlock {
 
     /// Block terminator instruction
     pub terminator: MirTerminator,
-
-    /// Predecessors in control flow graph
-    pub predecessors: HashSet<BasicBlockId>,
-
-    /// Successors in control flow graph
-    pub successors: HashSet<BasicBlockId>,
 
     /// Source location
     pub location: SourceLocation,
@@ -655,12 +649,9 @@ pub enum MirBinaryOp {
     Div,
     Rem,
 
-    // Bitwise
+    // Logical (boolean operands, lowered to i32.and / i32.or)
     And,
     Or,
-    Xor,
-    Shl,
-    Shr,
 
     // Comparison (produce boolean)
     Eq,
@@ -679,9 +670,6 @@ pub enum MirUnaryOp {
 
     /// Logical negation
     Not,
-
-    /// Bitwise complement
-    BitNot,
 
     // BOOK: required-operator - Postfix ! assertion for null check
     /// Required assertion - asserts value is not null at runtime

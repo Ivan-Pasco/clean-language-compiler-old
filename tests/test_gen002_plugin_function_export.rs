@@ -41,8 +41,6 @@ fn build_program_with_function(func_name: &str) -> MirProgram {
         label: None,
         instructions: vec![],
         terminator: MirTerminator::Return { value: None },
-        predecessors: Default::default(),
-        successors: Default::default(),
         location: Default::default(),
     };
     let handler_fn = MirFunction {
@@ -84,8 +82,6 @@ fn build_program_with_function(func_name: &str) -> MirProgram {
         label: None,
         instructions: vec![call_instr],
         terminator: MirTerminator::Return { value: None },
-        predecessors: Default::default(),
-        successors: Default::default(),
         location: Default::default(),
     };
     let start_fn = MirFunction {
@@ -243,8 +239,6 @@ fn gen002_duplicate_symbol_ids_same_name_exports_exactly_once() {
             label: None,
             instructions: vec![],
             terminator: MirTerminator::Return { value: None },
-            predecessors: Default::default(),
-            successors: Default::default(),
             location: Default::default(),
         };
         MirFunction {
@@ -290,8 +284,6 @@ fn gen002_duplicate_symbol_ids_same_name_exports_exactly_once() {
         label: None,
         instructions: vec![call_instr],
         terminator: MirTerminator::Return { value: None },
-        predecessors: Default::default(),
-        successors: Default::default(),
         location: Default::default(),
     };
     let start_fn = MirFunction {

@@ -336,10 +336,6 @@ impl MirBuilder {
                 // WASM `if (result i32) ... else ... end` whose
                 // then-branch inlines those instructions, so the rhs only
                 // executes when the lhs cannot short-circuit.
-                //
-                // Bitwise variants (`BitwiseAnd`, `BitwiseOr`, `Xor`,
-                // `Shl`, `Shr`) fall through to the generic BinaryOp path
-                // below.
                 if matches!(operator, BinaryOperator::And | BinaryOperator::Or) {
                     return self.build_short_circuit_logical(
                         context,
@@ -4035,8 +4031,6 @@ impl MirBuilder {
                             label: Some(label.to_string()),
                             instructions: Vec::new(),
                             terminator: MirTerminator::Unreachable,
-                            predecessors: HashSet::new(),
-                            successors: HashSet::new(),
                             location: location.clone(),
                         },
                     );
@@ -4765,8 +4759,6 @@ impl MirBuilder {
                         label: Some("range_header".to_string()),
                         instructions: Vec::new(),
                         terminator: MirTerminator::Unreachable,
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
                         location: expression.location.clone(),
                     },
                 );
@@ -4815,8 +4807,6 @@ impl MirBuilder {
                         label: Some("range_body".to_string()),
                         instructions: Vec::new(),
                         terminator: MirTerminator::Unreachable,
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
                         location: expression.location.clone(),
                     },
                 );
@@ -4870,8 +4860,6 @@ impl MirBuilder {
                         label: Some("range_increment".to_string()),
                         instructions: Vec::new(),
                         terminator: MirTerminator::Unreachable,
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
                         location: expression.location.clone(),
                     },
                 );
@@ -4922,8 +4910,6 @@ impl MirBuilder {
                         label: Some("range_exit".to_string()),
                         instructions: Vec::new(),
                         terminator: MirTerminator::Unreachable,
-                        predecessors: HashSet::new(),
-                        successors: HashSet::new(),
                         location: expression.location.clone(),
                     },
                 );
@@ -5006,8 +4992,6 @@ impl MirBuilder {
                 label: Some("logical_rhs_scratch".to_string()),
                 instructions: Vec::new(),
                 terminator: MirTerminator::Unreachable,
-                predecessors: HashSet::new(),
-                successors: HashSet::new(),
                 location: location.clone(),
             },
         );
@@ -5092,8 +5076,6 @@ impl MirBuilder {
                     label: Some(label.to_string()),
                     instructions: Vec::new(),
                     terminator: MirTerminator::Unreachable,
-                    predecessors: HashSet::new(),
-                    successors: HashSet::new(),
                     location: location.clone(),
                 },
             );
