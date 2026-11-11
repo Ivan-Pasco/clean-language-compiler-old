@@ -146,3 +146,4 @@ ai-sessions/
 __pycache__/
 *.pyc
 build-manifest.json
+build-manifest.json
