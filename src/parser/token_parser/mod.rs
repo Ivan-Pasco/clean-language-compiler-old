@@ -27,8 +27,11 @@ use std::collections::HashSet;
 use tracing::{debug, trace};
 
 /// Returns the ordering index for the core sections, or None for auxiliary sections.
-/// Order: import: (1) → plugins: (2) → start: (3) → state: (4) → class / can (5)
-/// → functions: (6)
+/// Order: import: and plugins: (1, either order) → start: (2) → state: (3)
+/// → class / can (4) → functions: (5)
+///
+/// The grammar's prose groups `import/plugins` ahead of `start:`; files written
+/// with `plugins:` above `import:` stay valid.
 ///
 /// `can` declarations are class-like structural declarations that belong at the same
 /// ordering slot as `class`. See grammar.ebnf §6.4 and §6.4a.
@@ -36,25 +39,24 @@ use tracing::{debug, trace};
 /// Enforces the `program` production in `foundation/spec/grammar/grammar.ebnf` §6.
 fn core_section_order(kind: &TokenKind) -> Option<u8> {
     match kind {
-        TokenKind::Import => Some(1),
-        TokenKind::Plugins => Some(2),
-        TokenKind::Start => Some(3),
-        TokenKind::State => Some(4),
-        TokenKind::Class | TokenKind::Can => Some(5),
-        TokenKind::Functions => Some(6),
+        TokenKind::Import | TokenKind::Plugins => Some(1),
+        TokenKind::Start => Some(2),
+        TokenKind::State => Some(3),
+        TokenKind::Class | TokenKind::Can => Some(4),
+        TokenKind::Functions => Some(5),
         _ => None,
     }
 }
 
-/// Returns the human-readable name for a core section given its order index.
-fn core_section_name(order: u8) -> &'static str {
-    match order {
-        1 => "import:",
-        2 => "plugins:",
-        3 => "start:",
-        4 => "state:",
-        5 => "class / can",
-        6 => "functions:",
+/// Returns the human-readable name for a core section token.
+fn core_section_name(kind: &TokenKind) -> &'static str {
+    match kind {
+        TokenKind::Import => "import:",
+        TokenKind::Plugins => "plugins:",
+        TokenKind::Start => "start:",
+        TokenKind::State => "state:",
+        TokenKind::Class | TokenKind::Can => "class / can",
+        TokenKind::Functions => "functions:",
         _ => "unknown",
     }
 }
@@ -221,6 +223,7 @@ impl TokenParser {
         // import: → plugins: → start: → state: → class → functions:, in that
         // order when present (grammar.ebnf `program`).
         let mut last_core_section: u8 = 0;
+        let mut last_core_name = "";
 
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -242,8 +245,8 @@ impl TokenParser {
             if !self.lenient_section_order {
                 if let Some(current_order) = core_section_order(self.current_kind()) {
                     if current_order < last_core_section {
-                        let current_name = core_section_name(current_order);
-                        let last_name = core_section_name(last_core_section);
+                        let current_name = core_section_name(self.current_kind());
+                        let last_name = last_core_name;
                         let token = self.current();
                         use crate::error::{ErrorContext, ErrorType};
                         self.errors.push(CompilerError::Syntax {
@@ -254,7 +257,7 @@ impl TokenParser {
                                         current_name, last_name
                                     ),
                                     Some(
-                                        "Expected section order: import:, plugins:, start:, state:, class, functions:"
+                                        "Expected section order: import: and plugins: (either order), start:, state:, class, functions:"
                                             .to_string(),
                                     ),
                                     ErrorType::Syntax,
@@ -264,7 +267,10 @@ impl TokenParser {
                             ),
                         });
                     }
-                    last_core_section = last_core_section.max(current_order);
+                    if current_order >= last_core_section {
+                        last_core_section = current_order;
+                        last_core_name = core_section_name(self.current_kind());
+                    }
                 }
             }
 

@@ -1601,10 +1601,6 @@ impl<'a> TypeInference<'a> {
                 value: crate::ast::Value::List(elements),
                 ..
             } if elements.is_empty() => (true, true),
-            ResolvedHirExpression::Literal {
-                value: crate::ast::Value::Pairs(pairs),
-                ..
-            } if pairs.is_empty() => (false, true),
             ResolvedHirExpression::ObjectLiteral { fields, .. } if fields.is_empty() => {
                 (false, false)
             }

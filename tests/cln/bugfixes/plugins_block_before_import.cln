@@ -1,0 +1,19 @@
+// Test: bugfixes/plugins_block_before_import
+// Grammar: program (grammar.ebnf 6, "import/plugins -> start")
+// Semantic: SYN007
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   helpers loaded
+//   14
+//
+// import: and plugins: share the first slot of the section order, so a
+// plugins: block above import: is valid; both must come before start:.
+
+plugins:
+	frame.locale
+
+import:
+	module_call_helpers as H
+
+start:
+	print(H.twice(7))

@@ -739,7 +739,7 @@ mod tests {
         MirTerminator, MirType,
     };
     use crate::resolver::SymbolId;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     fn dummy_loc() -> SourceLocation {
         SourceLocation::new(1, 1, "test")
