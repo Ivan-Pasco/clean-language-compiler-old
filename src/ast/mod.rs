@@ -101,13 +101,9 @@ pub enum Value {
     String(String),
     Matrix(Vec<Vec<Value>>),
     None,
-    Void,
 
     // List (replaces Array)
     List(Vec<Value>),
-
-    // Pairs (key-value associative container)
-    Pairs(Vec<(Value, Value)>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
@@ -457,12 +453,6 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
-    // Functions block statement
-    FunctionsBlock {
-        functions: Vec<Function>,
-        location: Option<SourceLocation>,
-    },
-
     // Apply blocks - Three types as per specification
     TypeApplyBlock {
         type_: Type,
@@ -608,12 +598,6 @@ pub enum Statement {
         location: Option<SourceLocation>,
     },
 
-    // Class definition statement
-    ClassDefinition {
-        class: Class,
-        location: Option<SourceLocation>,
-    },
-
     // Description statement (function metadata)
     Description {
         text: String,
@@ -711,7 +695,6 @@ impl Statement {
             Statement::Require { location, .. } => location,
             Statement::Ensure { location, .. } => location,
             Statement::VariableDecl { location, .. } => location,
-            Statement::FunctionsBlock { location, .. } => location,
             Statement::TypeApplyBlock { location, .. } => location,
             Statement::FunctionApplyBlock { location, .. } => location,
             Statement::MethodApplyBlock { location, .. } => location,
@@ -734,7 +717,6 @@ impl Statement {
             Statement::Background { location, .. } => location,
             Statement::OnErrorBlock { location, .. } => location,
             Statement::StandaloneErrorHandler { location, .. } => location,
-            Statement::ClassDefinition { location, .. } => location,
             Statement::Description { location, .. } => location,
             Statement::Spec { location, .. } => location,
             Statement::Intent { location, .. } => location,
@@ -754,7 +736,6 @@ impl Statement {
             Statement::Require { location, .. } => location.as_ref(),
             Statement::Ensure { location, .. } => location.as_ref(),
             Statement::VariableDecl { location, .. } => location.as_ref(),
-            Statement::FunctionsBlock { location, .. } => location.as_ref(),
             Statement::TypeApplyBlock { location, .. } => location.as_ref(),
             Statement::FunctionApplyBlock { location, .. } => location.as_ref(),
             Statement::MethodApplyBlock { location, .. } => location.as_ref(),
@@ -777,7 +758,6 @@ impl Statement {
             Statement::Background { location, .. } => location.as_ref(),
             Statement::OnErrorBlock { location, .. } => location.as_ref(),
             Statement::StandaloneErrorHandler { location, .. } => location.as_ref(),
-            Statement::ClassDefinition { location, .. } => location.as_ref(),
             Statement::Description { location, .. } => location.as_ref(),
             Statement::Spec { location, .. } => location.as_ref(),
             Statement::Intent { location, .. } => location.as_ref(),
@@ -811,11 +791,6 @@ impl Statement {
             Statement::VariableDecl { initializer, .. } => {
                 if let Some(init) = initializer {
                     init.for_each_location_mut(f);
-                }
-            }
-            Statement::FunctionsBlock { functions, .. } => {
-                for function in functions {
-                    function.for_each_location_mut(f);
                 }
             }
             Statement::TypeApplyBlock { assignments, .. } => {
@@ -902,7 +877,6 @@ impl Statement {
                 expression.for_each_location_mut(f);
                 block(error_block, f);
             }
-            Statement::ClassDefinition { class, .. } => class.for_each_location_mut(f),
             Statement::BuildBlock { rules_enabled, .. } => rules_enabled.for_each_location_mut(f),
             Statement::ScreenBlockStmt {
                 watch_blocks,
@@ -1880,17 +1854,6 @@ impl fmt::Display for Value {
                 write!(f, "]")
             }
             Value::None => write!(f, "none"),
-            Value::Void => write!(f, "()"),
-            Value::Pairs(pairs) => {
-                write!(f, "{{")?;
-                for (i, (key, value)) in pairs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{key}: {value}")?;
-                }
-                write!(f, "}}")
-            }
         }
     }
 }

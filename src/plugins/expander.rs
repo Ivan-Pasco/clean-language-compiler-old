@@ -45,8 +45,8 @@ fn stamp_plugin_origin_expansion(expansion: &mut super::PluginExpansion, plugin_
 /// Stamp every statement in `stmts` whose `SourceLocation.file` is missing
 /// or one of the compiler's known synthetic markers with `<plugin:NAME>`.
 /// Recurses into compound statements (`If`, `While`, `Iterate`,
-/// `RangeIterate`, `OnErrorBlock`, `FunctionsBlock`, class-method bodies)
-/// so nested plugin-synthesized statements are routed correctly too.
+/// `RangeIterate`, `OnErrorBlock`) so nested plugin-synthesized statements
+/// are routed correctly too.
 ///
 /// Real user file paths are left alone so debugging info survives when a
 /// plugin block is nested inside user code.
@@ -192,20 +192,6 @@ fn stamp_one_statement(stmt: &mut Statement, marker: &str) {
         Statement::StandaloneErrorHandler { body, .. } => {
             for s in body.iter_mut() {
                 stamp_one_statement(s, marker);
-            }
-        }
-        Statement::FunctionsBlock { functions, .. } => {
-            for f in functions.iter_mut() {
-                for s in f.body.iter_mut() {
-                    stamp_one_statement(s, marker);
-                }
-            }
-        }
-        Statement::ClassDefinition { class, .. } => {
-            for m in class.methods.iter_mut() {
-                for s in m.body.iter_mut() {
-                    stamp_one_statement(s, marker);
-                }
             }
         }
         _ => {}
@@ -1124,17 +1110,6 @@ impl<'a> PluginExpander<'a> {
                     });
                 }
 
-                Statement::FunctionsBlock {
-                    functions,
-                    location,
-                } => {
-                    let expanded_functions = self.expand_functions(functions)?;
-                    result.push(Statement::FunctionsBlock {
-                        functions: expanded_functions,
-                        location,
-                    });
-                }
-
                 Statement::OnErrorBlock {
                     expression,
                     error_block,
@@ -1152,14 +1127,6 @@ impl<'a> PluginExpander<'a> {
                     let expanded_body = self.expand_statements(body)?;
                     result.push(Statement::StandaloneErrorHandler {
                         body: expanded_body,
-                        location,
-                    });
-                }
-
-                Statement::ClassDefinition { class, location } => {
-                    let expanded_class = self.expand_class(class)?;
-                    result.push(Statement::ClassDefinition {
-                        class: expanded_class,
                         location,
                     });
                 }

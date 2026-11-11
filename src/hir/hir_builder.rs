@@ -343,29 +343,9 @@ impl HirBuilder {
             self.register_function_signature("start", &start.parameters);
         }
 
-        // Functions from top-level FunctionsBlock statements
-        for stmt in &program.statements {
-            if let Statement::FunctionsBlock {
-                functions: func_list,
-                ..
-            } = stmt
-            {
-                for func in func_list {
-                    self.register_function_signature(&func.name, &func.parameters);
-                }
-            }
-        }
-
         // Classes from program.classes
         for class in &program.classes {
             self.register_class_signatures(class);
-        }
-
-        // Classes from ClassDefinition statements
-        for stmt in &program.statements {
-            if let Statement::ClassDefinition { class, .. } = stmt {
-                self.register_class_signatures(class);
-            }
         }
     }
 
@@ -636,22 +616,6 @@ impl HirBuilder {
         fn section_rank(stmt: &Statement) -> Option<(u8, &'static str, Option<SourceLocation>)> {
             match stmt {
                 Statement::Import { location, .. } => Some((0, "import", location.clone())),
-                // The start: block is represented as FunctionsBlock containing "start",
-                // or directly as a standalone start function in program.start_function.
-                // In the statement stream the start block appears as FunctionsBlock
-                // where the first function is named "start".
-                Statement::FunctionsBlock {
-                    functions,
-                    location,
-                    ..
-                } => {
-                    if functions.iter().any(|f| f.name == "start") {
-                        Some((1, "start", location.clone()))
-                    } else {
-                        Some((4, "functions", location.clone()))
-                    }
-                }
-                Statement::ClassDefinition { location, .. } => Some((3, "class", location.clone())),
                 // Auxiliary — exempt from ordering.
                 Statement::ScreenBlockStmt { .. } | Statement::FrameworkBlock { .. } => None,
                 _ => None,
@@ -775,22 +739,6 @@ impl HirBuilder {
         // Process top-level statements
         for statement in &program.statements {
             match statement {
-                Statement::FunctionsBlock {
-                    functions: func_list,
-                    ..
-                } => {
-                    for func in func_list {
-                        let hir_func = self.build_function(func)?;
-                        if func.name == "start" {
-                            Self::set_start_function(&mut start_function, hir_func)?;
-                        } else {
-                            functions.push(hir_func);
-                        }
-                    }
-                }
-                Statement::ClassDefinition { class, .. } => {
-                    classes.push(self.build_class(class)?);
-                }
                 Statement::Import {
                     imports: import_list,
                     location,
@@ -2425,7 +2373,6 @@ impl HirBuilder {
             Statement::Require { .. } => "'require'",
             Statement::Ensure { .. } => "'ensure'",
             Statement::VariableDecl { .. } => "A variable declaration",
-            Statement::FunctionsBlock { .. } => "A 'functions:' block",
             Statement::TypeApplyBlock { .. }
             | Statement::FunctionApplyBlock { .. }
             | Statement::MethodApplyBlock { .. }
@@ -2447,7 +2394,6 @@ impl HirBuilder {
             Statement::OnErrorBlock { .. } | Statement::StandaloneErrorHandler { .. } => {
                 "'onError'"
             }
-            Statement::ClassDefinition { .. } => "A class declaration",
             Statement::Description { .. } => "'description'",
             Statement::Spec { .. } => "'spec'",
             Statement::Intent { .. } => "'intent'",
@@ -3138,11 +3084,7 @@ impl HirBuilder {
                 // Matrix type will be inferred properly in type checker
                 HirType::Matrix(Box::new(HirType::Number))
             }
-            Value::Pairs(_) => {
-                // Pairs type will be inferred properly in type checker
-                HirType::Pairs(Box::new(HirType::Void), Box::new(HirType::Void))
-            }
-            Value::None | Value::Void => HirType::Void,
+            Value::None => HirType::Void,
         }
     }
 

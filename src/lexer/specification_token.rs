@@ -127,12 +127,6 @@ pub enum TokenKind {
     // Comments (not in AST but needed for parsing)
     Comment(String),      // // single line comments
     BlockComment(String), // /* block comments */
-
-    // Error recovery
-    Invalid {
-        text: String,
-        message: String,
-    },
 }
 
 impl fmt::Display for TokenKind {
@@ -246,9 +240,7 @@ impl fmt::Display for TokenKind {
             // Comments
             TokenKind::Comment(text) => write!(f, "//{}", text),
             TokenKind::BlockComment(text) => write!(f, "/*{}*/", text),
-
             // Error
-            TokenKind::Invalid { text, message } => write!(f, "INVALID('{}': {})", text, message),
         }
     }
 }

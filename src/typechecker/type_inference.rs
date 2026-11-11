@@ -1764,11 +1764,10 @@ impl<'a> TypeInference<'a> {
             let default_value = if let Some(init_expr) = &field.initializer {
                 // Special handling for empty literals with explicit type annotations
                 let is_empty_literal = match init_expr {
-                    ResolvedHirExpression::Literal { value, .. } => match value {
-                        crate::ast::Value::List(elements) => elements.is_empty(),
-                        crate::ast::Value::Pairs(pairs) => pairs.is_empty(),
-                        _ => false,
-                    },
+                    ResolvedHirExpression::Literal {
+                        value: crate::ast::Value::List(elements),
+                        ..
+                    } => elements.is_empty(),
                     _ => false,
                 };
 
@@ -2591,11 +2590,6 @@ impl<'a> TypeInference<'a> {
                     let is_empty_literal = match init_expr {
                         // Empty array literal []
                         ResolvedHirExpression::Array { elements, .. } => elements.is_empty(),
-                        // Empty pairs literal {}
-                        ResolvedHirExpression::Literal {
-                            value: crate::ast::Value::Pairs(pairs),
-                            ..
-                        } => pairs.is_empty(),
                         _ => false,
                     };
 
@@ -2933,11 +2927,6 @@ impl<'a> TypeInference<'a> {
                 let is_empty_literal = match value {
                     // Empty array literal []
                     ResolvedHirExpression::Array { elements, .. } => elements.is_empty(),
-                    // Empty pairs literal {}
-                    ResolvedHirExpression::Literal {
-                        value: crate::ast::Value::Pairs(pairs),
-                        ..
-                    } => pairs.is_empty(),
                     _ => false,
                 };
 
@@ -3438,39 +3427,6 @@ impl<'a> TypeInference<'a> {
         value: &crate::ast::Value,
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
-        // Object literals { key: value, ... } must produce ObjectLiteral.
-        // Field values are recursively inferred as literal expressions so a
-        // nested array literal becomes a proper `ArrayLiteral` TAST kind
-        // rather than being flattened to `Literal(Null)`. Without this the
-        // codegen later sees `Literal(Null)` with `expr_type=Array(...)` and
-        // emits `i32.const 0` instead of materializing the list — observed
-        // as `json.encode(any data = { items: [...] })` producing the wrong
-        // output (JSON-ENCODE-ANY-EMBEDDED-LIST-LOST, fp 06ad82a75ad3).
-        if let crate::ast::Value::Pairs(pairs) = value {
-            let mut fields = Vec::new();
-            for (key_val, field_val) in pairs {
-                let key = match key_val {
-                    crate::ast::Value::String(s) => s.clone(),
-                    other => format!("{}", other),
-                };
-                let (field_kind, field_ty, field_loc) =
-                    self.infer_literal_expression(field_val, location)?;
-                fields.push(TastObjectField {
-                    key,
-                    value: TastExpression {
-                        kind: field_kind,
-                        expr_type: field_ty,
-                        location: field_loc,
-                    },
-                    location: location.clone(),
-                });
-            }
-            return Ok((
-                TastExpressionKind::ObjectLiteral { fields },
-                ConcreteType::Any,
-                location.clone(),
-            ));
-        }
         // List literals embedded inside an object literal (or any other literal
         // context) must produce `ArrayLiteral` with each element preserved as
         // its own TastExpression. The same `infer_literal_expression` recursion
@@ -4857,7 +4813,6 @@ impl<'a> TypeInference<'a> {
             crate::ast::Value::Boolean(value) => {
                 (TastLiteral::Boolean(*value), ConcreteType::Boolean)
             }
-            crate::ast::Value::Void => (TastLiteral::Null, ConcreteType::Null),
             // `none` literal — typed as Null at the expression level.
             // The function-level return-type analysis in `infer_function` will later wrap
             // the function's declared return type in Optional(T) when it sees a Null return.

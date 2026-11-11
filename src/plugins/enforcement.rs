@@ -401,11 +401,6 @@ fn collect_call_names_from_statement(stmt: &Statement, names: &mut Vec<String>) 
                 collect_call_names_from_expr(v, names);
             }
         }
-        Statement::FunctionsBlock { functions, .. } => {
-            for func in functions {
-                collect_call_names_from_function(func, names);
-            }
-        }
         Statement::TypeApplyBlock { assignments, .. } => {
             for assignment in assignments {
                 if let Some(v) = &assignment.initializer {
@@ -508,7 +503,6 @@ fn collect_call_names_from_statement(stmt: &Statement, names: &mut Vec<String>) 
             collect_call_names_from_expr(expression, names);
             collect_call_names_from_statements(error_block, names);
         }
-        Statement::ClassDefinition { class, .. } => collect_call_names_from_class(class, names),
         Statement::ScreenBlockStmt {
             state,
             watch_blocks,
