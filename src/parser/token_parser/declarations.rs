@@ -165,6 +165,13 @@ impl TokenParser {
                         }
                     }
                 }
+                // A `public:` section after a private function: the dedent
+                // that closed the previous body leaves no Indent token here.
+                TokenKind::Public => {
+                    let public_funcs =
+                        self.parse_public_functions_section(functions_block_level)?;
+                    functions.extend(public_funcs);
+                }
                 TokenKind::Identifier(_)
                 | TokenKind::Test
                 | TokenKind::Unit

@@ -1,0 +1,27 @@
+// Test: bugfixes/public_section_after_private_function
+// Grammar: functions_block, public_functions_section (grammar.ebnf 6.2a)
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   4
+//   6
+//
+// A `public:` section that came after a private function in a top-level
+// `functions:` block failed with "Unexpected token at top level: Public".
+// The grammar lets the section appear in any order.
+
+start:
+	print(doubleIt(2))
+	print(triple(2))
+
+functions:
+	// private helper
+	integer times(integer a, integer b)
+		return a * b
+
+	public:
+		// public API
+		integer doubleIt(integer n)
+			return times(n, 2)
+
+		integer triple(integer n)
+			return times(n, 3)

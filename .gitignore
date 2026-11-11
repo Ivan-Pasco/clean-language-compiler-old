@@ -145,3 +145,4 @@ ai-sessions/
 # Python bytecode cache
 __pycache__/
 *.pyc
+build-manifest.json
