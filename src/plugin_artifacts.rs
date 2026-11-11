@@ -93,42 +93,53 @@ impl std::fmt::Display for ArtifactError {
 ///   `EmitContext`; evaluates to `false` (safe-degrade) when the map is empty.
 ///   (ARTIFACT_PREDICATE_NO_BUILD_STATE)
 ///
-/// Unknown predicates default to `false` with a tracing warning so a typo
-/// silently skips the artifact rather than producing it incorrectly.
+/// An unknown predicate is `false`, so a typo skips the artifact rather than
+/// producing it incorrectly; `orchestrate` reports it as a warning.
 pub fn evaluate_required_when(
     predicate: &str,
     loaded_manifests: &IndexMap<String, PluginManifest>,
     artifacts_so_far: &[String],
     build_state: &std::collections::BTreeMap<String, String>,
 ) -> bool {
+    evaluate_known_predicate(predicate, loaded_manifests, artifacts_so_far, build_state)
+        .unwrap_or(false)
+}
+
+/// `evaluate_required_when`, with `None` for a predicate this compiler does
+/// not know.
+fn evaluate_known_predicate(
+    predicate: &str,
+    loaded_manifests: &IndexMap<String, PluginManifest>,
+    artifacts_so_far: &[String],
+    build_state: &std::collections::BTreeMap<String, String>,
+) -> Option<bool> {
     if predicate == "always" {
-        return true;
+        return Some(true);
     }
     if predicate == "never" {
-        return false;
+        return Some(false);
     }
     if predicate == "has_client_init" {
-        return loaded_manifests
-            .values()
-            .any(|m| m.lifecycle.client_init.is_some());
+        return Some(
+            loaded_manifests
+                .values()
+                .any(|m| m.lifecycle.client_init.is_some()),
+        );
     }
     if let Some(slot) = predicate.strip_prefix("has_lifecycle.") {
-        return loaded_manifests
-            .values()
-            .any(|m| m.lifecycle.slot_export(slot).is_some());
+        return Some(
+            loaded_manifests
+                .values()
+                .any(|m| m.lifecycle.slot_export(slot).is_some()),
+        );
     }
     if let Some(artifact) = predicate.strip_prefix("has_artifact.") {
-        return artifacts_so_far.iter().any(|a| a == artifact);
+        return Some(artifacts_so_far.iter().any(|a| a == artifact));
     }
     if let Some(key) = predicate.strip_prefix("has_build_state.") {
-        return build_state.contains_key(key);
+        return Some(build_state.contains_key(key));
     }
-    tracing::warn!(
-        target: "plugin_contracts_v2",
-        predicate = %predicate,
-        "unknown required_when predicate — treating as false"
-    );
-    false
+    None
 }
 
 /// Substitute `{output_dir}` in an `output_relative` template against the
@@ -400,13 +411,24 @@ pub fn orchestrate(
 
     for (plugin_name, manifest) in loaded_manifests {
         for artifact in &manifest.artifacts {
-            if !evaluate_required_when(
+            match evaluate_known_predicate(
                 &artifact.required_when,
                 loaded_manifests,
                 &emitted_names,
                 &ctx.build_state,
             ) {
-                continue;
+                Some(true) => {}
+                Some(false) => continue,
+                None => {
+                    let msg = format!(
+                        "skipping artifact `{}` (declared by `{}`): unknown required_when \
+                         predicate `{}` (artifacts.md §7)",
+                        artifact.name, plugin_name, artifact.required_when
+                    );
+                    tracing::warn!(target: "plugin_contracts_v2", "{}", msg);
+                    warnings.push(msg);
+                    continue;
+                }
             }
             let Some(path_relative) = artifact_relative_path(&artifact.output_relative) else {
                 return Err(ArtifactError::EmissionFailed {
@@ -623,6 +645,41 @@ mod tests {
         assert!(
             warnings.is_empty(),
             "no warnings either — artifact correctly skipped (not even reached)"
+        );
+    }
+
+    /// A `required_when` the compiler does not know skips the artifact and
+    /// says so in the returned warnings.
+    #[test]
+    fn test_orchestrate_warns_about_unknown_predicate() {
+        let mut declarer = manifest_with_lifecycle("plugin.declarer", PluginLifecycle::default());
+        declarer.artifacts.push(PluginArtifact {
+            name: "theme.css".to_string(),
+            purpose: "static_asset".to_string(),
+            emit: None,
+            static_path: Some("theme.css".to_string()),
+            output_relative: "{output_dir}/theme.css".to_string(),
+            required_when: "has_ui_blok".to_string(),
+            public: true,
+            content_type: Some("text/css".to_string()),
+        });
+        let mut manifests = IndexMap::new();
+        manifests.insert("plugin.declarer".to_string(), declarer);
+        let ctx = EmitContext {
+            entry_path: Path::new("/tmp/whatever.cln"),
+            output_dir: Path::new("/tmp/dist"),
+            opt_level: 2,
+            in_nested_build: false,
+            build_state: Default::default(),
+            plugin_dirs: Default::default(),
+        };
+        let (emitted, warnings) = orchestrate(&manifests, &ctx).expect("orchestrate ok");
+        assert!(emitted.is_empty());
+        assert_eq!(warnings.len(), 1, "{:?}", warnings);
+        assert!(
+            warnings[0].contains("theme.css") && warnings[0].contains("has_ui_blok"),
+            "{}",
+            warnings[0]
         );
     }
 
