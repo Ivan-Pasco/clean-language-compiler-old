@@ -65,18 +65,22 @@ impl MathClass {
             abs_impl.clone(),
         )?;
 
-        // Math.abs(integer x) -> integer (I32 version)
+        // math.abs(integer x) -> integer. Integer arithmetic wraps, so the
+        // absolute value of the smallest integer is that integer itself.
         register_stdlib_function(
             codegen,
             "math.abs.i32",
             &[WasmType::I32],
             Some(WasmType::I32),
             vec![
-                // Convert I32 to F64, apply abs, then convert back to I32
-                Instruction::LocalGet(0),    // x (i32)
-                Instruction::F64ConvertI32S, // convert i32 to f64
-                Instruction::F64Abs,         // abs(x)
-                Instruction::I32TruncF64S,   // convert f64 back to i32
+                Instruction::I32Const(0),
+                Instruction::LocalGet(0),
+                Instruction::I32Sub, // -x (wrapping)
+                Instruction::LocalGet(0),
+                Instruction::LocalGet(0),
+                Instruction::I32Const(0),
+                Instruction::I32LtS,
+                Instruction::Select, // x < 0 ? -x : x
             ],
         )?;
 
@@ -121,6 +125,27 @@ impl MathClass {
             Some(WasmType::F64),
             min_impl.clone(),
         )?;
+
+        // math.max / math.min of two integers -> integer
+        for (name, keep_first) in [
+            ("math.max.i32", Instruction::I32GtS),
+            ("math.min.i32", Instruction::I32LtS),
+        ] {
+            register_stdlib_function(
+                codegen,
+                name,
+                &[WasmType::I32, WasmType::I32],
+                Some(WasmType::I32),
+                vec![
+                    Instruction::LocalGet(0),
+                    Instruction::LocalGet(1),
+                    Instruction::LocalGet(0),
+                    Instruction::LocalGet(1),
+                    keep_first,
+                    Instruction::Select,
+                ],
+            )?;
+        }
 
         Ok(())
     }

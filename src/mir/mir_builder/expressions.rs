@@ -1344,9 +1344,26 @@ impl MirBuilder {
                 let result_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
+                // `math.abs`, `math.max` and `math.min` of `integer` arguments
+                // are `integer`s (the type checker types them so), computed by
+                // their integer implementations.
+                let all_integer_arguments = !arguments.is_empty()
+                    && arguments
+                        .iter()
+                        .all(|argument| matches!(argument.expr_type, ConcreteType::Integer));
+                let integer_math_variant = match function_name_opt.as_deref() {
+                    Some("math.abs" | "math_abs") if arguments.len() == 1 => Some("math.abs.i32"),
+                    Some("math.max" | "math_max") if arguments.len() == 2 => Some("math.max.i32"),
+                    Some("math.min" | "math_min") if arguments.len() == 2 => Some("math.min.i32"),
+                    _ => None,
+                }
+                .filter(|_| all_integer_arguments);
+
                 // NOTE: Infer return type for namespace functions like list.get
                 // When called with Any type argument, the return should also be Any
-                let inferred_type = if let Some(ref func_name) = function_name_opt {
+                let inferred_type = if integer_math_variant.is_some() {
+                    ConcreteType::Integer
+                } else if let Some(ref func_name) = function_name_opt {
                     if func_name == "list.get" || func_name == "list_get" {
                         // Check if first argument is Any type
                         if !arguments.is_empty()
@@ -1450,7 +1467,12 @@ impl MirBuilder {
 
                 // NOTE: For namespace functions (SymbolId(0)), create NamedFunction operand
                 // so codegen can look up the function by name instead of symbol ID
-                let function_operand = if function_symbol_id.0 == 0 {
+                let function_operand = if let Some(name) = integer_math_variant {
+                    MirOperand::NamedFunction {
+                        name: name.to_string(),
+                        symbol_id: SymbolId(0),
+                    }
+                } else if function_symbol_id.0 == 0 {
                     // Get function name from the Variable expression
                     let function_name = match &function.kind {
                         TastExpressionKind::Variable { name, .. } => name.clone(),

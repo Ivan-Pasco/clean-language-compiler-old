@@ -514,6 +514,8 @@ impl MirCodeGenerator<'_> {
         // Functions returning I32
         for name in &[
             "math.abs.i32",
+            "math.max.i32",
+            "math.min.i32",
             "math.pow.i32",
             "string.toInteger",
             "number.toInteger",
