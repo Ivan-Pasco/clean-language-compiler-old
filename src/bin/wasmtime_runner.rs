@@ -62,7 +62,7 @@ fn allocate_string_in_memory(
     if aligned_end > current_bytes {
         let needed_pages = (aligned_end - current_bytes).div_ceil(65536) as u64;
         if memory.grow(&mut *caller, needed_pages).is_err() {
-            println!("⚠️  WARNING: memory.grow failed for {needed_pages} pages");
+            eprintln!("⚠️  WARNING: memory.grow failed for {needed_pages} pages");
             return 0;
         }
     }
@@ -70,7 +70,7 @@ fn allocate_string_in_memory(
     // Step 3: Write string data
     let data = memory.data_mut(&mut *caller);
     if offset + total_size > data.len() {
-        println!("⚠️  WARNING: Not enough WASM memory for string allocation. Offset: {offset}, Size: {total_size}, Memory: {memory_len}", memory_len = data.len());
+        eprintln!("⚠️  WARNING: Not enough WASM memory for string allocation. Offset: {offset}, Size: {total_size}, Memory: {memory_len}", memory_len = data.len());
         return 0;
     }
 
@@ -110,6 +110,8 @@ fn read_utf8(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -> Result<String> 
 /// backtrace) and exit 1.
 fn call_or_exit(func: &wasmtime::Func, store: &mut Store<()>, results: &mut [wasmtime::Val]) {
     if let Err(e) = func.call(&mut *store, &[], results) {
+        use std::io::Write as _;
+        let _ = std::io::stdout().flush();
         eprintln!("Error: {e:?}");
         std::process::exit(1);
     }
@@ -173,17 +175,38 @@ fn unavailable(name: &str) -> wasmtime::Error {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {program} <wasm_file>", program = args[0]);
-        std::process::exit(1);
+    let usage = format!(
+        "Usage: {} <wasm_file>\n\nRuns a compiled Clean Language module: its start function, then its \
+         tests: block when the module has one.\nProgram output goes to stdout between the \
+         `--- Output ---` and `--- End Output ---` lines; runner messages go to stderr.\n\
+         Exits 1 when the module traps or a test fails.\n\nOptions:\n  -h, --help     Print this help\n  -V, --version  Print the version",
+        args.first().map(String::as_str).unwrap_or("wasmtime_runner")
+    );
+    match args.get(1).map(String::as_str) {
+        Some("-h" | "--help") if args.len() == 2 => {
+            println!("{usage}");
+            return Ok(());
+        }
+        Some("-V" | "--version") if args.len() == 2 => {
+            println!("wasmtime_runner {}", clean_language_compiler::VERSION);
+            return Ok(());
+        }
+        _ if args.len() != 2 => {
+            eprintln!("{usage}");
+            std::process::exit(1);
+        }
+        _ => {}
     }
 
+    // Runner messages go to stderr so stdout carries only the program's
+    // output and the `--- Output ---` markers around it.
     let wasm_file = &args[1];
-    println!("🚀 Loading WebAssembly file: {wasm_file}");
+    eprintln!("🚀 Loading WebAssembly file: {wasm_file}");
 
     // Read the WASM file
-    let wasm_bytes = fs::read(wasm_file)?;
-    println!("📦 File size: {len} bytes", len = wasm_bytes.len());
+    let wasm_bytes =
+        fs::read(wasm_file).map_err(|e| anyhow::anyhow!("cannot read '{wasm_file}': {e}"))?;
+    eprintln!("📦 File size: {len} bytes", len = wasm_bytes.len());
 
     // Create engine and store using minimal (sync) configuration for wasmtime_runner
     let engine = clean_language_compiler::runtime::wasmtime_config::CleanWasmtimeConfig::create_minimal_engine()
@@ -196,59 +219,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create linker and add imports
     let mut linker = Linker::new(&engine);
 
-    // Add print function: print(ptr: i32, len: i32) -> void
+    // print(ptr, len) / printl(ptr, len): the UTF-8 text at ptr..ptr+len,
+    // printl adding a newline. A range outside the module's memory or
+    // invalid UTF-8 traps.
     linker.func_wrap(
         "env",
         "print",
-        |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-            let mem = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
-                mem
-            } else {
-                print!("[print: ptr={ptr}, len={len}]");
-                return;
-            };
-
-            let data = if let Some(data) = mem.data(&caller).get(ptr as usize..(ptr + len) as usize)
-            {
-                data
-            } else {
-                print!("[print: invalid range ptr={}, len={}]", ptr, len);
-                return;
-            };
-
-            match std::str::from_utf8(data) {
-                Ok(s) => {
-                    print!("{}", s);
-                }
-                Err(_) => print!("[invalid utf8: {} bytes]", len),
-            }
+        |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> Result<()> {
+            print!("{}", read_utf8(&mut caller, ptr, len)?);
+            Ok(())
         },
     )?;
-
-    // Add printl function: printl(ptr: i32, len: i32) -> void
     linker.func_wrap(
         "env",
         "printl",
-        |mut caller: Caller<'_, ()>, ptr: i32, len: i32| {
-            let mem = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
-                mem
-            } else {
-                println!("[printl: ptr={ptr}, len={len}]");
-                return;
-            };
-
-            let data = if let Some(data) = mem.data(&caller).get(ptr as usize..(ptr + len) as usize)
-            {
-                data
-            } else {
-                println!("[printl: invalid range ptr={ptr}, len={len}]");
-                return;
-            };
-
-            match std::str::from_utf8(data) {
-                Ok(s) => println!("{s}"),
-                Err(_) => println!("[invalid utf8: {len} bytes]"),
-            }
+        |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> Result<()> {
+            println!("{}", read_utf8(&mut caller, ptr, len)?);
+            Ok(())
         },
     )?;
 
@@ -1945,7 +1932,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let memory = if let Some(Extern::Memory(mem)) = caller.get_export("memory") {
                 mem
             } else {
-                println!("[array_get: no memory export]");
+                eprintln!("[array_get: no memory export]");
                 return 0; // Return 0 on error
             };
 
@@ -1954,7 +1941,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Check bounds for reading header
             if ptr_usize + 17 > data.len() {
-                println!("[array_get: invalid array pointer {}]", array_ptr);
+                eprintln!("[array_get: invalid array pointer {}]", array_ptr);
                 return 0;
             }
 
@@ -1973,7 +1960,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Bounds check
             if index < 0 || index >= length {
-                println!(
+                eprintln!(
                     "[array_get: index {} out of bounds for array of length {}]",
                     index, length
                 );
@@ -1984,7 +1971,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let element_offset = data_offset + (index as usize * 4);
 
             if element_offset + 4 > data.len() {
-                println!("[array_get: element access out of memory bounds]");
+                eprintln!("[array_get: element access out of memory bounds]");
                 return 0;
             }
 
@@ -2056,8 +2043,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Instantiate the module
     let instance = linker.instantiate(&mut store, &module)?;
 
-    println!("✅ WebAssembly module loaded successfully");
-    println!(
+    eprintln!("✅ WebAssembly module loaded successfully");
+    eprintln!(
         "📋 Exported functions: {:?}",
         instance
             .exports(&mut store)
@@ -2065,15 +2052,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<Vec<_>>()
     );
 
-    // Try to find and call the start function (try different possible names)
+    let run_tests = instance.get_func(&mut store, "_run_tests");
     let start_func = instance
         .get_func(&mut store, "start")
-        .or_else(|| instance.get_func(&mut store, "_start"))
         .or_else(|| instance.get_func(&mut store, "main"))
         .or_else(|| instance.get_func(&mut store, "_main"));
 
+    // A module without a `start:` block but with a `tests:` block exports a
+    // `_start` that only calls `_run_tests`. Call `_run_tests` directly
+    // instead, so the tests run once and their failure count is seen.
+    let start_func = match (start_func, &run_tests) {
+        (Some(func), _) => Some(func),
+        (None, Some(_)) => None,
+        (None, None) => instance.get_func(&mut store, "_start"),
+    };
+
     if let Some(func) = start_func {
-        println!("🎯 Executing start function...");
+        eprintln!("🎯 Executing start function...");
         println!("--- Output ---");
         // Provide a result buffer sized to the function's declared result
         // count. The `start:` block produces a `(result i32)` whenever its
@@ -2107,35 +2102,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .get_memory(&mut store, "memory")
                     .map(|m| m.size(&store))
                     .unwrap_or(0);
-                println!("📊 __heap_ptr={final_heap} memory_pages={pages}");
+                eprintln!("📊 __heap_ptr={final_heap} memory_pages={pages}");
             }
         }
-        println!("✅ Execution completed successfully!");
-    } else {
-        println!("⚠️  No start function found. Available exports:");
+        eprintln!("✅ Execution completed successfully!");
+    } else if run_tests.is_none() {
+        eprintln!("⚠️  No start function found. Available exports:");
         for export in instance.exports(&mut store) {
             let name = export.name().to_string();
             if export.into_func().is_some() {
-                println!("  • {} (function)", name);
+                eprintln!("  • {} (function)", name);
             }
         }
         return Err(anyhow::anyhow!("No start/main function found").into());
     }
 
-    // If the module exports _run_tests, invoke it and report results.
-    if let Some(func) = instance.get_func(&mut store, "_run_tests") {
-        println!("🧪 Running tests (_run_tests)...");
-        println!("--- Test Output ---");
+    if let Some(func) = run_tests {
+        // A test-only module's test output is its program output.
+        let (open, close) = if start_func.is_some() {
+            ("--- Test Output ---", "--- End Test Output ---")
+        } else {
+            ("--- Output ---", "--- End Output ---")
+        };
+        eprintln!("🧪 Running tests (_run_tests)...");
+        println!("{open}");
         let mut results = vec![wasmtime::Val::I32(0)];
         call_or_exit(&func, &mut store, &mut results);
-        println!("--- End Test Output ---");
-        if let Some(wasmtime::Val::I32(failures)) = results.first() {
-            if *failures == 0 {
-                println!("✅ All tests passed!");
-            } else {
-                println!("❌ {} test(s) failed.", failures);
-                return Err(anyhow::anyhow!("{} test(s) failed", failures).into());
-            }
+        if start_func.is_none() {
+            run_async_tasks(&instance, &mut store);
+        }
+        println!("{close}");
+        let failures = match results.first() {
+            Some(wasmtime::Val::I32(failures)) => *failures,
+            _ => return Err(anyhow::anyhow!("_run_tests returned no failure count").into()),
+        };
+        if failures == 0 {
+            eprintln!("✅ All tests passed!");
+        } else {
+            eprintln!("❌ {} test(s) failed.", failures);
+            return Err(anyhow::anyhow!("{} test(s) failed", failures).into());
         }
     }
 
