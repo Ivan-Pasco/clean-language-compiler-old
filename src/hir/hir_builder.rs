@@ -42,9 +42,8 @@
 //! `string_builder_reclaim` (0.30.373) tried to end-of-body punch a hole
 //! at `max(init_mark, builder_end)`. It corrupted any live pointer above
 //! the new `HEAP_PTR` (surfaced as `CMP-SSR-RECLAIM-FREES-LIVE-POINTER`,
-//! fingerprint `7fc4f890aab9…`) and was removed in 0.30.375. The helper
-//! stays registered as a harmless stub in case body-escape tracking ever
-//! gates re-enablement. The transient arena is the replacement mechanism.
+//! fingerprint `7fc4f890aab9…`) and was removed in 0.30.375, helper
+//! included. The transient arena is the replacement mechanism.
 //! See `native_stdlib::transient_arena` for the Cyclone-region invariant
 //! that makes it safe where end-of-body reclaim was not, and
 //! `native_stdlib::carryover` for the failure mode that ruled out routing
@@ -103,9 +102,8 @@ impl AccumulatorAnalysis {
 /// at end-of-body. That mechanism shipped in 0.30.373, corrupted any live
 /// pointer sitting above the post-reclaim mark (surfaced as
 /// CMP-SSR-RECLAIM-FREES-LIVE-POINTER, fingerprint `7fc4f890aab9…`), and was
-/// removed in 0.30.375. The transient arena (`transient_arena.rs`) is the
-/// replacement for per-iter reclamation; the reclaim helper remains registered
-/// as a harmless stub in case body-escape tracking ever gates re-enablement.
+/// removed in 0.30.375 together with the reclaim helper. The transient arena
+/// (`transient_arena.rs`) is the replacement for per-iter reclamation.
 struct AccumulatorRewrite {
     /// Replaces the original `string acc = "..."` decl with the builder init.
     decl_replacement: HirStatement,

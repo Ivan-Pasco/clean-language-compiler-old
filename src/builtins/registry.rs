@@ -24,7 +24,6 @@ pub enum BuiltinType {
     List(Box<BuiltinType>),
     Matrix(Box<BuiltinType>),
     Pairs(Box<BuiltinType>, Box<BuiltinType>),
-    Namespace,
     Any,     // For generic functions
     Handler, // Function reference passed as callback index to bridge functions
 }

@@ -176,17 +176,14 @@ pub struct Symbol {
     pub kind: SymbolKind,
     pub scope_id: ScopeId,
     pub location: SourceLocation,
-    /// True when the symbol was declared inside a `private:` sub-section.
+    /// True when the symbol was declared outside a `public:` sub-section
+    /// (declarations are private by default, semantic-rules.md §SEM005).
     ///
-    /// A private symbol may only be accessed from within its owning scope:
-    /// - Private module function: callable only within the same module.
-    /// - Private class field/method: accessible only within the class body.
-    /// - Private state variable: accessible only within the same module.
-    ///
-    /// Violations are reported as SEM005 errors by the resolver.
+    /// The type checker reports SEM005 for a private class field or method
+    /// used outside its class.
     pub is_private: bool,
-    /// The name of the class (or module) that owns this private symbol.
-    /// Used by the resolver to determine whether access is permitted.
+    /// The name of the class (or `"<module>"`) that owns this private symbol.
+    /// Used by the type checker to determine whether access is permitted.
     /// `None` for public symbols (the field is irrelevant in that case).
     pub owner_scope_name: Option<String>,
 }
@@ -634,7 +631,7 @@ impl GlobalSymbolTable {
     /// Mark a symbol as private and record the name of its owning scope
     /// (the class name for class members, or `"<module>"` for module-level private items).
     ///
-    /// Called by the resolver after creating a symbol that belongs to a `private:` sub-section.
+    /// Called by the resolver after creating a symbol declared outside a `public:` sub-section.
     pub fn mark_as_private(&mut self, symbol_id: SymbolId, owner_scope_name: String) {
         if let Some(symbol) = self.symbols.get_mut(&symbol_id) {
             symbol.is_private = true;
@@ -1352,571 +1349,269 @@ impl GlobalSymbolTable {
         }
     }
 
-    /// Add built-in namespace identifiers (math, string, etc.)
+    /// Add the built-in namespace identifiers (`math`, `string`, `http`, ...)
+    /// so `math.sin(x)` resolves `math` as a namespace. Each namespace lists
+    /// the built-in functions registered under it; a name that is not
+    /// registered is left out.
     fn add_builtin_namespace_identifiers(&mut self, global_scope: ScopeId) {
-        // Math namespace - so "math" is recognized as a valid identifier
-        let math_functions = vec![
-            self.lookup_symbol("math.sin").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.cos").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.tan").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.asin").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.acos").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.atan").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.atan2").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.sinh").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.cosh").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.tanh").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.log").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.ln").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.log10").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.log2").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.exp").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.exp2").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.abs").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.floor").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.ceil").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.round").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.sqrt").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.trunc").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.pi").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.e").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.tau").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.pow").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.max").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.min").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.random").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("math.sign").unwrap_or(SymbolId(0)),
+        const NAMESPACES: &[(&str, &[&str])] = &[
+            (
+                "math",
+                &[
+                    "math.sin",
+                    "math.cos",
+                    "math.tan",
+                    "math.asin",
+                    "math.acos",
+                    "math.atan",
+                    "math.atan2",
+                    "math.sinh",
+                    "math.cosh",
+                    "math.tanh",
+                    "math.log",
+                    "math.ln",
+                    "math.log10",
+                    "math.log2",
+                    "math.exp",
+                    "math.exp2",
+                    "math.abs",
+                    "math.floor",
+                    "math.ceil",
+                    "math.round",
+                    "math.sqrt",
+                    "math.trunc",
+                    "math.pi",
+                    "math.e",
+                    "math.tau",
+                    "math.pow",
+                    "math.max",
+                    "math.min",
+                    "math.random",
+                    "math.sign",
+                ],
+            ),
+            (
+                "string",
+                &[
+                    "string.length",
+                    "string.concat",
+                    "string.isEmpty",
+                    "string.isBlank",
+                    "string.indexOf",
+                    "string.lastIndexOf",
+                    "string.substring",
+                    "string.toUpperCase",
+                    "string.toLowerCase",
+                    "string.trim",
+                    "string.trimStart",
+                    "string.trimEnd",
+                    "string.contains",
+                    "string.startsWith",
+                    "string.endsWith",
+                    "string.replace",
+                    "string.replaceAll",
+                    "string.split",
+                    "string.join",
+                    "string.padStart",
+                    "string.padEnd",
+                    "string.charAt",
+                    "string.charCodeAt",
+                ],
+            ),
+            (
+                "list",
+                &[
+                    "list.size",
+                    "list.length",
+                    "list.isEmpty",
+                    "list.isNotEmpty",
+                    "list.push",
+                    "list.pop",
+                    "list.removeLast",
+                    "list.get",
+                    "list.remove",
+                    "list.peek",
+                    "list.setFlags",
+                    "list.add",
+                    "list.contains",
+                    "list.insert",
+                    "list.indexOf",
+                    "list.lastIndexOf",
+                    "list.first",
+                    "list.last",
+                    "list.reverse",
+                    "list.sort",
+                    "list.slice",
+                    "list.concat",
+                    "list.fill",
+                    "list.range",
+                    "list.join",
+                ],
+            ),
+            (
+                "http",
+                &[
+                    "http.get",
+                    "http.post",
+                    "http.put",
+                    "http.patch",
+                    "http.delete",
+                    "http.head",
+                    "http.options",
+                    "http.postJson",
+                    "http.putJson",
+                    "http.postForm",
+                    "http.getWithHeaders",
+                    "http.postWithHeaders",
+                    "http.encodeUrl",
+                    "http.decodeUrl",
+                    "http.buildQuery",
+                    "http.respond",
+                    "http.redirect",
+                    "http.setHeader",
+                    "http.setCache",
+                    "http.noCache",
+                ],
+            ),
+            (
+                "file",
+                &[
+                    "file.read",
+                    "file.write",
+                    "file.append",
+                    "file.exists",
+                    "file.delete",
+                ],
+            ),
+            ("fs", &["fs.write_bytes"]),
+            (
+                "json",
+                &[
+                    "json.textToData",
+                    "json.tryTextToData",
+                    "json.dataToText",
+                    "json.prettyDataToText",
+                    "json.encode",
+                    "json.decode",
+                    "json.get",
+                ],
+            ),
+            (
+                "input",
+                &[
+                    "input",
+                    "input_string",
+                    "input_integer",
+                    "input_number",
+                    "input_yesNo",
+                    "input_integerWithDefault",
+                ],
+            ),
+            (
+                "validator",
+                &[
+                    "validator.create",
+                    "validator.createWithName",
+                    "validator.run",
+                    "validator.runField",
+                    "validator.validate",
+                    "validator.ok",
+                    "validator.error",
+                    "validator.isOk",
+                    "validator.isError",
+                    "validator.getValue",
+                    "validator.getErrors",
+                    "validator.getFirstError",
+                    "validator.field",
+                    "validator.required",
+                    "validator.optional",
+                    "validator.match",
+                    "validator.range",
+                    "validator.minLength",
+                    "validator.maxLength",
+                    "validator.custom",
+                    "validator.message",
+                ],
+            ),
+            (
+                "db",
+                &[
+                    "db.query",
+                    "db.execute",
+                    "db.begin",
+                    "db.commit",
+                    "db.rollback",
+                ],
+            ),
+            (
+                "crypto",
+                &[
+                    "crypto.hashPassword",
+                    "crypto.verifyPassword",
+                    "crypto.randomBytes",
+                    "crypto.randomHex",
+                    "crypto.sha256",
+                    "crypto.sha512",
+                    "crypto.hmac",
+                ],
+            ),
+            ("jwt", &["jwt.sign", "jwt.verify", "jwt.decode"]),
+            ("env", &["env.get"]),
+            ("time", &["time.now"]),
+            (
+                "req",
+                &[
+                    "req.param",
+                    "req.query",
+                    "req.body",
+                    "req.header",
+                    "req.headers",
+                    "req.method",
+                    "req.path",
+                    "req.ip",
+                    "req.form",
+                    "req.cookie",
+                ],
+            ),
+            (
+                "auth",
+                &[
+                    "auth.getSession",
+                    "auth.requireAuth",
+                    "auth.requireRole",
+                    "auth.can",
+                    "auth.hasAnyRole",
+                    "auth.setSession",
+                    "auth.clearSession",
+                    "auth.userId",
+                    "auth.userRole",
+                ],
+            ),
+            (
+                "session",
+                &["session.get", "session.delete", "session.exists"],
+            ),
+            ("server", &["server.sleep"]),
         ];
-
-        let math_namespace_id = self.create_symbol(
-            "math".to_string(),
-            SymbolKind::Namespace {
-                functions: math_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(math_namespace_id);
-
-        // String namespace - so "string" is recognized as a valid identifier
-        // Use string.length to match semantic analyzer and codegen
-        let string_functions = vec![
-            self.lookup_symbol("string.length").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.concat").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.isEmpty").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.isBlank").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.indexOf").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.lastIndexOf")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.substring")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.toUpperCase")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.toLowerCase")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.trim").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.trimStart")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.trimEnd").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.contains").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.startsWith")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.endsWith").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.replace").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.replaceAll")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.split").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.join").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.padStart").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.padEnd").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.charAt").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("string.charCodeAt")
-                .unwrap_or(SymbolId(0)),
-        ];
-
-        let string_namespace_id = self.create_symbol(
-            "string".to_string(),
-            SymbolKind::Namespace {
-                functions: string_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(string_namespace_id);
-
-        // Create list namespace
-        // list.length is canonical per spec; list.size retained for compatibility
-        let list_functions = vec![
-            self.lookup_symbol("list.size").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.length").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.isEmpty").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.isNotEmpty").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.push").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.pop").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.removeLast").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.get").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.remove").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.peek").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.setFlags").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.add").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.contains").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.insert").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.indexOf").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.lastIndexOf")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.first").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.last").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.reverse").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.sort").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.slice").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.concat").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.fill").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.range").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("list.join").unwrap_or(SymbolId(0)),
-        ];
-
-        let list_namespace_id = self.create_symbol(
-            "list".to_string(),
-            SymbolKind::Namespace {
-                functions: list_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(list_namespace_id);
-
-        // Create http namespace
-        let http_functions = vec![
-            self.lookup_symbol("http.get").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.post").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.put").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.patch").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.delete").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.head").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.options").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.postJson").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.putJson").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.postForm").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.getWithHeaders")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.postWithHeaders")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.encodeUrl").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.decodeUrl").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.buildQuery").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.respond").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.redirect").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.setHeader").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.setCache").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("http.noCache").unwrap_or(SymbolId(0)),
-        ];
-
-        let http_namespace_id = self.create_symbol(
-            "http".to_string(),
-            SymbolKind::Namespace {
-                functions: http_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(http_namespace_id);
-
-        // Create file namespace
-        let file_functions = vec![
-            self.lookup_symbol("file.read").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("file.write").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("file.append").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("file.exists").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("file.delete").unwrap_or(SymbolId(0)),
-        ];
-
-        let file_namespace_id = self.create_symbol(
-            "file".to_string(),
-            SymbolKind::Namespace {
-                functions: file_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(file_namespace_id);
-
-        // Create fs namespace — bytes-safe filesystem surface. See
-        // spec/plugins/frame-server.ebnf `fs_expression` and
-        // spec/type-system.md §9b for the opaque handle convention.
-        let fs_functions = vec![self.lookup_symbol("fs.write_bytes").unwrap_or(SymbolId(0))];
-
-        let fs_namespace_id = self.create_symbol(
-            "fs".to_string(),
-            SymbolKind::Namespace {
-                functions: fs_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(fs_namespace_id);
-
-        // Create json namespace  // BOOK: json-module
-        let json_functions = vec![
-            self.lookup_symbol("json.textToData").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("json.tryTextToData")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("json.dataToText").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("json.prettyDataToText")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("json.encode").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("json.decode").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("json.get").unwrap_or(SymbolId(0)),
-        ];
-
-        let json_namespace_id = self.create_symbol(
-            "json".to_string(),
-            SymbolKind::Namespace {
-                functions: json_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(json_namespace_id);
-
-        // Create input namespace
-        let input_functions = vec![
-            self.lookup_symbol("input").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("input_string").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("input_integer").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("input_number").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("input_yesNo").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("input_integerWithDefault")
-                .unwrap_or(SymbolId(0)),
-        ];
-
-        let input_namespace_id = self.create_symbol(
-            "input".to_string(),
-            SymbolKind::Namespace {
-                functions: input_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(input_namespace_id);
-
-        // Create validator namespace
-        let validator_functions = vec![
-            self.lookup_symbol("validator.create")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.createWithName")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.run").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.runField")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.validate")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.ok").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.error").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.isOk").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.isError")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.getValue")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.getErrors")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.getFirstError")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.field").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.required")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.optional")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.match").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.range").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.minLength")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.maxLength")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.custom")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("validator.message")
-                .unwrap_or(SymbolId(0)),
-        ];
-
-        let validator_namespace_id = self.create_symbol(
-            "validator".to_string(),
-            SymbolKind::Namespace {
-                functions: validator_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(validator_namespace_id);
-
-        // Extended http namespace — add new functions to the existing http namespace symbol
-        // (The http namespace identifier was already created above; we add a second entry
-        // for the extended functions so the resolver can find them via dot-notation lookup.)
-
-        // db namespace
-        let db_functions = vec![
-            self.lookup_symbol("db.query").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("db.execute").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("db.begin").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("db.commit").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("db.rollback").unwrap_or(SymbolId(0)),
-        ];
-        let db_namespace_id = self.create_symbol(
-            "db".to_string(),
-            SymbolKind::Namespace {
-                functions: db_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(db_namespace_id);
-
-        // crypto namespace
-        let crypto_functions = vec![
-            self.lookup_symbol("crypto.hashPassword")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("crypto.verifyPassword")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("crypto.randomBytes")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("crypto.randomHex")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("crypto.sha256").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("crypto.sha512").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("crypto.hmac").unwrap_or(SymbolId(0)),
-        ];
-        let crypto_namespace_id = self.create_symbol(
-            "crypto".to_string(),
-            SymbolKind::Namespace {
-                functions: crypto_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(crypto_namespace_id);
-
-        // jwt namespace
-        let jwt_functions = vec![
-            self.lookup_symbol("jwt.sign").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("jwt.verify").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("jwt.decode").unwrap_or(SymbolId(0)),
-        ];
-        let jwt_namespace_id = self.create_symbol(
-            "jwt".to_string(),
-            SymbolKind::Namespace {
-                functions: jwt_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(jwt_namespace_id);
-
-        // env namespace
-        let env_functions = vec![self.lookup_symbol("env.get").unwrap_or(SymbolId(0))];
-        let env_namespace_id = self.create_symbol(
-            "env".to_string(),
-            SymbolKind::Namespace {
-                functions: env_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(env_namespace_id);
-
-        // time namespace
-        let time_functions = vec![self.lookup_symbol("time.now").unwrap_or(SymbolId(0))];
-        let time_namespace_id = self.create_symbol(
-            "time".to_string(),
-            SymbolKind::Namespace {
-                functions: time_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(time_namespace_id);
-
-        // req namespace (Layer 3 server-only)
-        let req_functions = vec![
-            self.lookup_symbol("req.param").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("req.query").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("req.body").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("req.header").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("req.headers").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("req.method").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("req.path").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("req.ip").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("req.form").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("req.cookie").unwrap_or(SymbolId(0)),
-        ];
-        let req_namespace_id = self.create_symbol(
-            "req".to_string(),
-            SymbolKind::Namespace {
-                functions: req_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(req_namespace_id);
-
-        // auth namespace (Layer 3 server-only)
-        let auth_functions = vec![
-            self.lookup_symbol("auth.getSession").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("auth.requireAuth")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("auth.requireRole")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("auth.can").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("auth.hasAnyRole").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("auth.setSession").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("auth.clearSession")
-                .unwrap_or(SymbolId(0)),
-            self.lookup_symbol("auth.userId").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("auth.userRole").unwrap_or(SymbolId(0)),
-        ];
-        let auth_namespace_id = self.create_symbol(
-            "auth".to_string(),
-            SymbolKind::Namespace {
-                functions: auth_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(auth_namespace_id);
-
-        // session namespace (Layer 3 server-only)
-        let session_functions = vec![
-            self.lookup_symbol("session.get").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("session.delete").unwrap_or(SymbolId(0)),
-            self.lookup_symbol("session.exists").unwrap_or(SymbolId(0)),
-        ];
-        let session_namespace_id = self.create_symbol(
-            "session".to_string(),
-            SymbolKind::Namespace {
-                functions: session_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(session_namespace_id);
-
-        // server namespace (Layer 3 async)
-        let server_functions = vec![self.lookup_symbol("server.sleep").unwrap_or(SymbolId(0))];
-        let server_namespace_id = self.create_symbol(
-            "server".to_string(),
-            SymbolKind::Namespace {
-                functions: server_functions,
-            },
-            global_scope,
-            SourceLocation {
-                file: "<builtin>".to_string(),
-                line: 0,
-                column: 0,
-                byte_start: None,
-                byte_end: None,
-            },
-        );
-        self.builtins.insert(server_namespace_id);
+        for (namespace, function_names) in NAMESPACES {
+            let functions = function_names
+                .iter()
+                .filter_map(|name| self.lookup_symbol(name))
+                .collect();
+            let namespace_id = self.create_symbol(
+                namespace.to_string(),
+                SymbolKind::Namespace { functions },
+                global_scope,
+                SourceLocation {
+                    file: "<builtin>".to_string(),
+                    line: 0,
+                    column: 0,
+                    byte_start: None,
+                    byte_end: None,
+                },
+            );
+            self.builtins.insert(namespace_id);
+        }
     }
 }
 

@@ -2740,7 +2740,6 @@ impl MirCodeGenerator<'_> {
             BuiltinType::List(_) => WasmType::I32,
             BuiltinType::Matrix(_) => WasmType::I32,
             BuiltinType::Pairs(_, _) => WasmType::I32,
-            BuiltinType::Namespace => WasmType::I32,
             BuiltinType::Any => WasmType::I32,
             BuiltinType::Handler => WasmType::I32,
         }

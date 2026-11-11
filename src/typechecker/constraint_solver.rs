@@ -21,9 +21,6 @@ pub struct ConstraintSolver<'a> {
     /// Current substitution being built
     substitution: Substitution,
 
-    /// Type variable counter for generating fresh variables
-    type_var_counter: usize,
-
     /// Pending constraints to solve
     constraints: VecDeque<TypeConstraint>,
 
@@ -55,7 +52,6 @@ impl<'a> ConstraintSolver<'a> {
     pub fn new() -> Self {
         Self {
             substitution: HashMap::new(),
-            type_var_counter: 0,
             constraints: VecDeque::new(),
             errors: Vec::new(),
             symbol_table: None,
@@ -67,7 +63,6 @@ impl<'a> ConstraintSolver<'a> {
     pub fn with_symbol_table(symbol_table: &'a crate::resolver::GlobalSymbolTable) -> Self {
         Self {
             substitution: HashMap::new(),
-            type_var_counter: 0,
             constraints: VecDeque::new(),
             errors: Vec::new(),
             symbol_table: Some(symbol_table),
@@ -86,13 +81,6 @@ impl<'a> ConstraintSolver<'a> {
         >,
     ) {
         self.class_conformance = conformance;
-    }
-
-    /// Generate a fresh type variable
-    pub fn fresh_type_var(&mut self) -> TypeVarId {
-        let id = TypeVarId(self.type_var_counter);
-        self.type_var_counter += 1;
-        id
     }
 
     /// Add constraints to solve
@@ -469,6 +457,7 @@ impl<'a> ConstraintSolver<'a> {
 
             // Function references unify with Integer (handler/callback parameters)
             // In WASM, function references become integer indices in the function table
+            // (tests/cln/functions/function_references_distinct_values.cln).
             (ConcreteType::Function { .. }, ConcreteType::Integer)
             | (ConcreteType::Integer, ConcreteType::Function { .. }) => Ok(()),
 

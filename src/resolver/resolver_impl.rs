@@ -900,7 +900,7 @@ impl NameResolver {
                     self.symbol_table.current_scope_id(),
                     function.location.clone(),
                 );
-                // Propagate inline private: visibility (SEM005).
+                // A declaration outside `public:` is private (SEM005).
                 if function.is_private {
                     self.symbol_table
                         .mark_as_private(symbol_id, "<module>".to_string());
@@ -1055,7 +1055,7 @@ impl NameResolver {
                         self.symbol_table.current_scope_id(),
                         state_decl.location.clone(),
                     );
-                    // Propagate inline private: visibility (SEM005).
+                    // A declaration outside `public:` is private (SEM005).
                     if state_decl.is_private {
                         self.symbol_table
                             .mark_as_private(symbol_id, "<module>".to_string());
@@ -1275,7 +1275,7 @@ impl NameResolver {
                     class_scope,
                     field.location.clone(),
                 );
-                // Propagate inline private: visibility (SEM005).
+                // A declaration outside `public:` is private (SEM005).
                 if field.is_private {
                     self.symbol_table
                         .mark_as_private(field_symbol_id, class.name.clone());
@@ -1967,7 +1967,7 @@ impl NameResolver {
                 };
 
                 // SCOPE002: check for redeclaration in the *same* scope (not shadowing).
-                // Shadowing a name from an outer scope is allowed (SCOPE003 is a warning, not an error).
+                // Shadowing a name from an outer scope is allowed.
                 let current_scope = self.symbol_table.current_scope_id();
                 if let Some(existing_id) = self.symbol_table.lookup_symbol_in_current_scope(name) {
                     if let Some(existing) = self.symbol_table.get_symbol(existing_id) {
@@ -3107,8 +3107,8 @@ impl NameResolver {
             resolved_arguments.push(self.resolve_expression(arg)?);
         }
 
-        // Method resolution is complex and depends on receiver type
-        // For now, we'll resolve it as None (built-in method)
+        // The method depends on the receiver's type: the type checker binds
+        // it (class methods by name, built-in methods by receiver type).
         let method_symbol_id = None;
 
         Ok(ResolvedHirExpression::MethodCall {
@@ -4883,14 +4883,12 @@ impl NameResolver {
         for lang_name in language_to_bridge.keys() {
             if let Some(dot_pos) = lang_name.find('.') {
                 let ns_name = &lang_name[..dot_pos];
-                let func_symbol_id = self
-                    .symbol_table
-                    .lookup_symbol(lang_name)
-                    .unwrap_or(SymbolId(0));
-                namespace_functions
-                    .entry(ns_name.to_string())
-                    .or_default()
-                    .push(func_symbol_id);
+                if let Some(func_symbol_id) = self.symbol_table.lookup_symbol(lang_name) {
+                    namespace_functions
+                        .entry(ns_name.to_string())
+                        .or_default()
+                        .push(func_symbol_id);
+                }
             }
         }
 
@@ -5219,9 +5217,8 @@ impl NameResolver {
                 Box::new(Self::builtin_type_to_hir_type(k)),
                 Box::new(Self::builtin_type_to_hir_type(v)),
             ),
-            BuiltinType::Namespace => HirType::Integer, // Namespace is internal, use Integer as placeholder
-            BuiltinType::Any => HirType::Any,           // Any type for dynamic/JSON values
-            BuiltinType::Handler => HirType::Integer,   // Handler is an i32 index at WASM level
+            BuiltinType::Any => HirType::Any, // Any type for dynamic/JSON values
+            BuiltinType::Handler => HirType::Integer, // Handler is an i32 index at WASM level
         }
     }
 
