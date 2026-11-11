@@ -261,7 +261,7 @@ enum Commands {
         /// .cln files (or directories) containing tests: blocks to run
         #[arg(short, long)]
         dirs: Vec<String>,
-        /// .cln test files to run directly (positional)
+        /// .cln test files, or directories whose .cln files are run (positional)
         #[arg(value_name = "FILE")]
         files: Vec<String>,
     },
@@ -309,7 +309,7 @@ enum Commands {
         /// Input file to run (.cln source file or .wasm binary)
         input: String,
 
-        /// Enable debug output
+        /// Print the source and module sizes and the runner used, on stderr
         #[arg(short, long)]
         debug: bool,
     },
@@ -1110,7 +1110,8 @@ async fn handle_check(
                         .diagnostics
                         .iter()
                         .map(|w| output_config.diagnostic_to_json(w, "warning"))
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>(),
+                    "lint": contract5_lint_json(&source, &input),
                 });
                 println!(
                     "{}",
@@ -1137,7 +1138,8 @@ async fn handle_check(
 
             // Contract 5 Phase B: after typecheck succeeds, run the plugin
             // lint pass. Non-blocking per spec §5 — lint diagnostics are
-            // printed but do not cause `handle_check` to fail.
+            // printed but do not cause `handle_check` to fail. Under --json
+            // they are part of the JSON document above.
             if !output_config.json_mode {
                 run_contract5_lint(&source, &input);
             }
@@ -1844,40 +1846,74 @@ fn parse_memory_tier_flag(
     }
 }
 
+/// Add the `.cln` test files `arg` names to `out`: the file itself, or the
+/// `.cln` files directly inside a directory (sorted).
+fn collect_test_files(arg: &str, out: &mut Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
+    let p = Path::new(arg);
+    if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("cln") {
+        out.push(arg.to_string());
+    } else if p.is_dir() {
+        let mut found: Vec<String> = fs::read_dir(p)?
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|ep| ep.is_file() && ep.extension().and_then(|s| s.to_str()) == Some("cln"))
+            .filter_map(|ep| ep.to_str().map(str::to_string))
+            .collect();
+        found.sort();
+        out.extend(found);
+    } else {
+        return Err(format!("'{arg}' is not a .cln file or a directory").into());
+    }
+    Ok(())
+}
+
+/// The program output a `wasmtime_runner` run wrote between its
+/// `--- Output ---` / `--- Test Output ---` markers.
+fn runner_program_output(stdout: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut inside = false;
+    for line in stdout.lines() {
+        match line {
+            "--- Output ---" | "--- Test Output ---" => inside = true,
+            "--- End Output ---" | "--- End Test Output ---" => inside = false,
+            _ if inside => lines.push(line.to_string()),
+            _ => {}
+        }
+    }
+    lines
+}
+
 async fn handle_test(
     dirs: Vec<String>,
     files: Vec<String>,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Collect .cln files from positional args and --dirs flag
-    let mut cln_files: Vec<String> = files;
-    for dir in &dirs {
-        let p = Path::new(dir);
-        if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("cln") {
-            cln_files.push(dir.clone());
-        } else if p.is_dir() {
-            let mut found: Vec<String> = fs::read_dir(p)?
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|ep| ep.extension().and_then(|s| s.to_str()) == Some("cln"))
-                .filter_map(|ep| ep.to_str().map(str::to_string))
-                .collect();
-            found.sort();
-            cln_files.extend(found);
-        } else {
-            return Err(format!("'{dir}' is not a .cln file or a directory").into());
-        }
+    // Positional arguments and --dirs both take files or directories.
+    let mut cln_files: Vec<String> = Vec::new();
+    for arg in files.iter().chain(dirs.iter()) {
+        collect_test_files(arg, &mut cln_files)?;
     }
 
     if cln_files.is_empty() {
         return Err(
-            "no test files given. Usage: cln test <FILE.cln>... or cln test --dirs <DIR>".into(),
+            "no test files given. Usage: cln test <FILE.cln|DIR>... or cln test --dirs <DIR>"
+                .into(),
         );
     }
+
+    // Only wasmtime_runner reports how many tests failed, so there is no
+    // fallback to another runner: a run that cannot see failures must not
+    // pass.
+    let runner = find_wasmtime_runner()?;
+
+    // Under --quiet and --json the runner's output is captured: --quiet shows
+    // it only for files that failed, --json reports it in the summary.
+    let capture = !output_config.shows_progress();
 
     // Compiled test modules live in a private directory removed on return.
     let work_dir = tempfile::Builder::new().prefix("cln-test-").tempdir()?;
     let mut any_failed = false;
+    let mut json_results: Vec<serde_json::Value> = Vec::new();
     for (index, cln_path) in cln_files.iter().enumerate() {
         if output_config.shows_progress() {
             println!("Running tests in: {cln_path}");
@@ -1885,8 +1921,16 @@ async fn handle_test(
         let source = match fs::read_to_string(cln_path) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("  Cannot read '{cln_path}': {e}");
                 any_failed = true;
+                if output_config.json_mode {
+                    json_results.push(serde_json::json!({
+                        "file": cln_path,
+                        "passed": false,
+                        "error": format!("cannot read '{cln_path}': {e}"),
+                    }));
+                } else {
+                    eprintln!("  Cannot read '{cln_path}': {e}");
+                }
                 continue;
             }
         };
@@ -1894,20 +1938,81 @@ async fn handle_test(
         let wasm_binary = match clean_language_compiler::compile_with_file(&source, cln_path) {
             Ok(b) => b,
             Err(errors) => {
-                output_config.report_errors(&errors, Some(&source));
                 any_failed = true;
+                if output_config.json_mode {
+                    json_results.push(serde_json::json!({
+                        "file": cln_path,
+                        "passed": false,
+                        "diagnostics": errors
+                            .iter()
+                            .map(|e| output_config.error_to_json(e))
+                            .collect::<Vec<_>>(),
+                    }));
+                } else {
+                    output_config.report_errors(&errors, Some(&source));
+                }
                 continue;
             }
         };
 
-        // Execute via wasmtime_runner (which provides all required host
-        // imports including _state_reset_all) or fall back to clean-runner.
         let temp_wasm = work_dir.path().join(format!("test_{index}.wasm"));
         fs::write(&temp_wasm, &wasm_binary)?;
-        if let Err(e) = execute_via_local_runner(&temp_wasm.to_string_lossy()) {
-            eprintln!("  {e}");
-            any_failed = true;
+        let mut command = std::process::Command::new(&runner);
+        command.arg(&temp_wasm);
+        let launch_error = |e: std::io::Error| {
+            format!(
+                "Failed to launch wasmtime_runner '{}': {e}",
+                runner.display()
+            )
+        };
+
+        if !capture {
+            let status = command.status().map_err(launch_error)?;
+            if !status.success() {
+                eprintln!(
+                    "  wasmtime_runner exited with code {}",
+                    status.code().unwrap_or(-1)
+                );
+                any_failed = true;
+            }
+            continue;
         }
+
+        let output = command.output().map_err(launch_error)?;
+        let passed = output.status.success();
+        any_failed |= !passed;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if output_config.json_mode {
+            let mut entry = serde_json::json!({
+                "file": cln_path,
+                "passed": passed,
+                "output": runner_program_output(&stdout),
+            });
+            if !passed {
+                // The runner's error report, without its progress messages.
+                let error = stderr
+                    .find("Error")
+                    .map_or(stderr.as_ref(), |at| &stderr[at..]);
+                entry["error"] = serde_json::json!(error.trim_end());
+            }
+            json_results.push(entry);
+        } else if !passed {
+            eprintln!("Tests failed in: {cln_path}");
+            print!("{stdout}");
+            eprint!("{stderr}");
+        }
+    }
+
+    if output_config.json_mode {
+        let summary = serde_json::json!({
+            "success": !any_failed,
+            "files": json_results,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&summary).unwrap_or_default()
+        );
     }
 
     if any_failed {
@@ -1923,35 +2028,74 @@ async fn handle_debug(
     check_style: bool,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("🔍 Debugging Clean Language file: {input}\n");
+    if output_config.shows_progress() {
+        println!("🔍 Debugging Clean Language file: {input}\n");
+    }
 
     let source = read_source(&input)?;
 
-    if show_ast {
+    if show_ast && !output_config.json_mode {
         print_parsed_ast(&source, &input, output_config)?;
     }
 
     let compile_result = compile_with_file(&source, &input);
-    match &compile_result {
-        Ok(wasm_binary) => {
-            println!(
-                "✅ Compilation successful: {} bytes of WASM generated",
-                wasm_binary.len()
-            );
-        }
-        Err(errors) => {
-            output_config.report_errors(errors, Some(&source));
-        }
-    }
+    let style_issues = if check_style {
+        DebugUtils::validate_style(&source)
+    } else {
+        Vec::new()
+    };
 
-    if check_style {
-        println!("\n=== Style Validation ===");
-        let style_issues = DebugUtils::validate_style(&source);
-        if style_issues.is_empty() {
-            println!("✅ No style issues found");
-        } else {
-            println!("🎨 Style Issues Found:");
-            for issue in style_issues {
+    if output_config.json_mode {
+        let mut json = serde_json::json!({
+            "success": compile_result.is_ok(),
+            "file": input,
+            "diagnostics": match &compile_result {
+                Ok(_) => Vec::new(),
+                Err(errors) => errors.iter().map(|e| output_config.error_to_json(e)).collect(),
+            },
+        });
+        if let Ok(wasm_binary) = &compile_result {
+            json["wasm_size_bytes"] = serde_json::json!(wasm_binary.len());
+        }
+        if check_style {
+            json["style_issues"] = serde_json::json!(style_issues);
+        }
+        if show_ast {
+            // Parse errors are already in `diagnostics` from the compile.
+            if let Ok(ast) = clean_language_compiler::parse_to_ast(&source, &input) {
+                json["ast"] = serde_json::to_value(&ast).unwrap_or_default();
+            }
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
+    } else {
+        match &compile_result {
+            Ok(wasm_binary) => {
+                if output_config.shows_progress() {
+                    println!(
+                        "✅ Compilation successful: {} bytes of WASM generated",
+                        wasm_binary.len()
+                    );
+                }
+            }
+            Err(errors) => {
+                output_config.report_errors(errors, Some(&source));
+            }
+        }
+
+        if check_style {
+            // Style issues are the output asked for, so --quiet keeps them.
+            if output_config.shows_progress() {
+                println!("\n=== Style Validation ===");
+                if style_issues.is_empty() {
+                    println!("✅ No style issues found");
+                } else {
+                    println!("🎨 Style Issues Found:");
+                }
+            }
+            for issue in &style_issues {
                 println!("  {issue}");
             }
         }
@@ -1969,7 +2113,10 @@ async fn handle_lint(
     plugin_override: Vec<String>,
     output_config: &OutputConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("🧹 Linting: {input}");
+    let progress = output_config.shows_progress();
+    if progress {
+        println!("🧹 Linting: {input}");
+    }
 
     let path = Path::new(&input);
     let files_to_lint = if path.is_file() {
@@ -1987,13 +2134,25 @@ async fn handle_lint(
                 }
             }
         }
+        clean_files.sort();
         clean_files
     } else {
         return Err(format!("'{input}' is not a valid file or directory").into());
     };
 
     if files_to_lint.is_empty() {
-        println!("No Clean Language files found to lint");
+        if output_config.json_mode {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "success": true,
+                    "files": [],
+                }))
+                .unwrap_or_default()
+            );
+        } else if progress {
+            println!("No Clean Language files found to lint");
+        }
         return Ok(());
     }
 
@@ -2009,53 +2168,97 @@ async fn handle_lint(
                 (f.clone(), src)
             })
             .collect();
-        apply_plugin_overrides(&plugin_override, &sources, !output_config.shows_progress())?;
+        apply_plugin_overrides(&plugin_override, &sources, !progress)?;
     } else {
         clean_language_compiler::set_plugin_overrides(std::collections::HashMap::new());
     }
 
     let mut total_errors = 0;
     let mut unreadable_files = 0;
+    let mut json_files: Vec<serde_json::Value> = Vec::new();
 
     for file_path in &files_to_lint {
-        println!("\n📄 Linting: {file_path}");
+        if progress {
+            println!("\n📄 Linting: {file_path}");
+        }
 
         let source = match fs::read_to_string(file_path) {
             Ok(content) => content,
             Err(e) => {
-                eprintln!("  ❌ Error reading file: {e}");
                 unreadable_files += 1;
+                if output_config.json_mode {
+                    json_files.push(serde_json::json!({
+                        "file": file_path,
+                        "error": format!("cannot read '{file_path}': {e}"),
+                    }));
+                } else {
+                    eprintln!("  ❌ Error reading file: {e}");
+                }
                 continue;
             }
         };
 
         // Use 7-stage pipeline for linting
-        match compile_with_file(&source, file_path) {
+        let diagnostics = match compile_with_file(&source, file_path) {
             Ok(_) => {
-                println!("  ✅ No compilation errors found");
+                if progress {
+                    println!("  ✅ No compilation errors found");
+                }
+                Vec::new()
             }
             Err(errors) => {
                 total_errors += errors.len();
-                output_config.report_errors(&errors, Some(&source));
+                if output_config.json_mode {
+                    errors
+                        .iter()
+                        .map(|e| output_config.error_to_json(e))
+                        .collect()
+                } else {
+                    output_config.report_errors(&errors, Some(&source));
+                    Vec::new()
+                }
             }
-        }
+        };
 
-        if !errors_only {
-            for issue in DebugUtils::validate_style(&source) {
-                println!("  ⚠️  {issue}");
-            }
-        }
+        let style_issues = if errors_only {
+            Vec::new()
+        } else {
+            DebugUtils::validate_style(&source)
+        };
 
         // Contract 5 Phase B: run the plugin lint pass on this file.
-        // Cycle 2 prints raw JSON per plugin; Cycle 3 parses + renders
-        // through the compiler diagnostic pipeline.
         // Non-blocking per spec §5.
-        run_contract5_lint(&source, file_path);
+        if output_config.json_mode {
+            json_files.push(serde_json::json!({
+                "file": file_path,
+                "diagnostics": diagnostics,
+                "style_issues": style_issues,
+                "lint": contract5_lint_json(&source, file_path),
+            }));
+        } else {
+            for issue in &style_issues {
+                println!("  ⚠️  {issue}");
+            }
+            run_contract5_lint(&source, file_path);
+        }
     }
 
-    println!("\n=== Lint Summary ===");
-    println!("Files checked: {}", files_to_lint.len());
-    println!("Compilation errors: {total_errors}");
+    if output_config.json_mode {
+        let json = serde_json::json!({
+            "success": total_errors == 0 && unreadable_files == 0,
+            "files_checked": files_to_lint.len(),
+            "compilation_errors": total_errors,
+            "files": json_files,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json).unwrap_or_default()
+        );
+    } else if progress {
+        println!("\n=== Lint Summary ===");
+        println!("Files checked: {}", files_to_lint.len());
+        println!("Compilation errors: {total_errors}");
+    }
 
     if unreadable_files > 0 {
         return Err(format!("{unreadable_files} file(s) could not be read").into());
@@ -2064,6 +2267,90 @@ async fn handle_lint(
         return Err(format!("Lint found {total_errors} compilation error(s)").into());
     }
     Ok(())
+}
+
+/// The Contract 5 Phase B plugin lint results for `--json` output: the
+/// same diagnostics [`run_contract5_lint`] prints, one JSON object each.
+fn contract5_lint_json(source: &str, file_path: &str) -> Vec<serde_json::Value> {
+    use clean_language_compiler::plugins::lint::{LintSeverity, PluginLintReport};
+
+    let compiler_entry = |code: &str, plugin: Option<&str>, message: String| {
+        serde_json::json!({
+            "source": "compiler",
+            "severity": "warning",
+            "code": code,
+            "plugin": plugin,
+            "message": message,
+        })
+    };
+
+    let reports = match clean_language_compiler::lint_source(source, file_path, "warning") {
+        Ok(reports) => reports,
+        Err(errors) => {
+            return errors
+                .iter()
+                .map(|e| {
+                    compiler_entry(
+                        "LINT001",
+                        None,
+                        format!("plugin-lint pass could not run: {}", e.message()),
+                    )
+                })
+                .collect();
+        }
+    };
+
+    let mut entries = Vec::new();
+    for report in &reports {
+        match report {
+            PluginLintReport::Ok {
+                plugin_name,
+                diagnostics,
+                invalid_summary,
+                raw_json: _,
+            } => {
+                for d in diagnostics {
+                    entries.push(serde_json::json!({
+                        "source": plugin_name,
+                        "severity": match d.severity {
+                            LintSeverity::Error => "error",
+                            LintSeverity::Warning => "warning",
+                            LintSeverity::Info => "info",
+                        },
+                        "code": d.code,
+                        "file": d.location.file,
+                        "line": d.location.line,
+                        "column": d.location.column,
+                        "message": d.message,
+                        "hint": d.hint,
+                    }));
+                }
+                for reason in invalid_summary {
+                    entries.push(compiler_entry(
+                        "LINT002",
+                        Some(plugin_name),
+                        format!("diagnostic entry dropped during parsing: {reason}"),
+                    ));
+                }
+            }
+            PluginLintReport::Failed {
+                plugin_name,
+                message,
+            } => entries.push(compiler_entry("LINT001", Some(plugin_name), message.clone())),
+            PluginLintReport::CodeCollision {
+                plugin_name,
+                conflicting_code,
+                first_seen_from,
+            } => entries.push(compiler_entry(
+                "LINT003",
+                Some(plugin_name),
+                format!(
+                    "diagnostic code `{conflicting_code}` already claimed by plugin `{first_seen_from}`"
+                ),
+            )),
+        }
+    }
+    entries
 }
 
 /// Contract 5 Phase B lint pass.
@@ -2266,6 +2553,9 @@ async fn handle_run(
             }
 
             let source = read_source(&input)?;
+            if debug {
+                eprintln!("[debug] source: {input} ({} bytes)", source.len());
+            }
             let wasm_binary = match compile_with_file(&source, &input) {
                 Ok(binary) => binary,
                 Err(compile_errors) => {
@@ -2275,6 +2565,9 @@ async fn handle_run(
                     );
                 }
             };
+            if debug {
+                eprintln!("[debug] compiled: {} bytes of WASM", wasm_binary.len());
+            }
 
             // Hand the module to clean-runner from a private directory that
             // is removed when this function returns.
@@ -2284,13 +2577,13 @@ async fn handle_run(
             if output_config.shows_progress() {
                 println!("🚀 Running compiled WebAssembly...");
             }
-            execute_via_clean_runner(&temp_wasm.to_string_lossy())
+            execute_via_clean_runner(&temp_wasm.to_string_lossy(), debug)
         }
         Some("wasm") => {
             if debug {
-                println!("🚀 Running WebAssembly file: {input}");
+                eprintln!("[debug] module: {input}");
             }
-            execute_via_clean_runner(&input)
+            execute_via_clean_runner(&input, debug)
         }
         Some(ext) => Err(format!(
             "Unsupported file extension '.{ext}'. Supported formats: .cln (Clean Language source), .wasm (WebAssembly binary)"
@@ -2303,69 +2596,51 @@ async fn handle_run(
     }
 }
 
-/// Locate the `wasmtime_runner` binary that ships alongside `cln`.
+/// Locate the `wasmtime_runner` binary that ships with `cln`.
 ///
-/// The runner is looked up in the following order:
-/// 1. Same directory as the current executable (production install)
-/// 2. Sibling `wasmtime_runner` on PATH
-///
-/// Returns the path string if found, or an error describing where to get it.
-fn find_wasmtime_runner() -> Result<String, Box<dyn std::error::Error>> {
-    // 1. Sibling of the currently-running binary (covers dev builds and production installs)
-    if let Ok(exe) = std::env::current_exe() {
+/// Looked up next to the `cln` binary — both as invoked and with symlinks
+/// resolved, since `~/.cleen/bin/cln` links into `~/.cleen/versions/<v>/`
+/// where the runner lives — then on PATH.
+fn find_wasmtime_runner() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let name = if cfg!(windows) {
+        "wasmtime_runner.exe"
+    } else {
+        "wasmtime_runner"
+    };
+    let exe = std::env::current_exe().ok();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(exe) = &exe {
+        if let Some(dir) = exe.canonicalize().ok().as_deref().and_then(Path::parent) {
+            dirs.push(dir.to_path_buf());
+        }
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join("wasmtime_runner");
-            if candidate.exists() {
-                return Ok(candidate.to_string_lossy().into_owned());
-            }
-            #[cfg(windows)]
-            {
-                let win = dir.join("wasmtime_runner.exe");
-                if win.exists() {
-                    return Ok(win.to_string_lossy().into_owned());
-                }
-            }
+            dirs.push(dir.to_path_buf());
         }
     }
+    if let Some(candidate) = dirs.iter().map(|d| d.join(name)).find(|c| c.is_file()) {
+        return Ok(candidate);
+    }
 
-    // 2. Fall back to PATH
     if std::process::Command::new("wasmtime_runner")
-        .arg("--help")
+        .arg("--version")
         .output()
         .ok()
         .filter(|o| o.status.success())
         .is_some()
     {
-        return Ok("wasmtime_runner".to_string());
+        return Ok(PathBuf::from("wasmtime_runner"));
     }
 
-    Err("wasmtime_runner not found next to the cln binary".into())
-}
-
-/// Execute a WASM file using the bundled wasmtime_runner (preferred) or fall back to clean-runner.
-///
-/// wasmtime_runner is preferred because it ships with the compiler and provides all required
-/// host imports (including _state_reset_all) and natively supports the _run_tests export.
-fn execute_via_local_runner(wasm_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // Prefer the bundled wasmtime_runner for standalone test execution.
-    if let Ok(runner) = find_wasmtime_runner() {
-        let status = std::process::Command::new(&runner)
-            .arg(wasm_path)
-            .status()
-            .map_err(|e| format!("Failed to launch wasmtime_runner '{runner}': {e}"))?;
-        return if status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "wasmtime_runner exited with code {}",
-                status.code().unwrap_or(-1)
-            )
-            .into())
-        };
-    }
-
-    // Fall back to clean-runner if wasmtime_runner is not available.
-    execute_via_clean_runner(wasm_path)
+    let searched = dirs
+        .iter()
+        .map(|d| d.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "wasmtime_runner not found (looked in {searched} and on PATH). `cln test` needs it to run \
+         tests and report failures; it ships with the compiler, so reinstall it with `cleen install <version>`"
+    )
+    .into())
 }
 
 fn find_clean_runner() -> Result<String, Box<dyn std::error::Error>> {
@@ -2390,8 +2665,14 @@ fn find_clean_runner() -> Result<String, Box<dyn std::error::Error>> {
     Err("clean-runner not found under ~/.cleen/clean-runner/<version>/ or on PATH".into())
 }
 
-fn execute_via_clean_runner(wasm_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn execute_via_clean_runner(
+    wasm_path: &str,
+    debug: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let runner = find_clean_runner()?;
+    if debug {
+        eprintln!("[debug] runner: {runner}");
+    }
     let status = std::process::Command::new(&runner)
         .arg(wasm_path)
         .status()

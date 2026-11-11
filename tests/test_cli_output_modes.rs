@@ -85,6 +85,81 @@ fn json_mode_emits_only_json_on_stdout() {
 }
 
 #[test]
+fn lint_and_debug_honour_quiet() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("good.cln"), VALID_SOURCE).unwrap();
+    for args in [
+        vec!["-q", "lint", "good.cln"],
+        vec!["-q", "debug", "good.cln"],
+    ] {
+        let out = cln(&args, tmp.path());
+        assert!(out.status.success(), "{args:?} stderr:\n{}", stderr(&out));
+        assert_eq!(stdout(&out), "", "{args:?}: --quiet means errors only");
+    }
+}
+
+#[test]
+fn lint_debug_and_check_emit_json() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(tmp.path().join("good.cln"), VALID_SOURCE).unwrap();
+    std::fs::write(tmp.path().join("bad.cln"), TYPE_ERROR_SOURCE).unwrap();
+    let json_of = |args: &[&str]| -> serde_json::Value {
+        let out = cln(args, tmp.path());
+        serde_json::from_str(&stdout(&out))
+            .unwrap_or_else(|e| panic!("{args:?}: stdout is not JSON ({e}):\n{}", stdout(&out)))
+    };
+
+    let lint = json_of(&["--json", "lint", "good.cln"]);
+    assert_eq!(lint["success"], true);
+    assert_eq!(lint["files"][0]["file"], "good.cln");
+    let lint = json_of(&["--json", "lint", "bad.cln"]);
+    assert_eq!(lint["success"], false);
+    assert!(lint["files"][0]["diagnostics"]
+        .as_array()
+        .is_some_and(|d| !d.is_empty()));
+
+    let debug = json_of(&["--json", "debug", "good.cln", "--check-style"]);
+    assert_eq!(debug["success"], true);
+    assert!(debug["wasm_size_bytes"].as_u64().is_some_and(|n| n > 0));
+    assert!(debug["style_issues"].is_array());
+
+    // The plugin lint pass is part of `check --json`, not skipped.
+    let check = json_of(&["--json", "check", "good.cln"]);
+    assert!(check["lint"].is_array(), "{check}");
+}
+
+#[test]
+fn missing_import_or_plugin_is_not_reported_as_a_toolchain_bug() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    // Telemetry on, so a toolchain bug would print the issue command.
+    std::fs::create_dir_all(tmp.path().join(".cleen/telemetry")).unwrap();
+    std::fs::write(
+        tmp.path().join(".cleen/telemetry/config.toml"),
+        "enabled = true\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("m.cln"),
+        "import:\n\tNoSuchModule\n\nstart:\n\tprint(\"x\")\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.path().join("p.cln"),
+        "plugins:\n\tframe.nonexistent\n\nstart:\n\tprint(\"x\")\n",
+    )
+    .unwrap();
+    for file in ["m.cln", "p.cln"] {
+        let out = cln(&["compile", file, "-o", "out.wasm"], tmp.path());
+        assert!(!out.status.success());
+        assert!(
+            !stderr(&out).contains("bug in the Clean Language toolchain"),
+            "{file}: a project error was reported as a toolchain bug:\n{}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
 fn no_color_codes_when_not_a_terminal() {
     let tmp = tempfile::TempDir::new().unwrap();
     std::fs::write(tmp.path().join("good.cln"), VALID_SOURCE).unwrap();
