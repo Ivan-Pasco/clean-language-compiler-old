@@ -364,7 +364,7 @@ impl TokenParser {
         } else if self.check(&TokenKind::Dot) {
             // Could be a property-chain assignment: `obj.prop = val`
             // or `obj.a.b = val`, or just a method-call expression.
-            // foundation/spec/grammar.ebnf `assignment_target`:
+            // foundation/spec/grammar/grammar.ebnf `assignment_target`:
             //   identifier , "." , identifier , { "." , identifier }
             // Peek ahead: collect dot-separated identifiers, then check for `=`.
             let mut path: Vec<String> = Vec::new();

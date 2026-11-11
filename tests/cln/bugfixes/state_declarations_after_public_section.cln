@@ -1,0 +1,22 @@
+// Test: bugfixes/state_declarations_after_public_section
+// Grammar: state_block, public_state_section (grammar.ebnf 6.8a)
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   1
+//   2
+//   3
+//
+// A private state declaration after a `public:` section ended the whole
+// `state:` block and failed with "Unexpected identifier at top level".
+// The grammar lets the section appear in any order.
+
+start:
+	print(a)
+	print(b)
+	print(c)
+
+state:
+	integer a = 1
+	public:
+		integer b = 2
+	integer c = 3

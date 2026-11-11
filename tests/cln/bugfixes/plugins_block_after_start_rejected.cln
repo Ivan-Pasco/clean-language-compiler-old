@@ -1,0 +1,17 @@
+// Test: bugfixes/plugins_block_after_start_rejected
+// Grammar: program (grammar.ebnf 6), plugins_block
+// Semantic: SYN007
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   SYN007
+//   'plugins:' section is out of order
+//   plugins_block_after_start_rejected.cln:16:1
+//
+// The grammar puts `plugins:` between `import:` and `start:`; a `plugins:`
+// block after `start:` was accepted.
+
+start:
+	print(1)
+plugins:
+	frame.locale

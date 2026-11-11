@@ -1,0 +1,36 @@
+// Test: bugfixes/class_private_methods_with_keyword_names
+// Grammar: function_name (grammar.ebnf 1.3), class_functions_block
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   2
+//   7
+//   11
+//
+// Private class methods could not have keyword names such as `step` (a
+// `public:` section already accepted them), and no method could be named
+// `from` or `to`, although `function_name` allows both. The class parser
+// stopped at the method without an error.
+
+start:
+	Walker w = Walker()
+	w.run()
+	print(w.from(5))
+	print(w.to(5))
+
+class Walker
+	integer n = 0
+
+	functions:
+		void step()
+			n = n + 2
+
+		public:
+			void run()
+				step()
+				print(n)
+
+			integer from(integer x)
+				return n + x
+
+			integer to(integer x)
+				return n + x + 4

@@ -1,0 +1,14 @@
+// Test: bugfixes/inline_import_error_has_location
+// Grammar: import_block (grammar.ebnf 6)
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   Expected ':' after 'import'
+//   inline_import_error_has_location.cln:11:8
+//
+// The error for the inline `import name` form carried no source location.
+
+import math
+
+start:
+	print(1)

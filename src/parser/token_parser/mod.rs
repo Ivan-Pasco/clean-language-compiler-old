@@ -26,22 +26,22 @@ use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
 use std::collections::HashSet;
 use tracing::{debug, trace};
 
-/// Returns the ordering index for the 6 core sections, or None for non-core sections.
-/// Order: import: (1) → start: (2) → state: (3) → class / can (4) → functions: (5)
+/// Returns the ordering index for the core sections, or None for auxiliary sections.
+/// Order: import: (1) → plugins: (2) → start: (3) → state: (4) → class / can (5)
+/// → functions: (6)
 ///
 /// `can` declarations are class-like structural declarations that belong at the same
-/// ordering slot as `class` (index 4). See grammar.ebnf §6.4 and §6.4a.
+/// ordering slot as `class`. See grammar.ebnf §6.4 and §6.4a.
 ///
-/// Enforces the ordering rule documented in
-/// `documentation/Clean_Language_Specification.md:1114-1134` and formalised in
-/// `foundation/spec/grammar.ebnf:544`.
+/// Enforces the `program` production in `foundation/spec/grammar/grammar.ebnf` §6.
 fn core_section_order(kind: &TokenKind) -> Option<u8> {
     match kind {
         TokenKind::Import => Some(1),
-        TokenKind::Start => Some(2),
-        TokenKind::State => Some(3),
-        TokenKind::Class | TokenKind::Can => Some(4),
-        TokenKind::Functions => Some(5),
+        TokenKind::Plugins => Some(2),
+        TokenKind::Start => Some(3),
+        TokenKind::State => Some(4),
+        TokenKind::Class | TokenKind::Can => Some(5),
+        TokenKind::Functions => Some(6),
         _ => None,
     }
 }
@@ -50,10 +50,11 @@ fn core_section_order(kind: &TokenKind) -> Option<u8> {
 fn core_section_name(order: u8) -> &'static str {
     match order {
         1 => "import:",
-        2 => "start:",
-        3 => "state:",
-        4 => "class / can",
-        5 => "functions:",
+        2 => "plugins:",
+        3 => "start:",
+        4 => "state:",
+        5 => "class / can",
+        6 => "functions:",
         _ => "unknown",
     }
 }
@@ -217,9 +218,8 @@ impl TokenParser {
         let mut source_block: Option<crate::ast::Statement> = None;
 
         // Track section ordering for the 5 core sections:
-        // import: (1) → start: (2) → state: (3) → class (4) → functions: (5).
-        // Per documentation/Clean_Language_Specification.md:1114 and
-        // foundation/spec/grammar.ebnf:544, these must appear in order when present.
+        // import: → plugins: → start: → state: → class → functions:, in that
+        // order when present (grammar.ebnf `program`).
         let mut last_core_section: u8 = 0;
 
         while !self.is_at_end() {
@@ -237,7 +237,7 @@ impl TokenParser {
                 continue;
             }
 
-            // Enforce section ordering for the 5 core sections (SYN007).
+            // Enforce section ordering for the core sections (SYN007).
             // Skipped in lenient mode, used for plugin output parsing.
             if !self.lenient_section_order {
                 if let Some(current_order) = core_section_order(self.current_kind()) {
@@ -254,7 +254,7 @@ impl TokenParser {
                                         current_name, last_name
                                     ),
                                     Some(
-                                        "Expected section order: import:, start:, state:, class, functions:"
+                                        "Expected section order: import:, plugins:, start:, state:, class, functions:"
                                             .to_string(),
                                     ),
                                     ErrorType::Syntax,
@@ -289,11 +289,14 @@ impl TokenParser {
                         // (e.g. `inputs:` inside a class body generates a synthetic `Inputs` class)
                         classes.append(&mut self.pending_synthetic_classes);
                     }
-                    Err(e) => self.errors.push(e),
+                    Err(e) => {
+                        self.errors.push(e);
+                        self.skip_rejected_declaration();
+                    }
                 },
                 TokenKind::Can => {
                     // Parse a top-level `can Name:` capability declaration.
-                    // Grammar: foundation/spec/grammar.ebnf §6.4 and §6.4a.
+                    // Grammar: foundation/spec/grammar/grammar.ebnf §6.4 and §6.4a.
                     debug!("Parsing can declaration");
                     match self.parse_can_declaration() {
                         Ok(cap) => {
@@ -345,13 +348,22 @@ impl TokenParser {
                 TokenKind::State => {
                     // Parse state: block
                     debug!("Parsing state: block");
+                    let duplicate = state.is_some().then(|| {
+                        self.unsupported_syntax_error(
+                            "a file has at most one `state:` block".to_string(),
+                            "declare every state variable in the first `state:` block",
+                        )
+                    });
                     match self.parse_state_block() {
                         Ok(state_block) => {
                             debug!(
                                 declaration_count = state_block.declarations.len(),
                                 "Parsed state block"
                             );
-                            state = Some(state_block);
+                            match duplicate {
+                                Some(error) => self.errors.push(error),
+                                None => state = Some(state_block),
+                            }
                         }
                         Err(e) => self.errors.push(e),
                     }
@@ -375,7 +387,10 @@ impl TokenParser {
                     debug!("Parsing screen: block");
                     match self.parse_screen_block() {
                         Ok(screen_stmt) => screen_blocks_vec.push(screen_stmt),
-                        Err(e) => self.errors.push(e),
+                        Err(e) => {
+                            self.errors.push(e);
+                            self.skip_rejected_declaration();
+                        }
                     }
                 }
                 TokenKind::Build => {
@@ -389,10 +404,17 @@ impl TokenParser {
                 TokenKind::Source => {
                     // Parse source: block (AI metadata)
                     debug!("Parsing source: block");
+                    let duplicate = source_block.is_some().then(|| {
+                        self.unsupported_syntax_error(
+                            "a file has at most one `source:` block".to_string(),
+                            "source:\n\tspec: \"specs/feature.spec.cln\"\n\tversion: \"1.0.0\"",
+                        )
+                    });
                     match self.parse_source_block() {
-                        Ok(sb) => {
-                            source_block = Some(sb);
-                        }
+                        Ok(sb) => match duplicate {
+                            Some(error) => self.errors.push(error),
+                            None => source_block = Some(sb),
+                        },
                         Err(e) => self.errors.push(e),
                     }
                 }

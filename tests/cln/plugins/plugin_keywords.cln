@@ -1,3 +1,12 @@
+// Test: Plugin keywords without colons should be accepted
+// Requires frame.data plugin to be loaded
+// NOTE: Field constraints (: pk, auto) require plugin update - using simple fields for now
+// Fixed: was `plugins:` after `start:` and `functions:`, spec requires it
+// before `start:` (grammar.ebnf `program`)
+
+plugins:
+	frame.data
+
 start:
 	printUsers()
 // Plugin keyword "data" followed by identifier (no colon)
@@ -5,13 +14,6 @@ start:
 functions:
 	void printUsers()
 		print("Users loaded")
-
-// Test: Plugin keywords without colons should be accepted
-// Requires frame.data plugin to be loaded
-// NOTE: Field constraints (: pk, auto) require plugin update - using simple fields for now
-
-plugins:
-	frame.data
 
 data User
 	integer id
@@ -22,4 +24,3 @@ data Post
 	integer id
 	string title
 	string content
-

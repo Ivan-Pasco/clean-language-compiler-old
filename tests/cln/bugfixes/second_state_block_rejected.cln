@@ -1,0 +1,19 @@
+// Test: bugfixes/second_state_block_rejected
+// Grammar: program, state_block (grammar.ebnf 6)
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   SYN002
+//   a file has at most one `state:` block
+//   second_state_block_rejected.cln:18:1
+//
+// A second `state:` block silently replaced the first one, so the error
+// pointed at the use of `a` instead of the extra block.
+
+start:
+	print(a)
+
+state:
+	integer a = 1
+state:
+	integer b = 2

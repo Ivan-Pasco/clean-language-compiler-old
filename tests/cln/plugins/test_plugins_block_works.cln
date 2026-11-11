@@ -1,11 +1,12 @@
-start:
-	print("test")
-state:
-	integer count = 0
-
 // Test 1: plugins: block works correctly
 // This should compile successfully
+// Fixed: was `plugins:` after `start:` and `state:`, spec requires it
+// before `start:` (grammar.ebnf `program`)
 
 plugins:
 	frame.ui
 
+start:
+	print("test")
+state:
+	integer count = 0

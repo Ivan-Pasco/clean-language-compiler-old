@@ -1946,8 +1946,10 @@ impl TokenParser {
                 TokenKind::Indent(_) => {
                     self.bump();
                 }
+                // A dedent back to the state body level closes a nested
+                // section (`public:`, `computed:`); the block continues.
                 TokenKind::Dedent(_) => {
-                    break;
+                    self.bump();
                 }
                 TokenKind::Computed => {
                     // Parse computed: block for derived state values
@@ -1967,7 +1969,7 @@ impl TokenParser {
                 }
                 TokenKind::Public => {
                     // Inline public: sub-section inside a state: block.
-                    // Grammar (foundation/spec/grammar.ebnf §6.8a):
+                    // Grammar (foundation/spec/grammar/grammar.ebnf §6.8a):
                     //   public_state_section = "public" ":" NEWLINE
                     //                          INDENT+ state_declaration
                     //                          { NEWLINE { empty_line } INDENT+ state_declaration }
@@ -2063,7 +2065,7 @@ impl TokenParser {
     /// them (SEM005). Declarations outside this section default to `is_private: true`
     /// per the 2026-06-25 visibility flip.
     ///
-    /// Grammar (foundation/spec/grammar.ebnf §6.8a):
+    /// Grammar (foundation/spec/grammar/grammar.ebnf §6.8a):
     ///   public_state_section = "public" ":" NEWLINE
     ///                          INDENT+ state_declaration
     ///                          { NEWLINE { empty_line } INDENT+ state_declaration }
@@ -3449,11 +3451,14 @@ impl TokenParser {
         self.expect(&TokenKind::Screen)?;
         self.skip_whitespace();
 
-        // Parse the screen name
-        let name = self
-            .expect_name()
-            .map(|t| t.text.clone())
-            .unwrap_or_else(|_| "unnamed".to_string());
+        // grammar.ebnf §6.10: screen_block = "screen" , identifier , ":" ...
+        if matches!(self.current_kind(), TokenKind::Colon) {
+            return Err(self.unsupported_syntax_error(
+                "a `screen` block needs a name".to_string(),
+                "screen Home:\n\tstate:\n\t\tinteger count = 0",
+            ));
+        }
+        let name = self.expect_name()?.text.clone();
         self.skip_whitespace();
 
         // Consume ":"

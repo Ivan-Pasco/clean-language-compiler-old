@@ -16,7 +16,6 @@ use crate::ast::{
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
-use tracing::warn;
 
 impl TokenParser {
     /// Parse start: block (entry point)
@@ -136,7 +135,7 @@ impl TokenParser {
                     self.skip_indentation();
 
                     // Check for inline public: sub-section
-                    // Grammar (foundation/spec/grammar.ebnf §6.2a):
+                    // Grammar (foundation/spec/grammar/grammar.ebnf §6.2a):
                     //   public_functions_section = INDENT+ "public" ":" NEWLINE function_declaration_line+
                     if matches!(self.current_kind(), TokenKind::Public) {
                         let public_funcs =
@@ -148,17 +147,11 @@ impl TokenParser {
                     // Check if this line starts a function signature
                     // Functions can optionally start with a return type or keyword that can be used as a name
                     match self.current_kind() {
-                        TokenKind::Identifier(_)
-                        | TokenKind::Test
-                        | TokenKind::Unit
-                        | TokenKind::Error
-                        | TokenKind::Input
-                        | TokenKind::Step
-                        | TokenKind::Description
-                        | TokenKind::Start => match self.parse_function_in_block() {
-                            Ok(func) => functions.push(func),
-                            Err(e) => return Err(e),
-                        },
+                        kind if Self::starts_function_line(kind)
+                            || matches!(kind, TokenKind::Start) =>
+                        {
+                            functions.push(self.parse_function_in_block()?)
+                        }
                         _ => {
                             // Not a function, might be end of block
                             break;
@@ -172,20 +165,10 @@ impl TokenParser {
                         self.parse_public_functions_section(functions_block_level)?;
                     functions.extend(public_funcs);
                 }
-                TokenKind::Identifier(_)
-                | TokenKind::Test
-                | TokenKind::Unit
-                | TokenKind::Error
-                | TokenKind::Input
-                | TokenKind::Step
-                | TokenKind::Description
-                | TokenKind::Start => {
-                    // Direct identifier or keyword without Indent token - still in functions block
-                    // This happens when functions are at the same indentation level
-                    match self.parse_function_in_block() {
-                        Ok(func) => functions.push(func),
-                        Err(e) => return Err(e),
-                    }
+                // Direct identifier or keyword without Indent token - still in functions block
+                // This happens when functions are at the same indentation level
+                kind if Self::starts_function_line(kind) || matches!(kind, TokenKind::Start) => {
+                    functions.push(self.parse_function_in_block()?)
                 }
                 _ => {
                     // No indentation = end of functions block
@@ -206,7 +189,7 @@ impl TokenParser {
     /// Functions outside this section remain `Visibility::Private` (the new default
     /// per the 2026-06-25 visibility flip).
     ///
-    /// Grammar (foundation/spec/grammar.ebnf §6.2a):
+    /// Grammar (foundation/spec/grammar/grammar.ebnf §6.2a):
     ///   public_functions_section = INDENT+ "public" ":" NEWLINE
     ///                              function_declaration_line
     ///                              { NEWLINE { empty_line } function_declaration_line }
@@ -238,7 +221,7 @@ impl TokenParser {
                 break;
             }
 
-            // A dedent at or below the parent block level exits the private section.
+            // A dedent at or below the parent block level exits the public section.
             if let TokenKind::Dedent(level) = self.current_kind() {
                 if *level <= parent_block_level {
                     break;
@@ -247,7 +230,7 @@ impl TokenParser {
                 continue;
             }
 
-            // Top-level keywords exit the private section.
+            // Top-level keywords exit the public section.
             if matches!(
                 self.current_kind(),
                 TokenKind::Class
@@ -261,11 +244,11 @@ impl TokenParser {
             }
 
             // An indent token that brings us to the functions block level or higher:
-            // the private sub-section ends when indentation drops back to parent level.
+            // the public sub-section ends when indentation drops back to parent level.
             if let TokenKind::Indent(level) = self.current_kind() {
                 let lvl = *level;
                 if lvl <= parent_block_level {
-                    // Back to parent level - private section is over.
+                    // Back to parent level - public section is over.
                     break;
                 }
                 // Consume the deeper indent and continue parsing.
@@ -277,21 +260,13 @@ impl TokenParser {
                 break;
             }
 
-            // Check if we're still inside the private section by peeking at what follows.
+            // Check if we're still inside the public section by peeking at what follows.
             match self.current_kind() {
-                TokenKind::Identifier(_)
-                | TokenKind::Test
-                | TokenKind::Unit
-                | TokenKind::Error
-                | TokenKind::Input
-                | TokenKind::Step
-                | TokenKind::Description => match self.parse_function_in_block() {
-                    Ok(mut func) => {
-                        func.visibility = Visibility::Public;
-                        public_functions.push(func);
-                    }
-                    Err(e) => return Err(e),
-                },
+                kind if Self::starts_function_line(kind) => {
+                    let mut func = self.parse_function_in_block()?;
+                    func.visibility = Visibility::Public;
+                    public_functions.push(func);
+                }
                 TokenKind::Newline => {
                     self.bump();
                 }
@@ -346,14 +321,14 @@ impl TokenParser {
                     (Type::Void, name)
                 } else {
                     // Successfully parsed a type, expect function name next
-                    let name_token = self.expect_name()?;
+                    let name_token = self.expect_function_name()?;
                     (typ, name_token.text.clone())
                 }
             }
             Err(_) => {
                 // Failed to parse as type, backtrack and try as function name
                 self.cursor = saved_cursor;
-                let first_token = self.expect_name()?;
+                let first_token = self.expect_function_name()?;
                 let first_name = first_token.text.clone();
                 self.skip_whitespace();
 
@@ -372,7 +347,7 @@ impl TokenParser {
                         "boolean" => Type::Boolean,
                         _ => Type::Object(first_name.clone()),
                     };
-                    let name_token = self.expect_name()?;
+                    let name_token = self.expect_function_name()?;
                     (return_type, name_token.text.clone())
                 }
             }
@@ -695,7 +670,7 @@ impl TokenParser {
                         }
 
                         // Check for inline public: sub-section inside class functions: block
-                        // Grammar (foundation/spec/grammar.ebnf §6.4b):
+                        // Grammar (foundation/spec/grammar/grammar.ebnf §6.4b):
                         //   public_class_methods_section = INDENT+ "public" ":" NEWLINE
                         //                                  { class_function_line | empty_line }
                         if matches!(self.current_kind(), TokenKind::Public) {
@@ -706,16 +681,8 @@ impl TokenParser {
                         }
 
                         // Parse method (return_type name(params))
-                        if matches!(self.current_kind(), TokenKind::Identifier(_)) {
-                            match self.parse_function_in_block() {
-                                Ok(func) => methods.push(func),
-                                Err(e) => {
-                                    // Log the error but don't break - try to continue
-                                    // This allows recovery from individual method parse errors
-                                    warn!(error = %e, "Failed to parse method");
-                                    break;
-                                }
-                            }
+                        if Self::starts_function_line(self.current_kind()) {
+                            methods.push(self.parse_function_in_block()?);
                         } else {
                             // No more methods to parse
                             break;
@@ -866,18 +833,11 @@ impl TokenParser {
                                 break;
                             }
                             if matches!(self.current_kind(), TokenKind::Identifier(_)) {
-                                match self.parse_event_handler_in_block() {
-                                    Ok(mut func) => {
-                                        // Tag this method so the post-expansion shim
-                                        // pass knows to emit a bare-named dispatch.
-                                        func.modifier = crate::ast::FunctionModifier::EventHandler;
-                                        methods.push(func);
-                                    }
-                                    Err(e) => {
-                                        warn!(error = %e, "Failed to parse events: method");
-                                        break;
-                                    }
-                                }
+                                let mut func = self.parse_event_handler_in_block()?;
+                                // Tag this method so the post-expansion shim
+                                // pass knows to emit a bare-named dispatch.
+                                func.modifier = crate::ast::FunctionModifier::EventHandler;
+                                methods.push(func);
                             } else {
                                 break;
                             }
@@ -1128,7 +1088,7 @@ impl TokenParser {
 
     /// Parse a top-level `can Name:` block into a [`Capability`].
     ///
-    /// Grammar (foundation/spec/grammar.ebnf §6.4 and §6.4a):
+    /// Grammar (foundation/spec/grammar/grammar.ebnf §6.4 and §6.4a):
     /// ```text
     /// can_declaration = "can", identifier, ":", NEWLINE,
     ///                   { empty_line },
@@ -1493,7 +1453,7 @@ impl TokenParser {
         if !self.eat(&TokenKind::Colon) {
             return Err(CompilerError::parse_error(
                 "Expected ':' after 'import'. Use the block form:\n  import:\n      module_name",
-                None,
+                Some(self.current().location.clone()),
                 Some("Inline import syntax is not supported. Use 'import:' followed by an indented block of module names.".to_string()),
             ));
         }
@@ -2005,6 +1965,34 @@ impl TokenParser {
                     None,
                 ))
             }
+        }
+    }
+
+    /// Whether `kind` can begin a `function_in_block` line: a return type or
+    /// a `function_name` (grammar.ebnf §1.3).
+    pub(super) fn starts_function_line(kind: &TokenKind) -> bool {
+        matches!(
+            kind,
+            TokenKind::Identifier(_)
+                | TokenKind::Test
+                | TokenKind::Unit
+                | TokenKind::Error
+                | TokenKind::Input
+                | TokenKind::Step
+                | TokenKind::Description
+                | TokenKind::From
+                | TokenKind::To
+        )
+    }
+
+    /// A `function_name` in a declaration header. grammar.ebnf §1.3 also
+    /// allows the keywords `from` and `to` here.
+    fn expect_function_name(
+        &mut self,
+    ) -> Result<crate::lexer::specification_token::Token, CompilerError> {
+        match self.current_kind() {
+            TokenKind::From | TokenKind::To => Ok(self.bump()),
+            _ => self.expect_name(),
         }
     }
 

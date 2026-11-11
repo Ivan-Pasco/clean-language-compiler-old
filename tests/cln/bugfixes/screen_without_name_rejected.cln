@@ -1,0 +1,16 @@
+// Test: bugfixes/screen_without_name_rejected
+// Grammar: screen_block (grammar.ebnf 6.10)
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   SYN002
+//   a `screen` block needs a name
+//   screen_without_name_rejected.cln:14:7
+//
+// `screen:` without a name was accepted as a screen called "unnamed".
+
+start:
+	print(1)
+screen:
+	state:
+		integer a = 1

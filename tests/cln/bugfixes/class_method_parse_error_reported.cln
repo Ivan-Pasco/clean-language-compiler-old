@@ -1,0 +1,22 @@
+// Test: bugfixes/class_method_parse_error_reported
+// Grammar: class_functions_block, function_in_block
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   Expected name
+//   class_method_parse_error_reported.cln:14:19
+//
+// A parse error inside a class method was logged and dropped: the class
+// silently lost that method and every method after it.
+
+class Counter
+	functions:
+		void add(integer)
+			print(1)
+
+		integer get()
+			return 2
+
+start:
+	Counter c = Counter()
+	print(c.get())
