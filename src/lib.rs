@@ -515,7 +515,7 @@ pub fn target_to_host_class(target: &str) -> Option<&'static str> {
 /// [`compile_with_external_plugins_and_opt_level`]); the source is compiled
 /// as `main.cln`.
 pub fn compile(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_source_with_detected_plugins(source, "main.cln", 2)
+    compile_with_external_plugins_and_opt_level(source, "main.cln", 2)
 }
 
 /// Compiles Clean Language source code to WebAssembly with file path for better error reporting
@@ -523,29 +523,7 @@ pub fn compile(source: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
 /// Plugins declared in the source's `plugins:` block are loaded, exactly as
 /// `cln compile` does (see [`compile_with_external_plugins_and_opt_level`]).
 pub fn compile_with_file(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_source_with_detected_plugins(source, file_path, 2)
-}
-
-/// Compiles Clean Language source code with optimization level
-///
-/// # Arguments
-/// * `source` - The Clean Language source code
-/// * `file_path` - Path for error reporting
-/// * `opt_level` - Optimization level (0-3):
-///   - 0: No optimization (fastest compilation, for debugging)
-///   - 1: Light optimization
-///   - 2: Standard optimization (default)
-///   - 3: Aggressive optimization (speed + size)
-///
-/// # Returns
-/// * `Ok(Vec<u8>)` - Compiled WebAssembly bytes
-/// * `Err(Vec<CompilerError>)` - Compilation errors
-pub fn compile_with_opt_level(
-    source: &str,
-    file_path: &str,
-    opt_level: u8,
-) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_source_with_detected_plugins(source, file_path, opt_level)
+    compile_with_external_plugins_and_opt_level(source, file_path, 2)
 }
 
 /// Parses Clean Language source code and returns the AST (stages 1-2 only).
@@ -685,26 +663,6 @@ pub fn lint_source(
     // before ever calling `PluginExpander::expand_program`.
     let reports = plugins::lint::run_lint_pass(&registry, &program, config_level);
     Ok(reports)
-}
-
-/// Compiles Clean Language source code through the `cln compile` pipeline.
-///
-/// Plugins named in the source's `plugins:` block are loaded; a source
-/// without one compiles as pure Clean Language.
-pub fn compile_pure(source: &str, file_path: &str) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_source_with_detected_plugins(source, file_path, 2)
-}
-
-/// Alias for [`compile_with_external_plugins_and_opt_level`].
-///
-/// Used by the MCP compile/validate tools and the `cln debug` command so that
-/// any `plugins:` declarations in the source are honoured during compilation.
-pub fn compile_source_with_detected_plugins(
-    source: &str,
-    file_path: &str,
-    opt_level: u8,
-) -> Result<Vec<u8>, Vec<CompilerError>> {
-    compile_with_external_plugins_and_opt_level(source, file_path, opt_level)
 }
 
 /// Render a non-fatal diagnostic (HIR validation, name resolution or type
@@ -1029,7 +987,7 @@ pub fn compile_with_target(
             std::path::Path::new(file_path),
         )));
     }
-    let result = compile_source_with_detected_plugins(source, file_path, opt_level);
+    let result = compile_with_external_plugins_and_opt_level(source, file_path, opt_level);
     set_plugin_abi_version_override(previous_abi);
     COMPILATION_TARGET.with(|t| t.set(previous_target));
     result

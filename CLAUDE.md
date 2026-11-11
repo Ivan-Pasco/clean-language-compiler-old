@@ -44,7 +44,9 @@ The compiler generates WASM imports — it does NOT implement runtime functions.
 
 **Rule of thumb:** If a function needs I/O, network, or database, it belongs in a plugin declaration, NOT in the compiler registry.
 
-### Compiler Registry (`src/builtins/registry.rs`) — What Belongs Here
+### Compiler Built-ins (`src/resolver/symbol_table.rs`) — What Belongs Here
+
+The built-in functions, classes and namespaces are registered in the resolver's global symbol table (`GlobalSymbolTable::add_builtins`); MCP `list_builtins` reads the same table. `src/builtins/registry.rs` only holds the `BuiltinType` enum used by the bridge-function ABI.
 
 - Language built-ins: print, printl, input
 - Math operations: abs, sqrt, pow, sin, cos

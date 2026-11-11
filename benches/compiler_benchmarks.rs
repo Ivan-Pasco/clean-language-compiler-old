@@ -198,7 +198,7 @@ fn bench_full_compilation(c: &mut Criterion) {
 }
 
 fn bench_optimization_levels(c: &mut Criterion) {
-    use clean_language_compiler::compile_with_opt_level;
+    use clean_language_compiler::compile_with_external_plugins_and_opt_level;
 
     let mut group = c.benchmark_group("optimization_levels");
     group.sample_size(20);
@@ -211,7 +211,8 @@ fn bench_optimization_levels(c: &mut Criterion) {
             &opt_level,
             |b, &level| {
                 b.iter(|| {
-                    let result = compile_with_opt_level(source, "benchmark.cln", level);
+                    let result =
+                        compile_with_external_plugins_and_opt_level(source, "benchmark.cln", level);
                     black_box(result)
                 });
             },
