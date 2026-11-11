@@ -1876,7 +1876,6 @@ impl super::CodeGenerator {
         }
         func.instruction(&Instruction::End);
         self.code_section.function(&func);
-        self.function_names.push(name.to_string());
         self.function_map.insert(name.to_string(), function_index);
         self.wasm_function_return_types
             .insert(name.to_string(), return_type);
@@ -1921,7 +1920,6 @@ impl super::CodeGenerator {
         }
         func.instruction(&Instruction::End);
         self.code_section.function(&func);
-        self.function_names.push(name.to_string());
         self.function_map.insert(name.to_string(), function_index);
         self.wasm_function_return_types
             .insert(name.to_string(), return_type);

@@ -34,6 +34,8 @@ pub const LIST_TYPE_ID: u32 = 4;
 ///
 /// Linear memory layout:
 ///   [0 .. 1 KB)            Reserved (null-pointer guard)
+///   [1 KB .. 4 KB)          Unused: data segments may lie here
+///                           (`DATA_SECTION_START`), but none is placed here
 ///   [4 KB .. string end)    String literals (`STRING_POOL_START`), placed by
 ///                           `get_or_create_string_offset`
 ///   [string end .. +64 KB)  Transient arena pool (`TRANSIENT_POOL_SIZE`),
@@ -60,7 +62,6 @@ pub struct CodeGenerator {
     memory_utils: MemoryUtils,
     function_count: u32,
     function_map: HashMap<String, u32>,
-    function_names: Vec<String>,
     /// WASM return type for every registered function (imports + internal),
     /// keyed by the canonical name registered in `function_map`.
     ///
@@ -138,7 +139,6 @@ impl CodeGenerator {
             memory_utils: MemoryUtils::new(DATA_SECTION_START),
             function_count: 0,
             function_map: HashMap::new(),
-            function_names: Vec::new(),
             wasm_function_return_types: HashMap::new(),
             function_type_indices: HashMap::new(),
             file_import_indices: HashMap::new(),
@@ -215,7 +215,6 @@ impl CodeGenerator {
         self.function_map.insert(field.to_string(), func_index);
         self.function_type_indices.insert(func_index, type_index);
         self.imported_functions.insert(field.to_string());
-        self.function_names.push(field.to_string());
         self.wasm_function_return_types
             .insert(field.to_string(), return_type);
 

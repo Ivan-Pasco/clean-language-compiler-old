@@ -614,7 +614,6 @@ impl MirCodeGenerator<'_> {
 
         self.wasm_generator.function_section.function(type_index);
         self.wasm_generator.code_section.function(&wasm_function);
-        self.wasm_generator.function_names.push(name.clone());
 
         // Defense in depth for CODEGEN_STACK_REMAINING (fp ab7f9b3f): the
         // call-site void detection in `wasm_function_is_void` queries this
@@ -728,9 +727,6 @@ impl MirCodeGenerator<'_> {
                 start_func_index,
             );
 
-            self.wasm_generator
-                .function_names
-                .push("_start".to_string());
             self.wasm_generator.function_count += 1;
         } else {
             return Err(CompilerError::codegen_error(
@@ -909,9 +905,6 @@ impl MirCodeGenerator<'_> {
             wasm_encoder::ExportKind::Func,
             run_tests_index,
         );
-        self.wasm_generator
-            .function_names
-            .push("_run_tests".to_string());
         self.wasm_generator.function_count += 1;
 
         tracing::debug!(
@@ -958,9 +951,6 @@ impl MirCodeGenerator<'_> {
             wasm_encoder::ExportKind::Func,
             start_index,
         );
-        self.wasm_generator
-            .function_names
-            .push("_start".to_string());
         self.wasm_generator.function_count += 1;
 
         Ok(())
