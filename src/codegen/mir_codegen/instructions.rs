@@ -304,57 +304,14 @@ impl MirCodeGenerator<'_> {
                     }
                 }
 
-                // For arrays we need a per-element byte stride. The GEP destination is
-                // typed as Ptr<element_type> by the MIR builder, so the inner T tells
-                // us the element MIR type. Elements that lower to f64/i64 must use an
-                // 8-byte stride; everything else (i32-class types and pointers, which
-                // are i32 in WASM MVP) uses 4. The MIR-builder side hardcoded Ptr<I32>
-                // for years, which is why list<number>/list<integer64> read garbage
-                // after element 0 (RUNTIME_ITERATE_LIST_NUMBER_WRONG_LOAD).
-                let element_stride: i32 = if *is_array {
-                    match instruction.dest.and_then(|d| self.value_to_type.get(&d)) {
-                        Some(MirType::Ptr(inner)) => match **inner {
-                            MirType::F64 | MirType::I64 | MirType::U64 => 8,
-                            _ => 4,
-                        },
-                        _ => 4,
-                    }
+                if *is_array {
+                    self.emit_list_element_address(instruction, indices)?;
                 } else {
-                    0 // unused for struct field access
-                };
-
-                // For each index, load it and generate pointer arithmetic
-                for (i, index) in indices.iter().enumerate() {
-                    debug_mir!(index_num = i, index = ?index, "Processing index");
-                    match self.load_operand(index) {
-                        Ok(_) => {
-                            debug_mir!(index_num = i, "Index loaded successfully");
-                            // Calculate element address
-                            if *is_array {
-                                // For arrays: multiply index by element_stride and add header
-                                // Array elements are at array_ptr + 16 + (index * stride)
-                                self.current_instructions
-                                    .push(Instruction::I32Const(element_stride));
-                                self.current_instructions.push(Instruction::I32Mul);
-                                self.current_instructions.push(Instruction::I32Add);
-                                // Clean Language array layout:
-                                //   Offset 0-3: Type marker (0)
-                                //   Offset 4-7: Array length (i32)
-                                //   Offset 8-11: Element size hint (ignored — driven by Ptr<T>)
-                                //   Offset 12-15: Unused
-                                //   Offset 16+: Elements start here
-                                self.current_instructions.push(Instruction::I32Const(16));
-                                self.current_instructions.push(Instruction::I32Add);
-                            } else {
-                                // For class fields: the index IS the byte offset (already calculated)
-                                // Just add it directly to the base pointer
-                                self.current_instructions.push(Instruction::I32Add);
-                            }
-                        }
-                        Err(e) => {
-                            debug_mir!(index_num = i, error = ?e, "Failed to load index");
-                            return Err(e);
-                        }
+                    // Class fields: each index IS the byte offset; add it to
+                    // the base pointer.
+                    for index in indices {
+                        self.load_operand(index)?;
+                        self.current_instructions.push(Instruction::I32Add);
                     }
                 }
 
@@ -574,64 +531,31 @@ impl MirCodeGenerator<'_> {
             MirOperation::Cast { value, target_type } => {
                 debug_mir!(value = ?value, target_type = ?target_type, "Processing Cast");
 
-                // Get the source type by checking value_to_type or inferring from operand
-                let source_type = if let MirOperand::Value(vid) = value {
-                    self.value_to_type.get(vid).cloned()
-                } else {
-                    None
-                };
+                // The source type of a value, or of a constant the optimizer
+                // propagated into the operand.
+                let source_type = match value {
+                    MirOperand::Value(vid) => self.value_to_type.get(vid).cloned(),
+                    _ => None,
+                }
+                .or_else(|| self.get_operand_mir_type(value));
 
-                // Load the value onto the stack
                 self.load_operand(value)?;
 
-                // Generate appropriate conversion instruction
-                match (source_type.as_ref(), target_type) {
-                    // Integer to Float conversions
-                    (Some(MirType::I32), MirType::F64) | (None, MirType::F64) => {
-                        // Convert i32 to f64 (signed conversion)
-                        self.current_instructions.push(Instruction::F64ConvertI32S);
-                        debug_mir!("Cast: I32 -> F64 using F64ConvertI32S");
-                    }
-
-                    // Float to Integer conversions
-                    (Some(MirType::F64), MirType::I32) => {
-                        // Convert f64 to i32 (truncate)
-                        self.current_instructions.push(Instruction::I32TruncF64S);
-                        debug_mir!("Cast: F64 -> I32 using I32TruncF64S");
-                    }
-
-                    // `integer:64` conversions (type-system.md §5: integer
-                    // widening, sized→unsized, integer→number).
-                    (Some(MirType::I32 | MirType::Bool), MirType::I64 | MirType::U64) => {
-                        self.current_instructions.push(Instruction::I64ExtendI32S);
-                    }
-                    (Some(MirType::I64 | MirType::U64), MirType::I32) => {
-                        self.current_instructions.push(Instruction::I32WrapI64);
-                    }
-                    (Some(MirType::I64 | MirType::U64), MirType::F64) => {
-                        self.current_instructions.push(Instruction::F64ConvertI64S);
-                    }
-                    (Some(MirType::F64), MirType::I64 | MirType::U64) => {
-                        self.current_instructions.push(Instruction::I64TruncF64S);
-                    }
-
-                    // Same type - no conversion needed
-                    (Some(MirType::I32), MirType::I32) | (Some(MirType::F64), MirType::F64) => {
-                        debug_mir!("Cast: Same type, no conversion needed");
-                    }
-
-                    // Pointer casts - treat as no-op in WASM (all pointers are i32)
-                    (Some(MirType::Ptr(_)), MirType::Ptr(_)) => {
-                        debug_mir!("Cast: Pointer to pointer, no conversion needed");
-                    }
-
-                    // Default: log warning but don't fail
-                    _ => {
-                        debug_mir!(
-                            source = ?source_type,
-                            target = ?target_type,
-                            "Cast: Unknown type conversion, treating as no-op"
-                        );
+                match source_type
+                    .as_ref()
+                    .and_then(|source| cast_instruction(source, target_type))
+                {
+                    Some(Some(conversion)) => self.current_instructions.push(conversion),
+                    Some(None) => {}
+                    None => {
+                        return Err(CompilerError::codegen_error(
+                            format!(
+                                "Unsupported conversion from {:?} to {:?}",
+                                source_type, target_type
+                            ),
+                            None,
+                            Some(instruction.location.clone()),
+                        ));
                     }
                 }
 
@@ -870,7 +794,6 @@ impl MirCodeGenerator<'_> {
     // -----------------------------------------------------------------------
     // Call instruction helper (extracted from generate_instruction to reduce nesting)
     // -----------------------------------------------------------------------
-
     fn generate_call_instruction(
         &mut self,
         instruction: &MirInstruction,
@@ -2913,6 +2836,68 @@ impl MirCodeGenerator<'_> {
     // Boxing / unboxing helpers for `any` type
     // -----------------------------------------------------------------------
 
+    /// Address of `list[index]`, with the list pointer on the stack.
+    ///
+    /// Halts when `index` is outside `0..length`, as `.get(index)` does
+    /// (stdlib-reference.md §5). The list header is 16 bytes (size,
+    /// capacity, type_id, flags; `native_stdlib::LIST_DATA_OFFSET`) and the
+    /// stride comes from the element type the MIR builder puts in the
+    /// destination's `Ptr<T>`: 8 bytes for f64/i64 elements, 4 otherwise.
+    fn emit_list_element_address(
+        &mut self,
+        instruction: &MirInstruction,
+        indices: &[MirOperand],
+    ) -> Result<(), CompilerError> {
+        let [index] = indices else {
+            return Err(CompilerError::codegen_error(
+                format!(
+                    "List element access takes one index, found {}",
+                    indices.len()
+                ),
+                None,
+                Some(instruction.location.clone()),
+            ));
+        };
+        let element_stride: i32 = match instruction.dest.and_then(|d| self.value_to_type.get(&d)) {
+            Some(MirType::Ptr(inner)) => match **inner {
+                MirType::F64 | MirType::I64 | MirType::U64 => 8,
+                _ => 4,
+            },
+            _ => 4,
+        };
+        let list_local = self.alloc_temp_local(ValType::I32);
+        let index_local = self.alloc_temp_local(ValType::I32);
+        self.current_instructions
+            .push(Instruction::LocalTee(list_local));
+        self.load_operand(index)?;
+        self.current_instructions
+            .push(Instruction::LocalSet(index_local));
+        self.current_instructions.extend([
+            Instruction::LocalGet(index_local),
+            Instruction::I32Const(0),
+            Instruction::I32LtS,
+            Instruction::LocalGet(index_local),
+            Instruction::LocalGet(list_local),
+            Instruction::I32Load(wasm_encoder::MemArg {
+                offset: crate::codegen::native_stdlib::LIST_LENGTH_OFFSET as u64,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::I32GeS,
+            Instruction::I32Or,
+            Instruction::If(BlockType::Empty),
+            Instruction::Unreachable,
+            Instruction::End,
+            Instruction::LocalGet(index_local),
+            Instruction::I32Const(element_stride),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::I32Const(crate::codegen::native_stdlib::LIST_DATA_OFFSET as i32),
+            Instruction::I32Add,
+        ]);
+        Ok(())
+    }
+
     /// The function index of the module's allocator, `__malloc`. Compiled
     /// code never allocates through the host's `memory_runtime.mem_alloc`:
     /// two allocators on one heap stay apart only while every host keeps
@@ -3162,6 +3147,50 @@ impl MirCodeGenerator<'_> {
 /// integers occupy their own width (`integer:8` is one byte, see
 /// `get_type_byte_size`), so they are read with the matching narrow load and
 /// sign- or zero-extended; `integer:64` and `number` use 8-byte loads.
+/// The instruction converting a `source` value on the stack to `target`:
+/// `Some(None)` when both share a WASM representation, `None` when the
+/// conversion is not supported. `number` → integer conversions saturate and
+/// never halt (stdlib-reference.md §3).
+fn cast_instruction(source: &MirType, target: &MirType) -> Option<Option<Instruction<'static>>> {
+    fn val_type(ty: &MirType) -> Option<ValType> {
+        match ty {
+            MirType::I8
+            | MirType::I16
+            | MirType::I32
+            | MirType::U8
+            | MirType::U16
+            | MirType::U32
+            | MirType::Bool
+            | MirType::Ptr(_)
+            | MirType::Function { .. }
+            | MirType::Any => Some(ValType::I32),
+            MirType::I64 | MirType::U64 => Some(ValType::I64),
+            MirType::F32 => Some(ValType::F32),
+            MirType::F64 => Some(ValType::F64),
+            MirType::Void => None,
+        }
+    }
+    let unsigned = |ty: &MirType| matches!(ty, MirType::U32 | MirType::U64);
+    let conversion = match (val_type(source)?, val_type(target)?) {
+        (from, to) if from == to => return Some(None),
+        (ValType::I32, ValType::F64) if unsigned(source) => Instruction::F64ConvertI32U,
+        (ValType::I32, ValType::F64) => Instruction::F64ConvertI32S,
+        (ValType::I32, ValType::I64) if unsigned(source) => Instruction::I64ExtendI32U,
+        (ValType::I32, ValType::I64) => Instruction::I64ExtendI32S,
+        (ValType::I64, ValType::I32) => Instruction::I32WrapI64,
+        (ValType::I64, ValType::F64) if unsigned(source) => Instruction::F64ConvertI64U,
+        (ValType::I64, ValType::F64) => Instruction::F64ConvertI64S,
+        (ValType::F64, ValType::I32) if unsigned(target) => Instruction::I32TruncSatF64U,
+        (ValType::F64, ValType::I32) => Instruction::I32TruncSatF64S,
+        (ValType::F64, ValType::I64) if unsigned(target) => Instruction::I64TruncSatF64U,
+        (ValType::F64, ValType::I64) => Instruction::I64TruncSatF64S,
+        (ValType::F32, ValType::F64) => Instruction::F64PromoteF32,
+        (ValType::F64, ValType::F32) => Instruction::F32DemoteF64,
+        _ => return None,
+    };
+    Some(Some(conversion))
+}
+
 fn memory_load_instruction(ty: &MirType) -> Instruction<'static> {
     let arg = |align| wasm_encoder::MemArg {
         offset: 0,
@@ -3226,5 +3255,49 @@ fn build_did_you_mean_hint(
         None
     } else {
         Some(suggestions.join(" "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn number_to_integer_casts_saturate() {
+        assert!(matches!(
+            cast_instruction(&MirType::F64, &MirType::I32),
+            Some(Some(Instruction::I32TruncSatF64S))
+        ));
+        assert!(matches!(
+            cast_instruction(&MirType::F64, &MirType::I64),
+            Some(Some(Instruction::I64TruncSatF64S))
+        ));
+    }
+
+    #[test]
+    fn casts_follow_the_source_type() {
+        assert!(matches!(
+            cast_instruction(&MirType::I64, &MirType::F64),
+            Some(Some(Instruction::F64ConvertI64S))
+        ));
+        assert!(matches!(
+            cast_instruction(&MirType::U8, &MirType::F64),
+            Some(Some(Instruction::F64ConvertI32S))
+        ));
+        assert!(matches!(
+            cast_instruction(&MirType::F64, &MirType::F64),
+            Some(None)
+        ));
+        assert!(matches!(
+            cast_instruction(&MirType::I8, &MirType::I32),
+            Some(None)
+        ));
+    }
+
+    #[test]
+    fn unsupported_casts_are_rejected() {
+        assert!(cast_instruction(&MirType::Void, &MirType::I32).is_none());
+        assert!(cast_instruction(&MirType::I32, &MirType::Void).is_none());
+        assert!(cast_instruction(&MirType::F32, &MirType::I32).is_none());
     }
 }

@@ -1,0 +1,30 @@
+// Test: bugfixes/number_to_integer_conversion_saturates
+// Grammar: method_call (toInteger), variable_declaration
+// Semantic: stdlib-reference.md §3 — type conversions never halt; a number
+//   outside the integer range clamps to the nearest integer, NaN becomes 0
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   2147483647
+//   -2147483648
+//   0
+//   3
+//
+// Regression: `number` to `integer` conversions used the trapping WASM
+// truncation, so 3000000000.0.toInteger() and NaN.toInteger() halted.
+
+start:
+	number big = nid(3000000000.0)
+	integer a = big.toInteger()
+	print(a.toString())
+	number low = nid(-3000000000.0)
+	integer b = low.toInteger()
+	print(b.toString())
+	number nan = nid(0.0) / nid(0.0)
+	integer c = nan.toInteger()
+	print(c.toString())
+	integer d = nid(3.7).toInteger()
+	print(d.toString())
+
+functions:
+	number nid(number v)
+		return v

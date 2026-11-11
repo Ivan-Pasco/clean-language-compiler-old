@@ -1,0 +1,21 @@
+// Test: bugfixes/list_index_read_out_of_bounds_halts
+// Grammar: index_expression (list[i])
+// Semantic: stdlib-reference.md §5 — element access by an index outside
+//   0..length halts, as `.get(index)` does
+// Fixed in: compiler 0.33.183
+// Expected output:
+//
+// The program halts at `xs[3]`, so the runner reports no completed output;
+// before the fix the read returned the memory after the list and the
+// program went on to print "0" and "after". In-bounds reads are pinned by
+// tests/test_list_index_read_bounds_halt.rs.
+
+start:
+	list<integer> xs = [1, 2, 3]
+	integer v = xs[id(3)]
+	print(v.toString())
+	print("after")
+
+functions:
+	integer id(integer v)
+		return v

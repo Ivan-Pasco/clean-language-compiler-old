@@ -633,6 +633,8 @@ impl MirCodeGenerator<'_> {
     /// `integer:64` ↔ `number` (type-system.md §5: integer widening,
     /// sized → unsized, integer → number). Types that share a WASM
     /// representation, and non-numeric types, need no instruction.
+    /// `number` → integer conversions saturate and never halt
+    /// (stdlib-reference.md: NaN becomes 0, out-of-range values clamp).
     pub(super) fn emit_numeric_coercion(&mut self, src: &MirType, dst: &MirType) {
         let is_i32 = |t: &MirType| {
             matches!(
@@ -648,7 +650,7 @@ impl MirCodeGenerator<'_> {
         };
         let is_i64 = |t: &MirType| matches!(t, MirType::I64 | MirType::U64);
         let instruction = if *src == MirType::F64 && *dst == MirType::I32 {
-            Instruction::I32TruncF64S
+            Instruction::I32TruncSatF64S
         } else if is_i32(src) && *src != MirType::Bool && *dst == MirType::F64 {
             Instruction::F64ConvertI32S
         } else if is_i32(src) && is_i64(dst) {
@@ -658,7 +660,7 @@ impl MirCodeGenerator<'_> {
         } else if is_i64(src) && *dst == MirType::F64 {
             Instruction::F64ConvertI64S
         } else if *src == MirType::F64 && is_i64(dst) {
-            Instruction::I64TruncF64S
+            Instruction::I64TruncSatF64S
         } else {
             return;
         };
