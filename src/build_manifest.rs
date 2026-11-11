@@ -20,7 +20,8 @@ use std::path::{Path, PathBuf};
 /// sibling of the main WASM. See contracts/artifacts.md §5.
 pub const BUILD_MANIFEST_FILENAME: &str = "build-manifest.json";
 
-/// Top-level manifest record.
+/// Top-level manifest record. Its content depends only on the build's
+/// outputs, so rebuilding unchanged sources rewrites an identical file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildManifest {
     /// Schema version of this manifest. Bumped only on breaking changes to
@@ -33,8 +34,6 @@ pub struct BuildManifest {
     pub contract_version: String,
     /// Clean runtime ABI version emitted into module imports.
     pub runtime_abi_version: String,
-    /// Unix epoch seconds when the build finished.
-    pub generated_at_epoch_seconds: u64,
     /// One entry per output file the build produced.
     pub artifacts: Vec<BuildArtifact>,
     /// Plugin Contracts v2 — resolved callback contracts from
@@ -127,7 +126,6 @@ impl BuildManifest {
             contract_version: crate::plugins::plugin_abi::PLUGIN_CONTRACT_VERSION.to_string(),
             runtime_abi_version: crate::plugins::plugin_abi::DEFAULT_RUNTIME_ABI_VERSION
                 .to_string(),
-            generated_at_epoch_seconds: now_epoch_seconds(),
             artifacts: Vec::new(),
             callbacks: Vec::new(),
             build_state: std::collections::BTreeMap::new(),
@@ -184,13 +182,6 @@ impl BuildManifest {
         std::fs::write(&manifest_path, json)?;
         Ok(manifest_path)
     }
-}
-
-fn now_epoch_seconds() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -272,6 +263,27 @@ mod tests {
         assert_eq!(read_back.compiler_version, "0.30.256");
         assert_eq!(read_back.artifacts.len(), 1);
         assert_eq!(read_back.artifacts[0].name, "app.wasm");
+    }
+
+    /// Two builds with the same outputs write the same manifest bytes.
+    #[test]
+    fn test_manifest_is_deterministic() {
+        let build = || {
+            let mut m = BuildManifest::new("0.30.256");
+            m.add_artifact(
+                "app.wasm",
+                "app.wasm",
+                "main_module",
+                false,
+                "application/wasm",
+                b"a",
+                None,
+            );
+            serde_json::to_string_pretty(&m).unwrap()
+        };
+        let first = build();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert_eq!(first, build());
     }
 
     #[test]
