@@ -1266,6 +1266,7 @@ impl MirBuilder {
             | BinaryOperator::GreaterThan
             | BinaryOperator::LessThanOrEqual
             | BinaryOperator::GreaterThanOrEqual
+            | BinaryOperator::Is
             | BinaryOperator::And
             | BinaryOperator::Or => {
                 trace!("Comparison/logical op -> I32");

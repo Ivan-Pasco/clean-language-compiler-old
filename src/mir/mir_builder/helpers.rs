@@ -33,20 +33,27 @@ impl MirBuilder {
             }
             _ => false,
         };
-        if let Some(block_id) = self.current_block {
-            if let Some(block) = context.function.blocks.get_mut(&block_id) {
-                let location = instruction.location.clone();
-                block.instructions.push(instruction);
-                if may_raise {
-                    block.instructions.push(MirInstruction {
-                        dest: None,
-                        operation: MirOperation::ErrorCheck {
-                            region_exit: context.error_regions.last().map(|r| r.exit_block),
-                        },
-                        location,
-                    });
-                }
-            }
+        // Unreachable statements are never lowered (`build_statement_list`),
+        // so there is always a block to add to.
+        let Some(block) = self
+            .current_block
+            .and_then(|id| context.function.blocks.get_mut(&id))
+        else {
+            panic!(
+                "internal compiler error: MIR instruction {:?} in function '{}' has no current block",
+                instruction.operation, context.function.name
+            );
+        };
+        let location = instruction.location.clone();
+        block.instructions.push(instruction);
+        if may_raise {
+            block.instructions.push(MirInstruction {
+                dest: None,
+                operation: MirOperation::ErrorCheck {
+                    region_exit: context.error_regions.last().map(|r| r.exit_block),
+                },
+                location,
+            });
         }
     }
 
@@ -222,6 +229,16 @@ impl MirBuilder {
         self.current_block = Some(region.exit_block);
         self.emit_error_runtime_call(context, "__err_leave", None, location);
         Ok(())
+    }
+
+    /// Control does not continue in the current block: it already ends in a
+    /// return, break, continue or other jump (its terminator is no longer the
+    /// `Unreachable` placeholder), or there is no current block because every
+    /// path before it returned.
+    pub(super) fn current_block_terminated(&self, context: &FunctionBuildContext) -> bool {
+        self.current_block
+            .and_then(|id| context.function.blocks.get(&id))
+            .is_none_or(|b| !matches!(b.terminator, MirTerminator::Unreachable))
     }
 
     /// Set terminator for current basic block
@@ -917,15 +934,15 @@ impl MirBuilder {
     ///    matching `mem_scope_pop` when the enclosing
     ///    `LoopContext::has_iter_scope` flag is set.
     ///
-    /// 3. No bare method-call or function-call statement (a
-    ///    `TastStatement::Expression` whose expression is a call). The
-    ///    canonical escape is `outer_list.push(inner_string)` — the
-    ///    receiver lives outside the body, the argument was allocated
-    ///    this iteration, and the call stores the pointer into outer
-    ///    state. The analyzer can't trace arbitrary call effects, so any
-    ///    call statement is conservatively flagged as an escape. Calls
-    ///    that appear as the RHS of a variable declaration or assignment
-    ///    are still examined by the target rules in (1).
+    /// 3. No call that can store a pointer into outer state, in any
+    ///    expression of the body (declaration initializers, assigned
+    ///    values, `print`, conditions, `require`, iterables). The
+    ///    canonical escape is `outer_list.push(inner_string)`; a call to a
+    ///    Clean function can do the same with its arguments
+    ///    (`integer k = store(outer, inner)`). Only calls that cannot store
+    ///    are allowed (`call_may_store`). A call statement (a
+    ///    `TastStatement::Expression` whose expression contains a call) is
+    ///    always flagged.
     ///
     /// Property/array-index targets and `LaterAssignment` are treated as
     /// escapes too (the receiver is by construction declared outside the
@@ -974,28 +991,30 @@ impl MirBuilder {
     }
 
     fn body_escapes_or_returns(stmts: &[TastStatement], inner: &HashSet<SymbolId>) -> bool {
+        let may_store = |e: &TastExpression| Self::expr_any(e, &Self::call_may_store);
         for stmt in stmts {
-            match stmt {
-                TastStatement::Return { .. } => return true,
-                TastStatement::Assignment { target, .. } => match &target.kind {
-                    TastExpressionKind::Variable { symbol_id, .. } => {
-                        if !inner.contains(symbol_id)
-                            && Self::is_arena_alloc_type(&target.expr_type)
-                        {
-                            return true;
+            let escapes = match stmt {
+                TastStatement::Return { .. } => true,
+                TastStatement::Assignment { target, value, .. } => {
+                    let target_escapes = match &target.kind {
+                        TastExpressionKind::Variable { symbol_id, .. } => {
+                            !inner.contains(symbol_id)
+                                && Self::is_arena_alloc_type(&target.expr_type)
                         }
-                    }
-                    TastExpressionKind::PropertyAccess { .. }
-                    | TastExpressionKind::ArrayAccess { .. }
-                        if Self::is_arena_alloc_type(&target.expr_type) =>
-                    {
-                        return true;
-                    }
-                    _ => {}
-                },
+                        TastExpressionKind::PropertyAccess { .. }
+                        | TastExpressionKind::ArrayAccess { .. } => {
+                            Self::is_arena_alloc_type(&target.expr_type) || may_store(target)
+                        }
+                        _ => false,
+                    };
+                    target_escapes || may_store(value)
+                }
+                TastStatement::VariableDeclaration { initializer, .. } => {
+                    initializer.as_ref().is_some_and(may_store)
+                }
                 // A `later` task can run after the iteration, so the values
                 // it captured must outlive the per-iteration pop.
-                TastStatement::LaterAssignment { .. } => return true,
+                TastStatement::LaterAssignment { .. } => true,
                 // A call statement (`outer_list.push(inner)`, `Foo.bar(x)`, etc.)
                 // can mutate any receiver or pass arguments to outer-scope
                 // state without going through a TastStatement::Assignment.
@@ -1010,70 +1029,149 @@ impl MirBuilder {
                 // walked by `string.split` / `iterate` / `substring`
                 // (COMPILER-0-30-342-CLASS-METHOD-STRING-OPS-WASM-UNREACHABLE).
                 TastStatement::Expression { expression, .. } => {
-                    if Self::expr_contains_call(expression) {
-                        return true;
-                    }
+                    Self::expr_any(expression, &Self::is_call)
                 }
+                TastStatement::Print { expression, .. } => may_store(expression),
+                TastStatement::Require { condition, .. }
+                | TastStatement::Ensure { condition, .. } => may_store(condition),
                 // `background` hands the host a task that keeps body-local
                 // pointers past the pop.
-                TastStatement::Background { .. } => return true,
+                TastStatement::Background { .. } => true,
                 TastStatement::If {
+                    condition,
                     then_block,
                     else_block,
                     ..
                 } => {
-                    if Self::body_escapes_or_returns(&then_block.statements, inner) {
-                        return true;
-                    }
-                    if let Some(eb) = else_block {
-                        if Self::body_escapes_or_returns(&eb.statements, inner) {
-                            return true;
-                        }
-                    }
+                    may_store(condition)
+                        || Self::body_escapes_or_returns(&then_block.statements, inner)
+                        || else_block
+                            .as_ref()
+                            .is_some_and(|eb| Self::body_escapes_or_returns(&eb.statements, inner))
                 }
-                TastStatement::While { body, .. }
-                    if Self::body_escapes_or_returns(&body.statements, inner) =>
-                {
-                    return true;
+                TastStatement::While {
+                    condition, body, ..
+                } => may_store(condition) || Self::body_escapes_or_returns(&body.statements, inner),
+                TastStatement::For { iterable, body, .. } => {
+                    may_store(iterable) || Self::body_escapes_or_returns(&body.statements, inner)
                 }
-                TastStatement::For { body, .. }
-                    if Self::body_escapes_or_returns(&body.statements, inner) =>
-                {
-                    return true;
-                }
-                _ => {}
+                TastStatement::Break { .. } | TastStatement::Continue { .. } => false,
+            };
+            if escapes {
+                return true;
             }
         }
         false
     }
 
-    /// Returns true if the expression (or any sub-expression) is a
-    /// method/function/static-method call. Used by
-    /// `body_escapes_or_returns` to disqualify loop bodies that contain
-    /// a discarded call statement — those can mutate outer state in
-    /// ways the analyzer cannot trace.
-    ///
-    /// Walks through wrapper kinds (BinaryOperation, UnaryOperation,
-    /// PropertyAccess, ArrayAccess, ArrayLiteral, Cast, etc.) because a
-    /// statement like `outer.list.add(inner)` is parsed as a
-    /// PropertyAccess whose inner expression is the MethodCall.
-    fn expr_contains_call(e: &TastExpression) -> bool {
-        match &e.kind {
+    fn is_call(e: &TastExpression) -> bool {
+        matches!(
+            e.kind,
             TastExpressionKind::FunctionCall { .. }
-            | TastExpressionKind::MethodCall { .. }
-            | TastExpressionKind::StaticMethodCall { .. } => true,
-            TastExpressionKind::BinaryOperation { left, right, .. } => {
-                Self::expr_contains_call(left) || Self::expr_contains_call(right)
-            }
-            TastExpressionKind::UnaryOperation { operand, .. } => Self::expr_contains_call(operand),
-            TastExpressionKind::PropertyAccess { object, .. } => Self::expr_contains_call(object),
-            TastExpressionKind::ArrayAccess { array, index, .. } => {
-                Self::expr_contains_call(array) || Self::expr_contains_call(index)
-            }
-            TastExpressionKind::ArrayLiteral { elements, .. } => {
-                elements.iter().any(Self::expr_contains_call)
+                | TastExpressionKind::MethodCall { .. }
+                | TastExpressionKind::StaticMethodCall { .. }
+                | TastExpressionKind::BaseCall { .. }
+        )
+    }
+
+    /// A call that can store one of its arguments (or a value computed this
+    /// iteration) somewhere that outlives the iteration. A Clean function or
+    /// class method can store anywhere. Methods of an immutable value (a
+    /// string, a number, a boolean) and the reading methods of a collection
+    /// only return values, which the declaration and assignment rules check.
+    fn call_may_store(e: &TastExpression) -> bool {
+        match &e.kind {
+            TastExpressionKind::FunctionCall { function, .. } => !matches!(
+                &function.kind,
+                TastExpressionKind::Variable { name, .. }
+                    if name == crate::typechecker::tast::OPTIONAL_BOX
+            ),
+            TastExpressionKind::MethodCall {
+                receiver,
+                method_name,
+                ..
+            } => match &receiver.expr_type {
+                ConcreteType::String => false,
+                t if t.is_primitive_value() => false,
+                ConcreteType::Array(_) | ConcreteType::Pairs(_, _) | ConcreteType::Any => {
+                    !matches!(
+                        method_name.as_str(),
+                        "length"
+                            | "size"
+                            | "get"
+                            | "contains"
+                            | "has"
+                            | "indexOf"
+                            | "lastIndexOf"
+                            | "isEmpty"
+                            | "isNotEmpty"
+                            | "first"
+                            | "last"
+                            | "join"
+                            | "toString"
+                    )
+                }
+                _ => true,
+            },
+            TastExpressionKind::StaticMethodCall { .. } | TastExpressionKind::BaseCall { .. } => {
+                true
             }
             _ => false,
+        }
+    }
+
+    /// `pred` holds for `e` or one of its sub-expressions.
+    fn expr_any(e: &TastExpression, pred: &dyn Fn(&TastExpression) -> bool) -> bool {
+        if pred(e) {
+            return true;
+        }
+        let any = |es: &[TastExpression]| es.iter().any(|x| Self::expr_any(x, pred));
+        match &e.kind {
+            TastExpressionKind::Literal { .. } | TastExpressionKind::Variable { .. } => false,
+            TastExpressionKind::BinaryOperation { left, right, .. } => {
+                Self::expr_any(left, pred) || Self::expr_any(right, pred)
+            }
+            TastExpressionKind::UnaryOperation { operand, .. } => Self::expr_any(operand, pred),
+            TastExpressionKind::FunctionCall {
+                function,
+                arguments,
+                ..
+            } => Self::expr_any(function, pred) || any(arguments),
+            TastExpressionKind::MethodCall {
+                receiver,
+                arguments,
+                ..
+            } => Self::expr_any(receiver, pred) || any(arguments),
+            TastExpressionKind::StaticMethodCall { arguments, .. }
+            | TastExpressionKind::BaseCall { arguments, .. } => any(arguments),
+            TastExpressionKind::PropertyAccess { object, .. } => Self::expr_any(object, pred),
+            TastExpressionKind::ArrayLiteral { elements, .. } => any(elements),
+            TastExpressionKind::ArrayAccess { array, index } => {
+                Self::expr_any(array, pred) || Self::expr_any(index, pred)
+            }
+            TastExpressionKind::ObjectLiteral { fields } => {
+                fields.iter().any(|f| Self::expr_any(&f.value, pred))
+            }
+            TastExpressionKind::OnError {
+                expression,
+                fallback,
+            } => Self::expr_any(expression, pred) || Self::expr_any(fallback, pred),
+            TastExpressionKind::Conditional {
+                condition,
+                then_expr,
+                else_expr,
+            } => {
+                Self::expr_any(condition, pred)
+                    || Self::expr_any(then_expr, pred)
+                    || Self::expr_any(else_expr, pred)
+            }
+            TastExpressionKind::Range {
+                start, end, step, ..
+            } => {
+                Self::expr_any(start, pred)
+                    || Self::expr_any(end, pred)
+                    || step.as_ref().is_some_and(|s| Self::expr_any(s, pred))
+            }
         }
     }
 

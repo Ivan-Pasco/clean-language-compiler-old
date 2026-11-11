@@ -1,0 +1,21 @@
+// Test: bugfixes/is_compares_numbers
+// Grammar: equality_expression ("is")
+// Regression: `is` on numbers produced invalid WASM: its result was typed
+//   as the operands' type instead of a boolean.
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   true
+//   true
+//   false
+//   true
+//   f true
+start:
+	number x = 0.5
+	print(x is 0.5)
+	integer n = 3
+	print(n is 3)
+	print(n is 4)
+	integer:64 w = 5000000000
+	print(w is 5000000000)
+	boolean f = x is 0.5
+	print("f {f}")

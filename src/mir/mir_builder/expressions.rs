@@ -755,6 +755,7 @@ impl MirBuilder {
                             | BinaryOperator::GreaterThan
                             | BinaryOperator::LessThanOrEqual
                             | BinaryOperator::GreaterThanOrEqual
+                            | BinaryOperator::Is
                             | BinaryOperator::And
                             | BinaryOperator::Or
                     );
@@ -5013,18 +5014,20 @@ impl MirBuilder {
         self.current_block = Some(scratch_block_id);
         let rhs_id = self.build_expression(context, right)?;
         let rhs_id = self.logical_operand(context, rhs_id, right);
-        // If the rhs evaluation itself opened new control-flow blocks
-        // (nested short-circuit chains compose without issue because
-        // each one nests recursively; here we just need a single linear
-        // scratch). For anything beyond a linear sequence the rhs
-        // landed in a different block and we cannot inline-emit it.
+        // A right operand with control flow of its own (an `onError`, a
+        // conditional) ended in another block, so it cannot be inlined into
+        // one instruction: the operator becomes an `if`/`else` whose arm
+        // starting at the scratch block runs the right operand.
         if self.current_block != Some(scratch_block_id) {
-            return Err(vec![CompilerError::validation_error(
-                "Right-hand operand of logical `and`/`or` introduced control flow \
-                 that cannot be inlined into the short-circuit WASM if/else. \
-                 Hoist the sub-expression to a local before the operator.",
-                location.clone(),
-            )]);
+            return Ok(self.branch_short_circuit(
+                context,
+                is_and,
+                lhs_id,
+                saved_block,
+                scratch_block_id,
+                rhs_id,
+                location,
+            ));
         }
         let scratch = context
             .function
@@ -5054,5 +5057,98 @@ impl MirBuilder {
         );
 
         Ok(result_id)
+    }
+
+    /// Lower `lhs and rhs` / `lhs or rhs` as a branch when the right operand
+    /// was built into blocks of its own, starting at `rhs_entry` and ending
+    /// at the current block with value `rhs_id`. `lhs_block` (still open)
+    /// tests `lhs`; the right operand runs only when `lhs` does not decide
+    /// the result, the other arm stores that decided result.
+    fn branch_short_circuit(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        is_and: bool,
+        lhs_id: ValueId,
+        lhs_block: BasicBlockId,
+        rhs_entry: BasicBlockId,
+        rhs_id: ValueId,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, result_id, MirType::I32, location.clone());
+
+        let decided_block = BasicBlockId(context.function.next_block_id);
+        let merge_block = BasicBlockId(context.function.next_block_id + 1);
+        context.function.next_block_id += 2;
+        for (id, label) in [
+            (decided_block, "logical_decided"),
+            (merge_block, "continue"),
+        ] {
+            context.function.blocks.insert(
+                id,
+                MirBasicBlock {
+                    id,
+                    label: Some(label.to_string()),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Unreachable,
+                    predecessors: HashSet::new(),
+                    successors: HashSet::new(),
+                    location: location.clone(),
+                },
+            );
+        }
+
+        // `and` runs the right operand when `lhs` is true, `or` when it is false.
+        let (then_block, else_block) = if is_and {
+            (rhs_entry, decided_block)
+        } else {
+            (decided_block, rhs_entry)
+        };
+        for (id, label) in [(then_block, "then"), (else_block, "else")] {
+            if let Some(block) = context.function.blocks.get_mut(&id) {
+                block.label = Some(label.to_string());
+            }
+        }
+
+        let copy_into_result = |source: MirOperand| MirInstruction {
+            dest: Some(result_id),
+            operation: MirOperation::Copy { source },
+            location: location.clone(),
+        };
+        // The right operand's last block.
+        self.add_instruction(context, copy_into_result(MirOperand::Value(rhs_id)));
+        self.set_block_terminator(
+            context,
+            MirTerminator::Jump {
+                target: merge_block,
+            },
+        );
+
+        self.current_block = Some(decided_block);
+        self.add_instruction(
+            context,
+            copy_into_result(MirOperand::Constant(MirConstant::Boolean(!is_and))),
+        );
+        self.set_block_terminator(
+            context,
+            MirTerminator::Jump {
+                target: merge_block,
+            },
+        );
+
+        self.current_block = Some(lhs_block);
+        context.function.if_merges.insert(lhs_block, merge_block);
+        self.set_block_terminator(
+            context,
+            MirTerminator::Branch {
+                condition: MirOperand::Value(lhs_id),
+                true_block: then_block,
+                false_block: else_block,
+            },
+        );
+
+        self.current_block = Some(merge_block);
+        result_id
     }
 }

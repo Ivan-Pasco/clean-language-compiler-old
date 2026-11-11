@@ -572,7 +572,21 @@ impl MirCodeGenerator<'_> {
     ///
     /// A block is a loop header if there is a cycle in the CFG that includes this
     /// block as the target of a backedge.  More robust than block-ID ordering.
+    ///
+    /// The header of a source `while` / `iterate` loop is a loop header even
+    /// when no path reaches its back edge (every iteration ends in `break` or
+    /// `return`): it is still emitted as a `loop`, so the `br` of a `break`
+    /// has a loop to leave, and a Jump to it from a nested branch is emitted
+    /// in place instead of being left to an outer structure as a merge.
     pub(super) fn is_loop_header(&self, function: &MirFunction, block_id: BasicBlockId) -> bool {
+        if function.blocks.get(&block_id).is_some_and(|b| {
+            matches!(
+                b.label.as_deref(),
+                Some("while_header") | Some("for_header") | Some("range_for_header")
+            ) && matches!(b.terminator, MirTerminator::Branch { .. })
+        }) {
+            return true;
+        }
         // Build successors map for DFS traversal
         let mut successors: std::collections::HashMap<BasicBlockId, Vec<BasicBlockId>> =
             std::collections::HashMap::new();

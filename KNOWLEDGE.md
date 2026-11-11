@@ -193,7 +193,11 @@ The fix excludes Jumps that target any `exit_block_id` in `self.loop_context_sta
 
 A Jump to a loop header, to an `iterate` loop's increment block or to a loop exit ends the iteration and is emitted as a `br`; it never names an if's merge block. `ends_loop_iteration` is the single test for this. Walks that follow Jumps (`block_eventually_jumps_to`, `collect_jump_targets`, the nested-Branch continuation in `generate_branch_block`) must stop there: following the back edge reached the whole loop body again, so an if/else whose arm ends in `continue` looked like it flowed into its own else arm and the statements after the if/else were dropped. A false block labelled `"else"` by the MIR builder is always an else clause (`is_continuation_not_else`), even when the then-arm ends in `break`. Regression: `tests/cln/bugfixes/statement_after_if_else_whose_arm_continues.cln`.
 
-**Where:** `src/codegen/mir_codegen/control_flow.rs` (`chase_jump_chain`, `collect_jump_targets`, `is_continuation_not_else`, `ends_loop_iteration`), `src/codegen/mir_codegen/blocks.rs` (`generate_branch_block` Branch handler also updated to route through `find_eventual_continuation` when nested branches end in Branch terminators rather than only Jump).
+### 13.4 A loop that never reaches its back edge is still a loop
+
+A `while` / `iterate` whose body always ends in `break` (or `return`) has no back edge, so the DFS in `is_loop_header` does not find it. A Jump to such a header from a nested branch was then taken for a merge that an outer structure emits, and the whole loop disappeared. `is_loop_header` also accepts the MIR builder's loop header labels (`while_header`, `for_header`, `range_for_header`). Regression: `tests/cln/bugfixes/nested_loop_ending_in_break_runs.cln`.
+
+**Where:** `src/codegen/mir_codegen/control_flow.rs` (`chase_jump_chain`, `collect_jump_targets`, `is_continuation_not_else`, `ends_loop_iteration`, `is_loop_header`), `src/codegen/mir_codegen/blocks.rs` (`generate_branch_block` Branch handler also updated to route through `find_eventual_continuation` when nested branches end in Branch terminators rather than only Jump).
 
 **Watch for:**
 - Any new code path that walks MIR blocks looking for "the continuation" of an if/else. Use `find_eventual_continuation`, not a single-step terminator inspection — otherwise this bug class reappears the next time someone nests three levels deep.
@@ -203,6 +207,12 @@ A Jump to a loop header, to an `iterate` loop's increment block or to a loop exi
 **Origin bug:** `COMPILER-PLUGIN-ASSEMBLE-HANGS-ON-PAGE-PROJECTS` (dashboard fp `f80ee96ce507`). frame.ui's `process_text_node` was the canonical reproducer for §13.1 (the `remaining = remaining.substring(...)` statement following the inner if/else got dropped, so the `while` loop never advanced — the safety counter `if c > 100: break` the plugin author added masked it as a bounded but redundant 100-iteration loop instead of an outright hang). With §13.1 fixed, `find_unescaped_quote` surfaced §13.2 as the next hang. With both fixed, page-project compiles run end-to-end instead of trapping on the plugin-call deadline.
 
 ---
+
+## 13a. Per-Iteration Heap Scopes
+
+**What:** A loop body gets a `mem_scope_push` at its start and a `mem_scope_pop` on every exit of the iteration only when `body_is_iter_scope_safe` (`src/mir/mir_builder/helpers.rs`) proves no pointer allocated in the iteration can outlive it: no assignment of a heap value to an outer variable, field or element, no `return`, `later` or `background`, and no call that can store a value (`call_may_store`) in any expression of the body. Methods of strings and numbers and the reading methods of collections are allowed; calls to Clean functions and class methods are not. `break` and `continue` emit their own pop; the end-of-body pop is emitted only on the fall-through path (`current_block_terminated`), otherwise the scope is popped twice and the caller's strings are freed.
+
+**Regression:** `tests/cln/bugfixes/loop_ending_in_break_pops_heap_scope_once.cln`, `tests/cln/bugfixes/loop_string_stored_by_call_survives_iteration.cln`.
 
 ## 14. Opaque Byte Handles (`_req_body_bytes`, `_fs_write_bytes`)
 

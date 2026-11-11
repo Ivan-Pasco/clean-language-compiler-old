@@ -4593,7 +4593,22 @@ impl<'a> TypeInference<'a> {
         };
 
         // Both start and end should be integers
-        // The range is typed as an Array<Integer>; the MIR/codegen generates actual range values
+        // The range is typed as a list of integers (of `integer:64` when a
+        // bound or the step is one, so the loop variable holds every value);
+        // the MIR/codegen generates actual range values
+        let is_int64 =
+            |e: &TastExpression| matches!(e.expr_type, ConcreteType::IntegerSized { bits: 64, .. });
+        let element_type = if is_int64(&tast_start)
+            || is_int64(&tast_end)
+            || tast_step.as_deref().is_some_and(is_int64)
+        {
+            ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: false,
+            }
+        } else {
+            ConcreteType::Integer
+        };
         Ok((
             TastExpressionKind::Range {
                 start: Box::new(tast_start),
@@ -4601,7 +4616,7 @@ impl<'a> TypeInference<'a> {
                 step: tast_step,
                 inclusive: *inclusive,
             },
-            ConcreteType::Array(Box::new(ConcreteType::Integer)),
+            ConcreteType::Array(Box::new(element_type)),
             location.clone(),
         ))
     }

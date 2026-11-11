@@ -1,0 +1,38 @@
+// Test: bugfixes/logical_operand_with_onerror_short_circuits
+// Grammar: logical_and_expression, logical_or_expression, on_error_expression
+// Regression: `and` / `or` whose right operand has control flow of its own
+//   (`f() onError fallback`) was rejected with "Hoist the sub-expression to a
+//   local". It now compiles, and the right operand runs only when the left
+//   one does not decide the result.
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   chk 0
+//   true
+//   false
+//   chk 0
+//   true
+//   true
+//   chk 1
+//   false
+//   chk 0
+//   if ok
+start:
+	boolean a = true and (chk(0) onError false)
+	print(a)
+	boolean b = false and (chk(1) onError false)
+	print(b)
+	boolean c = false or (chk(0) onError true)
+	print(c)
+	boolean d = true or (chk(1) onError false)
+	print(d)
+	boolean e = true and (chk(1) onError false)
+	print(e)
+	if true and (chk(0) onError false)
+		print("if ok")
+
+functions:
+	boolean chk(integer v)
+		print("chk {v}")
+		if v == 1
+			error("boom")
+		return true

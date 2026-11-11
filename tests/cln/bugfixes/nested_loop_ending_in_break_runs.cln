@@ -1,0 +1,40 @@
+// Test: bugfixes/nested_loop_ending_in_break_runs
+// Grammar: while_statement, iterate_statement, break_statement, if_statement
+// Regression: a loop whose body always ends in `break` has no path back to
+//   its header. Nested in another loop or in an `if`, it was not recognised
+//   as a loop and was left out of the WASM entirely.
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   inner 1
+//   k 1
+//   inner 1
+//   k 1
+//   m 1
+//   first 7
+//   r 1
+//   end
+start:
+	iterate i in 1 to 2
+		integer k = 0
+		while k < 5
+			k = k + 1
+			print("inner {k}")
+			break
+		print("k {k}")
+	integer m = 0
+	if m == 0
+		while m < 5
+			m = m + 1
+			break
+	print("m {m}")
+	list<integer> xs = [7, 8]
+	if m == 1
+		iterate x in xs
+			print("first {x}")
+			break
+		integer r = 0
+		iterate j in 1 to 3
+			r = r + j
+			break
+		print("r {r}")
+	print("end")

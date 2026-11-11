@@ -1,0 +1,49 @@
+// Test: bugfixes/loop_ending_in_break_pops_heap_scope_once
+// Grammar: while_statement, iterate_statement, range_iterate_statement, break_statement
+// Regression: a loop body wrapped in a per-iteration heap scope that ends in
+//   `break` released the scope twice: once in the break and once more at the
+//   end of the body. The second release freed the caller's strings, so `s`
+//   and `t` below were overwritten.
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   1
+//   4
+//   1
+//   first-1-aaaaaaaaaaaa
+//   second-1-bbbbbbbbbbbb
+//   1
+//   4
+//   1
+//   first-2-aaaaaaaaaaaa
+//   second-2-bbbbbbbbbbbb
+start:
+	iterate i in 1 to 2
+		string s = "first-" + i.toString() + "-aaaaaaaaaaaa"
+		print(whileOnce())
+		print(firstOf([4, 5]))
+		print(rangeOnce())
+		string t = "second-" + i.toString() + "-bbbbbbbbbbbb"
+		print(s)
+		print(t)
+
+functions:
+	integer whileOnce()
+		integer k = 0
+		while k < 5
+			k = k + 1
+			break
+		return k
+
+	integer firstOf(list<integer> xs)
+		integer found = 0
+		iterate x in xs
+			found = x
+			break
+		return found
+
+	integer rangeOnce()
+		integer n = 0
+		iterate j in 1 to 9
+			n = n + j
+			break
+		return n

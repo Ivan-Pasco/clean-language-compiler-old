@@ -1,0 +1,36 @@
+// Test: bugfixes/range_loop_counter_width_and_end
+// Grammar: range_iterate_statement
+// Regression: the counter of `iterate i in a to b` was always an `integer`,
+//   so `integer:64` bounds were truncated; and a range ending at the largest
+//   (or, counting down, smallest) value of the counter never stopped, because
+//   the counter wrapped around before the end test.
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   5000000000
+//   5000000001
+//   5000000002
+//   count 3
+//   down 3
+//   wide 2
+start:
+	integer:64 big = 5000000000
+	iterate j in big to big + 2
+		print(j)
+	integer n = 0
+	iterate i in 2147483645 to 2147483647
+		n = n + 1
+		if n > 10
+			break
+	print("count {n}")
+	integer m = 0
+	iterate k in -2147483646 to -2147483647 - 1 step -1
+		m = m + 1
+		if m > 10
+			break
+	print("down {m}")
+	integer w = 0
+	iterate q in 9223372036854775806 to 9223372036854775807
+		w = w + 1
+		if w > 10
+			break
+	print("wide {w}")

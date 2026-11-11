@@ -1,0 +1,42 @@
+// Test: bugfixes/loop_string_stored_by_call_survives_iteration
+// Grammar: range_iterate_statement, variable_declaration, assignment, if_statement
+// Regression: a loop body was wrapped in a per-iteration heap scope when its
+//   only call statements were plain statements; a call in a declaration, an
+//   assigned value or an `if` condition was not seen. `store` keeps the
+//   string built this iteration in a list declared outside the loop, so the
+//   release at the end of the iteration freed list entries.
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   item-1-abcdefghijklmnop
+//   item-2-abcdefghijklmnop
+//   item-3-abcdefghijklmnop
+//   val-1-qrstuvwxyz0123
+//   val-2-qrstuvwxyz0123
+//   val-3-qrstuvwxyz0123
+//   stored
+//   stored
+//   cond-1-abcdefghijkl
+//   cond-2-abcdefghijkl
+start:
+	list<string> acc = []
+	iterate i in 1 to 3
+		integer k = store(acc, "item-" + i.toString() + "-abcdefghijklmnop")
+	iterate s in acc
+		print(s)
+	list<string> acc2 = []
+	integer total = 0
+	iterate j in 1 to 3
+		total = total + store(acc2, "val-" + j.toString() + "-qrstuvwxyz0123")
+	iterate s2 in acc2
+		print(s2)
+	list<string> acc3 = []
+	iterate m in 1 to 2
+		if store(acc3, "cond-" + m.toString() + "-abcdefghijkl") == 0
+			print("stored")
+	iterate s3 in acc3
+		print(s3)
+
+functions:
+	integer store(list<string> l, string s)
+		l.add(s)
+		return 0

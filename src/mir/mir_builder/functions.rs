@@ -344,33 +344,11 @@ impl MirBuilder {
             num_statements
         };
 
-        let mut reachable = true;
-        for (i, statement) in block
-            .statements
-            .iter()
-            .take(statements_to_process)
-            .enumerate()
-        {
-            trace!(
-                statement_index = i,
-                statement_type = ?std::mem::discriminant(statement),
-                current_block = ?self.current_block,
-                "Processing statement"
-            );
-            if !reachable && !Self::is_error_region_end(statement) {
-                continue;
-            }
-            self.build_statement(context, statement)?;
-            trace!(
-                statement_index = i,
-                current_block = ?self.current_block,
-                "After statement"
-            );
-            reachable = !Self::ends_control_flow(statement);
-        }
+        self.build_statement_list(context, &block.statements[..statements_to_process])?;
 
-        // Handle last statement if it should be auto-returned
-        if last_is_auto_return {
+        // Handle last statement if it should be auto-returned (when the
+        // statements before it can reach it)
+        if last_is_auto_return && !self.current_block_terminated(context) {
             if let Some(TastStatement::Expression {
                 expression,
                 location: _,

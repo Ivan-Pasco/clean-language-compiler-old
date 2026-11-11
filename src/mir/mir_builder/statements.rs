@@ -4,7 +4,8 @@ use super::*;
 
 impl MirBuilder {
     /// Lower a statement list. After a statement that ends control flow
-    /// (`ends_control_flow`) the following statements are unreachable and
+    /// (`ends_control_flow`, or an `if` whose arms all return) the following
+    /// statements are unreachable and
     /// are skipped — lowering them would emit their side effects into the
     /// block before its terminator runs — up to the next `onError` region
     /// end (`is_error_region_end`), whose exit the region's error checks
@@ -20,9 +21,24 @@ impl MirBuilder {
                 continue;
             }
             self.build_statement(context, stmt)?;
-            reachable = !Self::ends_control_flow(stmt);
+            // An `if` whose arms all return leaves no current block.
+            reachable = !Self::ends_control_flow(stmt) && self.current_block.is_some();
         }
         Ok(())
+    }
+
+    /// Lower the statements of an `if` / `else` arm or a `while` body: the
+    /// variables they declare are bound in a scope of their own, so a
+    /// declaration that shadows an outer variable does not replace it.
+    pub(super) fn build_scoped_statement_list(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        statements: &[TastStatement],
+    ) -> Result<(), Vec<CompilerError>> {
+        context.scope_stack.push(HashMap::new());
+        let built = self.build_statement_list(context, statements);
+        context.scope_stack.pop();
+        built
     }
 
     /// A statement after which the rest of its statement list is unreachable.
@@ -1157,7 +1173,7 @@ impl MirBuilder {
                 self.current_block = Some(then_block_id);
 
                 // Process then block statements
-                self.build_statement_list(context, &then_block.statements)?;
+                self.build_scoped_statement_list(context, &then_block.statements)?;
 
                 // NOTE: Check the THEN BLOCK's terminator, not current_block
                 // After processing nested statements (like nested If), current_block may point
@@ -1292,7 +1308,7 @@ impl MirBuilder {
                     let before_else = self.current_block;
 
                     // Process else block statements
-                    self.build_statement_list(context, &else_stmt_block.statements)?;
+                    self.build_scoped_statement_list(context, &else_stmt_block.statements)?;
 
                     // NOTE: Check if current_block is None after processing else block
                     // If current_block is None, it means all paths in the else block returned
@@ -1526,11 +1542,12 @@ impl MirBuilder {
                 let iterator_value_id = ValueId(context.function.next_value_id);
                 context.function.next_value_id += 1;
 
-                // Add iterator variable to scope (this becomes the loop variable)
-                // Use the actual iterator name from the TAST so variable lookups work correctly
-                if let Some(current_scope) = context.scope_stack.last_mut() {
-                    current_scope.insert(iterator_name.clone(), iterator_value_id);
-                }
+                // The loop variable and the body's declarations are bound in
+                // a scope of their own, so they do not replace an outer
+                // variable of the same name.
+                context
+                    .scope_stack
+                    .push(HashMap::from([(iterator_name.clone(), iterator_value_id)]));
 
                 // Create local for iterator variable.
                 //
@@ -1720,6 +1737,7 @@ impl MirBuilder {
 
                 // Process loop body statements
                 self.build_statement_list(context, &body.statements)?;
+                context.scope_stack.pop();
 
                 trace!(
                     instruction_count = context
@@ -1734,34 +1752,23 @@ impl MirBuilder {
                 // Pop loop context now that body statements are done.
                 context.loop_stack.pop();
 
-                if has_iter_scope {
-                    // Match the entry `mem_scope_push` before jumping to
-                    // the increment block. Break/Continue handlers emit
-                    // their own pop when `LoopContext::has_iter_scope` is
-                    // set, so every exit path is paired.
-                    self.emit_mem_scope_pop(context, location.clone());
-                }
-
                 // After the body, the block control ended in (which differs
                 // from the body's first block when the body has nested
                 // control flow) continues with the increment block unless it
-                // already ends in a return, break or continue.
-                if let Some(current) = self.current_block {
-                    let has_terminator = context
-                        .function
-                        .blocks
-                        .get(&current)
-                        .map(|b| !matches!(b.terminator, MirTerminator::Unreachable))
-                        .unwrap_or(false);
-
-                    if !has_terminator {
-                        self.set_block_terminator(
-                            context,
-                            MirTerminator::Jump {
-                                target: increment_block_id,
-                            },
-                        );
+                // already ends in a return, break or continue. Break and
+                // continue emit their own `mem_scope_pop`, so the closing pop
+                // of the entry `mem_scope_push` belongs only to the
+                // fall-through path.
+                if !self.current_block_terminated(context) {
+                    if has_iter_scope {
+                        self.emit_mem_scope_pop(context, location.clone());
                     }
+                    self.set_block_terminator(
+                        context,
+                        MirTerminator::Jump {
+                            target: increment_block_id,
+                        },
+                    );
                 }
 
                 // Switch to increment block (already pre-allocated)
@@ -1920,38 +1927,24 @@ impl MirBuilder {
                 }
 
                 // Process body statements
-                self.build_statement_list(context, &body.statements)?;
+                self.build_scoped_statement_list(context, &body.statements)?;
 
                 // Pop loop context after processing body
                 context.loop_stack.pop();
 
-                if has_iter_scope {
-                    // Match the entry `mem_scope_push` before jumping back
-                    // to the header. Break/Continue handlers emit their
-                    // own pop when `LoopContext::has_iter_scope` is set,
-                    // so every exit path is paired.
-                    self.emit_mem_scope_pop(context, location.clone());
-                }
-
-                // After body, check if we still have a current block (not terminated by return)
-                // If so, jump back to header for next iteration
-                if let Some(current) = self.current_block {
-                    // Check if the current block already has a non-placeholder terminator
-                    let has_terminator = context
-                        .function
-                        .blocks
-                        .get(&current)
-                        .map(|b| !matches!(b.terminator, MirTerminator::Unreachable))
-                        .unwrap_or(false);
-
-                    if !has_terminator {
-                        self.set_block_terminator(
-                            context,
-                            MirTerminator::Jump {
-                                target: header_block_id,
-                            },
-                        );
+                // A body that falls through closes the entry
+                // `mem_scope_push` and jumps back to the header; break and
+                // continue emitted their own pop and jump already.
+                if !self.current_block_terminated(context) {
+                    if has_iter_scope {
+                        self.emit_mem_scope_pop(context, location.clone());
                     }
+                    self.set_block_terminator(
+                        context,
+                        MirTerminator::Jump {
+                            target: header_block_id,
+                        },
+                    );
                 }
 
                 // Switch to exit block for subsequent statements
@@ -2170,22 +2163,58 @@ impl MirBuilder {
         // Evaluate start, end, and optionally step expressions
         let start_value_id = self.build_expression(context, start)?;
         let end_value_id = self.build_expression(context, end)?;
-        let step_value_id = if let Some(step_expr) = step {
-            self.build_expression(context, step_expr)?
+        let step_value_id = match step {
+            Some(step_expr) => Some(self.build_expression(context, step_expr)?),
+            None => None,
+        };
+
+        // The counter is an `integer:64` when a bound or the step is one
+        // (the type checker types the loop variable the same way), otherwise
+        // an `integer`; the other values are widened to it.
+        let is_int64 = |context: &FunctionBuildContext, id: ValueId| {
+            context
+                .function
+                .locals
+                .get(&id)
+                .is_some_and(|l| matches!(l.local_type, MirType::I64 | MirType::U64))
+        };
+        let counter_type = if [Some(start_value_id), Some(end_value_id), step_value_id]
+            .into_iter()
+            .flatten()
+            .any(|id| is_int64(context, id))
+        {
+            MirType::I64
         } else {
-            // Default step is 1
-            let default_step_id = ValueId(context.function.next_value_id);
-            context.function.next_value_id += 1;
-            self.register_temp_local(context, default_step_id, MirType::I32, location.clone());
-            let default_step_instruction = MirInstruction {
-                dest: Some(default_step_id),
-                operation: MirOperation::Copy {
-                    source: MirOperand::Constant(MirConstant::Integer(1)),
-                },
-                location: location.clone(),
-            };
-            self.add_instruction(context, default_step_instruction);
-            default_step_id
+            MirType::I32
+        };
+        let counter_constant = |value: i64| match counter_type {
+            MirType::I64 => MirConstant::Integer64(value),
+            _ => MirConstant::Integer(value),
+        };
+        let start_value_id = self.widen_range_value(context, start_value_id, &counter_type);
+        let end_value_id = self.widen_range_value(context, end_value_id, &counter_type);
+        let step_value_id = match step_value_id {
+            Some(id) => self.widen_range_value(context, id, &counter_type),
+            None => {
+                // Default step is 1
+                let default_step_id = ValueId(context.function.next_value_id);
+                context.function.next_value_id += 1;
+                self.register_temp_local(
+                    context,
+                    default_step_id,
+                    counter_type.clone(),
+                    location.clone(),
+                );
+                let default_step_instruction = MirInstruction {
+                    dest: Some(default_step_id),
+                    operation: MirOperation::Copy {
+                        source: MirOperand::Constant(counter_constant(1)),
+                    },
+                    location: location.clone(),
+                };
+                self.add_instruction(context, default_step_instruction);
+                default_step_id
+            }
         };
 
         // Determine if we're counting down (negative step)
@@ -2195,11 +2224,11 @@ impl MirBuilder {
         self.register_temp_local(context, is_negative_step_id, MirType::I32, location.clone());
         let zero_id = ValueId(context.function.next_value_id);
         context.function.next_value_id += 1;
-        self.register_temp_local(context, zero_id, MirType::I32, location.clone());
+        self.register_temp_local(context, zero_id, counter_type.clone(), location.clone());
         let zero_instruction = MirInstruction {
             dest: Some(zero_id),
             operation: MirOperation::Copy {
-                source: MirOperand::Constant(MirConstant::Integer(0)),
+                source: MirOperand::Constant(counter_constant(0)),
             },
             location: location.clone(),
         };
@@ -2252,7 +2281,12 @@ impl MirBuilder {
         context.function.next_value_id += 1;
 
         // Register iterator as local
-        self.register_temp_local(context, iterator_value_id, MirType::I32, location.clone());
+        self.register_temp_local(
+            context,
+            iterator_value_id,
+            counter_type.clone(),
+            location.clone(),
+        );
 
         // Initialize iterator to start value
         let init_instruction = MirInstruction {
@@ -2264,15 +2298,10 @@ impl MirBuilder {
         };
         self.add_instruction(context, init_instruction);
 
-        // Add iterator variable to scope so it's accessible in the loop body
-        if let Some(current_scope) = context.scope_stack.last_mut() {
-            current_scope.insert(iterator_name.to_string(), iterator_value_id);
-        }
-
         // Create local for iterator variable
         let iterator_local = MirLocal {
             name: Some(iterator_name.to_string()),
-            local_type: MirType::I32,
+            local_type: counter_type.clone(),
             is_mutable: true, // Mutable because it gets incremented
             location: location.clone(),
         };
@@ -2292,8 +2321,25 @@ impl MirBuilder {
         self.register_temp_local(
             context,
             current_iterator_value_id,
-            MirType::I32,
+            counter_type.clone(),
             location.clone(),
+        );
+
+        // Set when adding the step wrapped past the end of the counter's
+        // range: the true next value lies beyond every possible end, so the
+        // loop stops (a range ending at the largest integer terminates).
+        let wrapped_value_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, wrapped_value_id, MirType::I32, location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(wrapped_value_id),
+                operation: MirOperation::Copy {
+                    source: MirOperand::Constant(MirConstant::Boolean(false)),
+                },
+                location: location.clone(),
+            },
         );
 
         // Set current_iterator to initial value in init block
@@ -2375,12 +2421,12 @@ impl MirBuilder {
         self.add_instruction(context, neg_compare_instruction);
 
         // Select condition based on step direction
-        // condition = is_negative ? neg_cond : pos_cond
-        let condition_value_id = ValueId(context.function.next_value_id);
+        // in_range = is_negative ? neg_cond : pos_cond
+        let in_range_value_id = ValueId(context.function.next_value_id);
         context.function.next_value_id += 1;
-        self.register_temp_local(context, condition_value_id, MirType::I32, location.clone());
+        self.register_temp_local(context, in_range_value_id, MirType::I32, location.clone());
         let select_instruction = MirInstruction {
-            dest: Some(condition_value_id),
+            dest: Some(in_range_value_id),
             operation: MirOperation::Select {
                 condition: MirOperand::Value(is_negative_step_id),
                 true_value: MirOperand::Value(neg_cond_value_id),
@@ -2389,6 +2435,38 @@ impl MirBuilder {
             location: location.clone(),
         };
         self.add_instruction(context, select_instruction);
+
+        // condition = in_range and not wrapped
+        let not_wrapped_value_id = ValueId(context.function.next_value_id);
+        let condition_value_id = ValueId(context.function.next_value_id + 1);
+        context.function.next_value_id += 2;
+        for id in [not_wrapped_value_id, condition_value_id] {
+            self.register_temp_local(context, id, MirType::I32, location.clone());
+        }
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(not_wrapped_value_id),
+                operation: MirOperation::BinaryOp {
+                    op: MirBinaryOp::Eq,
+                    left: MirOperand::Value(wrapped_value_id),
+                    right: MirOperand::Constant(MirConstant::Integer(0)),
+                },
+                location: location.clone(),
+            },
+        );
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(condition_value_id),
+                operation: MirOperation::BinaryOp {
+                    op: MirBinaryOp::And,
+                    left: MirOperand::Value(in_range_value_id),
+                    right: MirOperand::Value(not_wrapped_value_id),
+                },
+                location: location.clone(),
+            },
+        );
 
         // NOTE: We'll set the header's terminator later (exit_block_id is now pre-allocated)
 
@@ -2436,16 +2514,7 @@ impl MirBuilder {
             current_block = ?self.current_block,
             "Building range for loop body"
         );
-        let mut reachable = true;
-        for (idx, stmt) in body.statements.iter().enumerate() {
-            trace!(statement_index = idx, current_block = ?self.current_block, "Processing body statement");
-            if !reachable && !Self::is_error_region_end(stmt) {
-                continue;
-            }
-            self.build_statement(context, stmt)?;
-            trace!(statement_index = idx, current_block = ?self.current_block, "After body statement");
-            reachable = !Self::ends_control_flow(stmt);
-        }
+        self.build_statement_list(context, &body.statements)?;
         trace!(current_block = ?self.current_block, "After all range for body statements");
 
         // Pop the loop body scope
@@ -2453,14 +2522,6 @@ impl MirBuilder {
 
         // Pop loop context now that body statements are done.
         context.loop_stack.pop();
-
-        if has_iter_scope {
-            // Match the entry `mem_scope_push` before the natural jump
-            // to the increment block. Break/Continue handlers emit
-            // their own pop when `LoopContext::has_iter_scope` is set,
-            // so every exit path is paired.
-            self.emit_mem_scope_pop(context, location.clone());
-        }
 
         // NOTE: increment_block_id and exit_block_id were pre-allocated at the start
         // of this function to prevent block ID collisions with nested control flow.
@@ -2479,21 +2540,13 @@ impl MirBuilder {
             };
         }
 
-        // Check if current block has a terminator (from return/break/continue)
-        // After processing the body statements, current_block might have changed
-        // (e.g., to an IF statement's continue block)
-        let current_has_terminator = if let Some(current_block_id) = self.current_block {
-            if let Some(current_block) = context.function.blocks.get(&current_block_id) {
-                !matches!(current_block.terminator, MirTerminator::Unreachable)
-            } else {
-                false
+        // A body that falls through (its last block may be an `if`'s merge
+        // block) closes the entry `mem_scope_push` and jumps to the
+        // increment block; break and continue emitted their own pop and jump.
+        if !self.current_block_terminated(context) {
+            if has_iter_scope {
+                self.emit_mem_scope_pop(context, location.clone());
             }
-        } else {
-            false
-        };
-
-        if !current_has_terminator {
-            // Jump to increment block
             self.set_block_terminator(
                 context,
                 MirTerminator::Jump {
@@ -2507,20 +2560,72 @@ impl MirBuilder {
         // Switch to increment block (already pre-allocated)
         self.current_block = Some(increment_block_id);
 
-        // Increment: iterator = iterator + step (using the step value from earlier)
-        // NOTE: Write increment result to current_iterator_value_id
+        // Increment: next = iterator + step; the addition wrapped when the
+        // counter moved against the step's direction. Then iterator = next.
+        // NOTE: Write the result to current_iterator_value_id
         // Since Phi nodes are NO-OPs in WASM, we must update the variable that
         // the condition check uses directly. Otherwise the loop counter never changes.
-        let inc_instruction = MirInstruction {
-            dest: Some(current_iterator_value_id),
-            operation: MirOperation::BinaryOp {
-                op: MirBinaryOp::Add,
-                left: MirOperand::Value(current_iterator_value_id),
-                right: MirOperand::Value(step_value_id),
+        let next_value_id = ValueId(context.function.next_value_id);
+        let up_wrapped_id = ValueId(context.function.next_value_id + 1);
+        let down_wrapped_id = ValueId(context.function.next_value_id + 2);
+        context.function.next_value_id += 3;
+        self.register_temp_local(
+            context,
+            next_value_id,
+            counter_type.clone(),
+            location.clone(),
+        );
+        for id in [up_wrapped_id, down_wrapped_id] {
+            self.register_temp_local(context, id, MirType::I32, location.clone());
+        }
+        let binary =
+            |dest: ValueId, op: MirBinaryOp, left: ValueId, right: ValueId| MirInstruction {
+                dest: Some(dest),
+                operation: MirOperation::BinaryOp {
+                    op,
+                    left: MirOperand::Value(left),
+                    right: MirOperand::Value(right),
+                },
+                location: location.clone(),
+            };
+        for instruction in [
+            binary(
+                next_value_id,
+                MirBinaryOp::Add,
+                current_iterator_value_id,
+                step_value_id,
+            ),
+            binary(
+                up_wrapped_id,
+                MirBinaryOp::Lt,
+                next_value_id,
+                current_iterator_value_id,
+            ),
+            binary(
+                down_wrapped_id,
+                MirBinaryOp::Gt,
+                next_value_id,
+                current_iterator_value_id,
+            ),
+            MirInstruction {
+                dest: Some(wrapped_value_id),
+                operation: MirOperation::Select {
+                    condition: MirOperand::Value(is_negative_step_id),
+                    true_value: MirOperand::Value(down_wrapped_id),
+                    false_value: MirOperand::Value(up_wrapped_id),
+                },
+                location: location.clone(),
             },
-            location: location.clone(),
-        };
-        self.add_instruction(context, inc_instruction);
+            MirInstruction {
+                dest: Some(current_iterator_value_id),
+                operation: MirOperation::Copy {
+                    source: MirOperand::Value(next_value_id),
+                },
+                location: location.clone(),
+            },
+        ] {
+            self.add_instruction(context, instruction);
+        }
 
         // Update Phi node with increment block predecessor
         // Note: Phi is NO-OP in WASM, but we update it for IR correctness
@@ -2549,5 +2654,37 @@ impl MirBuilder {
 
         trace!(current_block = ?self.current_block, "Range for loop completed");
         Ok(())
+    }
+
+    /// Widen a range bound or step to the counter type (`integer` →
+    /// `integer:64`); a value of that type is returned unchanged.
+    fn widen_range_value(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        counter_type: &MirType,
+    ) -> ValueId {
+        let Some(local) = context.function.locals.get(&value_id) else {
+            return value_id;
+        };
+        if local.local_type == *counter_type || *counter_type != MirType::I64 {
+            return value_id;
+        }
+        let location = local.location.clone();
+        let widened = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, widened, counter_type.clone(), location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(widened),
+                operation: MirOperation::Cast {
+                    value: MirOperand::Value(value_id),
+                    target_type: counter_type.clone(),
+                },
+                location,
+            },
+        );
+        widened
     }
 }
