@@ -1,0 +1,21 @@
+// Test: bugfixes/range_bounds_must_be_integers
+// Grammar: range_iterate_statement
+// Semantic: SEM001 — a range counts in integers: its start, end and step are
+//   integers
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   The start of a range must be an integer, not string
+//   The end of a range must be an integer, not number
+//   The step of a range must be an integer, not string
+//
+// Regression: range bounds were not type-checked: `iterate i in "a" to 3`
+// counted from a string pointer and `1.5 to 3.7` from garbage.
+
+start:
+	iterate i in "a" to 3
+		print(i.toString())
+	iterate j in 1 to 3.7
+		print(j.toString())
+	iterate k in 1 to 4 step "x"
+		print(k.toString())

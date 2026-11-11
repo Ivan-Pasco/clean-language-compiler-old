@@ -1,0 +1,17 @@
+// Test: bugfixes/unary_minus_rejects_optional_operand
+// Grammar: unary_expression
+// Semantic: SEM004 — unary `-` takes a number; a `T?` may be none and is
+//   unwrapped first (type-system.md §8)
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   SEM004
+//   Unary '-' cannot be applied to a value of type integer?
+//
+// Regression: `-m` on an `integer?` typed as unknown and compiled; with
+// `m = none` it printed garbage.
+
+start:
+	integer? m = none
+	integer y = -m
+	print(y.toString())

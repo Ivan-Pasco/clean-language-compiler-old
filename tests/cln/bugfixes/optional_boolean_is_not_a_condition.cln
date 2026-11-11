@@ -1,0 +1,18 @@
+// Test: bugfixes/optional_boolean_is_not_a_condition
+// Grammar: if_statement, while_statement
+// Semantic: SEM001 — a condition is a boolean; a `boolean?` may be none
+//   (type-system.md §8)
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   The `if` condition must be a boolean, not a boolean? (it may be none)
+//   The `while` condition must be a boolean, not a boolean? (it may be none)
+//
+// Regression: `if f` with `boolean? f = none` compiled and took a branch.
+
+start:
+	boolean? f = none
+	if f
+		print("yes")
+	while f
+		print("loop")

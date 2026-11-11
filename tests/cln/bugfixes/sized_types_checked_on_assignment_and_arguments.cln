@@ -1,0 +1,40 @@
+// Test: bugfixes/sized_types_checked_on_assignment_and_arguments
+// Grammar: variable_declaration, assignment, function_call (sized types)
+// Semantic: SEM004 — `integer:N → integer:M` only when M >= N with the same
+//   signedness, and `number:64 → number:32` loses precision
+//   (type-system.md §5), for assignments and arguments too
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   Signedness mismatch: integer:8 cannot be assigned to integer:8u for variable 'b'
+//   Narrowing assignment: integer:16 cannot be assigned to integer:8 (precision loss) for variable 'c'
+//   Signedness mismatch: integer:8 cannot be assigned to integer:8u for argument 1 of 'unsignedByte'
+//   Narrowing assignment: number:64 cannot be assigned to number:32 (precision loss) for argument 1 of 'single'
+//   Narrowing assignment: integer:16 cannot be assigned to integer:8 (precision loss) for argument 1 of 'byte'
+//
+// Regression: the check ran only on a declaration initialized from a
+// variable and ignored signedness: `integer:8 → integer:8u`, an assignment
+// `b = a` and argument passing all compiled.
+
+start:
+	integer:8 a = -5
+	integer:8u b = a
+	integer:16 wide = 1000
+	integer:8 c = 0
+	c = wide
+	print(unsignedByte(a).toString())
+	number:64 precise = 1.000000001
+	print(single(precise).toString())
+	print(byte(wide).toString())
+	integer big = 300
+	print(byte(big).toString())
+
+functions:
+	integer:8u unsignedByte(integer:8u v)
+		return v
+
+	number:32 single(number:32 v)
+		return v
+
+	integer byte(integer:8 v)
+		return v

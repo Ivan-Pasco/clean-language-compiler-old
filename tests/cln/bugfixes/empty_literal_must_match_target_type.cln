@@ -1,0 +1,29 @@
+// Test: bugfixes/empty_literal_must_match_target_type
+// Grammar: variable_declaration, assignment, class field (list_literal, pairs_literal)
+// Semantic: SEM001 — `[]` is an empty list and `{}` an empty pairs; neither is
+//   any other type
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   An empty list `[]` cannot be used as integer
+//   An empty pairs `{}` cannot be used as list<integer>
+//   An empty list `[]` cannot be used as pairs<string, integer>
+//   An empty list `[]` cannot be used as boolean
+//   An empty pairs `{}` cannot be used as string
+//
+// Regression: an empty literal took the declared type unchecked.
+// `integer x = []` printed a list pointer and `list<integer> l = {}` trapped
+// with "value is not a list" when the list was used.
+
+start:
+	integer x = []
+	list<integer> l = {}
+	pairs<string, integer> p = []
+	Box b = Box()
+	string s = "a"
+	s = {}
+	print(x.toString())
+
+class Box
+	public:
+		boolean flag = []

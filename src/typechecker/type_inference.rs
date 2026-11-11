@@ -37,6 +37,14 @@ pub struct TypeInference<'a> {
     /// (parameters without defaults)
     required_param_counts: HashMap<SymbolId, usize>,
 
+    /// Typed default value of each parameter of a function, method or
+    /// constructor (None for a required parameter), keyed by its symbol.
+    param_defaults: HashMap<SymbolId, Vec<Option<TastExpression>>>,
+
+    /// The explicit constructor (with parameters) of each class, for
+    /// checking `base(...)` calls against the parent's constructor.
+    class_constructors: HashMap<SymbolId, SymbolId>,
+
     /// Capability conformance closure per class, derived from the resolver's
     /// vtable_descriptors. `class_conformance[class_sym]` is the full set of
     /// capabilities that class satisfies (its own declared `can C1, C2, ...`
@@ -86,6 +94,8 @@ impl<'a> TypeInference<'a> {
             constraints: Vec::new(),
             symbol_table,
             required_param_counts: HashMap::new(),
+            param_defaults: HashMap::new(),
+            class_constructors: HashMap::new(),
             class_conformance: HashMap::new(),
             current_function: None,
             current_class: None,
@@ -1235,6 +1245,61 @@ impl<'a> TypeInference<'a> {
             .count();
         self.required_param_counts
             .insert(function.symbol_id, required_count);
+        self.register_parameter_defaults(function.symbol_id, &function.parameters);
+    }
+
+    /// Type each parameter default once, where it is declared: it is stored
+    /// into the parameter like an argument, so `integer a = "x"` is SEM001.
+    /// Calls that leave the parameter out pass this value.
+    fn register_parameter_defaults(
+        &mut self,
+        callee: SymbolId,
+        parameters: &[ResolvedHirParameter],
+    ) {
+        if parameters.iter().all(|p| p.default_value.is_none()) {
+            return;
+        }
+        let mut defaults = Vec::with_capacity(parameters.len());
+        for param in parameters {
+            let Some(default_expr) = &param.default_value else {
+                defaults.push(None);
+                continue;
+            };
+            let param_type = self.hir_type_to_concrete(&param.param_type);
+            match self.infer_expression(default_expr) {
+                Ok(mut value) => {
+                    let location = Self::argument_location(&value, &param.location);
+                    self.require_assignable(&mut value, &param_type, &location);
+                    defaults.push(Some(value));
+                }
+                Err(error) => {
+                    self.errors.push(error);
+                    defaults.push(None);
+                }
+            }
+        }
+        self.param_defaults.insert(callee, defaults);
+    }
+
+    /// The typed default of `callee`'s parameter `index`, if it has one.
+    fn parameter_default(&self, callee: SymbolId, index: usize) -> Option<TastExpression> {
+        self.param_defaults
+            .get(&callee)
+            .and_then(|defaults| defaults.get(index).cloned().flatten())
+    }
+
+    /// A call that leaves out trailing parameters passes their defaults.
+    /// The argument count was checked by `check_call_arguments`.
+    fn append_default_arguments(&self, callee: SymbolId, arguments: &mut Vec<TastExpression>) {
+        let Some(defaults) = self.param_defaults.get(&callee) else {
+            return;
+        };
+        for default in defaults.iter().skip(arguments.len()) {
+            match default {
+                Some(value) => arguments.push(value.clone()),
+                None => break,
+            }
+        }
     }
 
     /// Register method signature in type environment
@@ -1272,6 +1337,8 @@ impl<'a> TypeInference<'a> {
             .as_ref()
             .filter(|c| !c.parameters.is_empty())
         {
+            self.class_constructors
+                .insert(class.symbol_id, constructor.symbol_id);
             self.register_callable_signature(
                 constructor.symbol_id,
                 &constructor.parameters,
@@ -1305,6 +1372,7 @@ impl<'a> TypeInference<'a> {
             .filter(|p| p.default_value.is_none())
             .count();
         self.required_param_counts.insert(symbol_id, required);
+        self.register_parameter_defaults(symbol_id, parameters);
     }
 
     /// FUNC002 / SEM001: check the arguments of a constructor or method call
@@ -1348,6 +1416,35 @@ impl<'a> TypeInference<'a> {
         for (param_type, arg) in parameters.iter().zip(arguments.iter_mut()) {
             let location = Self::argument_location(arg, location);
             self.require_assignable(arg, param_type, &location);
+        }
+        self.check_sized_arguments(callee, callee_name, arguments, location);
+    }
+
+    /// SEM004: sized arguments follow the same widening rules as an
+    /// assignment to the declared parameter (see `check_sized_conversion`).
+    fn check_sized_arguments(
+        &mut self,
+        callee: SymbolId,
+        callee_name: &str,
+        arguments: &[TastExpression],
+        location: &SourceLocation,
+    ) {
+        let declared = match self.symbol_table.get_symbol(callee).map(|s| &s.kind) {
+            Some(
+                SymbolKind::Function { parameters, .. }
+                | SymbolKind::Method { parameters, .. }
+                | SymbolKind::Constructor { parameters, .. },
+            ) => parameters.clone(),
+            _ => return,
+        };
+        for (index, (param_type, arg)) in declared.iter().zip(arguments).enumerate() {
+            let arg_location = Self::argument_location(arg, location);
+            self.check_sized_conversion(
+                param_type,
+                Self::value_source_symbol(arg),
+                &format!("argument {} of '{}'", index + 1, callee_name),
+                &arg_location,
+            );
         }
     }
 
@@ -1453,6 +1550,113 @@ impl<'a> TypeInference<'a> {
         });
     }
 
+    /// The condition of an `if` or `while` is a boolean. A `T?` is not one,
+    /// even a `boolean?`: it may be none (type-system.md §8).
+    fn require_condition(
+        &mut self,
+        keyword: &str,
+        condition: &TastExpression,
+        location: &SourceLocation,
+    ) {
+        if let ConcreteType::Optional(inner) = &condition.expr_type {
+            let name = inner.source_name(Some(self.symbol_table));
+            let help = if **inner == ConcreteType::Boolean {
+                "Use `value!` when it cannot be none, or `value default false`".to_string()
+            } else {
+                "Compare with none to get a boolean, e.g. `value != none`".to_string()
+            };
+            self.errors.push(CompilerError::type_error(
+                format!(
+                    "The `{}` condition must be a boolean, not a {}? (it may be none)",
+                    keyword, name
+                ),
+                Some(help),
+                Some(location.clone()),
+            ));
+            return;
+        }
+        if condition.expr_type != ConcreteType::Boolean {
+            self.add_constraint(TypeConstraint::Equality {
+                left: condition.expr_type.clone(),
+                right: ConcreteType::Boolean,
+                location: location.clone(),
+            });
+        }
+    }
+
+    /// An empty `[]` or `{}` stored where a `target` is expected takes the
+    /// target's type, so `list<integer> l = []` allocates an empty list of
+    /// integers. `[]` is only a list (or matrix) and `{}` only a pairs
+    /// (SEM001). Returns None when `expr` is not an empty literal, or is an
+    /// empty object literal `{}`, which is inferred as written.
+    fn empty_collection_literal(
+        &mut self,
+        expr: &ResolvedHirExpression,
+        target: &ConcreteType,
+        location: &SourceLocation,
+    ) -> Option<TastExpression> {
+        let (is_list, typed_here) = match expr {
+            ResolvedHirExpression::Array { elements, .. } if elements.is_empty() => (true, true),
+            ResolvedHirExpression::Literal {
+                value: crate::ast::Value::List(elements),
+                ..
+            } if elements.is_empty() => (true, true),
+            ResolvedHirExpression::Literal {
+                value: crate::ast::Value::Pairs(pairs),
+                ..
+            } if pairs.is_empty() => (false, true),
+            ResolvedHirExpression::ObjectLiteral { fields, .. } if fields.is_empty() => {
+                (false, false)
+            }
+            _ => return None,
+        };
+        fn holds(target: &ConcreteType, is_list: bool) -> bool {
+            match target {
+                ConcreteType::Unknown | ConcreteType::Any | ConcreteType::Generic { .. } => true,
+                ConcreteType::Optional(inner) => holds(inner, is_list),
+                ConcreteType::Array(_) | ConcreteType::Matrix(_) => is_list,
+                ConcreteType::Pairs(_, _) => !is_list,
+                _ => false,
+            }
+        }
+        if !holds(target, is_list) {
+            let (literal, kind) = if is_list {
+                ("[]", "list")
+            } else {
+                ("{}", "pairs")
+            };
+            self.errors.push(CompilerError::type_error(
+                format!(
+                    "An empty {} `{}` cannot be used as {}",
+                    kind,
+                    literal,
+                    target.source_name(Some(self.symbol_table))
+                ),
+                Some(if is_list {
+                    "`[]` is an empty list; `{}` is an empty pairs".to_string()
+                } else {
+                    "`{}` is an empty pairs; `[]` is an empty list".to_string()
+                }),
+                Some(self.located(location)),
+            ));
+        }
+        if !typed_here {
+            return None;
+        }
+        let element_type = match target {
+            ConcreteType::Array(element) => (**element).clone(),
+            _ => ConcreteType::Unknown,
+        };
+        Some(TastExpression {
+            kind: TastExpressionKind::ArrayLiteral {
+                elements: vec![],
+                element_type,
+            },
+            expr_type: target.clone(),
+            location: expr.location().clone(),
+        })
+    }
+
     /// A `T?` may be none, so its members are only reachable through
     /// `value!` (or a `default` fallback): reading a field, calling a method
     /// or indexing it directly is an error (04-type-system.md, Nullable
@@ -1496,21 +1700,15 @@ impl<'a> TypeInference<'a> {
 
         // Add parameters to type environment
         let mut tast_parameters = Vec::new();
-        for param in &function.parameters {
+        for (index, param) in function.parameters.iter().enumerate() {
             let param_type = self.hir_type_to_concrete(&param.param_type);
             self.type_env.insert(param.symbol_id, param_type.clone());
-
-            let default_value = if let Some(default_expr) = &param.default_value {
-                Some(self.infer_expression(default_expr)?)
-            } else {
-                None
-            };
 
             tast_parameters.push(TastParameter {
                 symbol_id: param.symbol_id,
                 name: param.name.clone(),
                 param_type,
-                default_value,
+                default_value: self.parameter_default(function.symbol_id, index),
                 is_variadic: false,
                 location: param.location.clone(),
             });
@@ -1593,7 +1791,7 @@ impl<'a> TypeInference<'a> {
             constraints: Vec::new(),
             is_background: false,
             is_static: false, // Top-level functions are not static methods
-            visibility: Visibility::Public, // Would get from HIR
+            visibility: self.visibility_of(function.symbol_id),
             location: function.location.clone(),
         })
     }
@@ -1615,7 +1813,7 @@ impl<'a> TypeInference<'a> {
 
         // Add parameters to type environment
         let mut tast_parameters = Vec::new();
-        for param in &constructor.parameters {
+        for (index, param) in constructor.parameters.iter().enumerate() {
             let param_type = self.hir_type_to_concrete(&param.param_type);
             self.type_env.insert(param.symbol_id, param_type.clone());
 
@@ -1623,7 +1821,7 @@ impl<'a> TypeInference<'a> {
                 symbol_id: param.symbol_id,
                 name: param.name.clone(),
                 param_type,
-                default_value: None,
+                default_value: self.parameter_default(constructor.symbol_id, index),
                 is_variadic: false,
                 location: param.location.clone(),
             });
@@ -1659,7 +1857,7 @@ impl<'a> TypeInference<'a> {
 
         // Add parameters to type environment
         let mut tast_parameters = Vec::new();
-        for param in &method.parameters {
+        for (index, param) in method.parameters.iter().enumerate() {
             let param_type = self.hir_type_to_concrete(&param.param_type);
             self.type_env.insert(param.symbol_id, param_type.clone());
 
@@ -1667,7 +1865,7 @@ impl<'a> TypeInference<'a> {
                 symbol_id: param.symbol_id,
                 name: param.name.clone(),
                 param_type,
-                default_value: None, // Would convert from HIR
+                default_value: self.parameter_default(method.symbol_id, index),
                 is_variadic: false,
                 location: param.location.clone(),
             });
@@ -1712,11 +1910,19 @@ impl<'a> TypeInference<'a> {
             body: tast_body,
             generic_params: Vec::new(), // Would handle generics here
             constraints: Vec::new(),
-            is_background: false,           // Methods are typically not async
-            is_static,                      // Detected based on whether method uses 'this'
-            visibility: Visibility::Public, // Would get from HIR
+            is_background: false, // Methods are typically not async
+            is_static,
+            visibility: self.visibility_of(method.symbol_id),
             location: method.location.clone(),
         })
+    }
+
+    /// A declaration outside a `public:` sub-section is private.
+    fn visibility_of(&self, symbol_id: SymbolId) -> Visibility {
+        match self.symbol_table.get_symbol(symbol_id) {
+            Some(symbol) if symbol.is_private => Visibility::Private,
+            _ => Visibility::Public,
+        }
     }
 
     /// FUNC004: a non-void function or method must return a value on every
@@ -1762,44 +1968,17 @@ impl<'a> TypeInference<'a> {
             let field_type = self.hir_type_to_concrete(&field.field_type);
 
             let default_value = if let Some(init_expr) = &field.initializer {
-                // Special handling for empty literals with explicit type annotations
-                let is_empty_literal = match init_expr {
-                    ResolvedHirExpression::Literal {
-                        value: crate::ast::Value::List(elements),
-                        ..
-                    } => elements.is_empty(),
-                    _ => false,
-                };
-
-                if is_empty_literal {
-                    // For empty array literals, create an ArrayLiteral with empty elements
-                    // This ensures the list gets properly allocated rather than set to 0
-                    let element_type = match &field_type {
-                        ConcreteType::Array(elem_type) => (**elem_type).clone(),
-                        _ => ConcreteType::Unknown,
-                    };
-                    Some(TastExpression {
-                        kind: TastExpressionKind::ArrayLiteral {
-                            elements: vec![],
-                            element_type,
-                        },
-                        expr_type: field_type.clone(),
-                        location: init_expr.location().clone(),
-                    })
+                if let Some(empty) =
+                    self.empty_collection_literal(init_expr, &field_type, &field.location)
+                {
+                    Some(empty)
                 } else {
                     // The initializer is stored into the field like an
                     // assignment: none only into a `T?` field
                     // (type-system.md §8).
-                    // An empty `[]` takes the field's element type.
                     let mut value = self.infer_expression(init_expr)?;
-                    let empty_list = matches!(
-                        init_expr,
-                        ResolvedHirExpression::Array { elements, .. } if elements.is_empty()
-                    );
-                    if !empty_list {
-                        let location = field.location.clone();
-                        self.require_assignable(&mut value, &field_type, &location);
-                    }
+                    let location = field.location.clone();
+                    self.require_assignable(&mut value, &field_type, &location);
                     Some(value)
                 }
             } else {
@@ -1812,17 +1991,15 @@ impl<'a> TypeInference<'a> {
                 field_type,
                 default_value,
                 is_static: false, // ResolvedHirField doesn't have is_static field
-                visibility: Visibility::Public, // Would get from HIR
+                visibility: self.visibility_of(field.symbol_id),
                 location: field.location.clone(),
             });
         }
 
-        // Convert constructors
+        // Convert constructors — errors propagate like a method's do.
         let mut tast_constructors = Vec::new();
         if let Some(constructor) = &class.constructor {
-            if let Ok(tast_constructor) = self.infer_constructor(constructor, class.symbol_id) {
-                tast_constructors.push(tast_constructor);
-            }
+            tast_constructors.push(self.infer_constructor(constructor, class.symbol_id)?);
         }
 
         // Convert methods — propagate errors so codegen never sees a missing method body.
@@ -1885,7 +2062,8 @@ impl<'a> TypeInference<'a> {
             methods: tast_methods,
             constructors: tast_constructors, // Now properly populated
             parent_class: class.parent,
-            visibility: Visibility::Public, // Would get from HIR
+            // Classes carry no visibility; their members do.
+            visibility: Visibility::Public,
             invariants: tast_invariants,
             location: class.location.clone(),
         })
@@ -2564,51 +2742,26 @@ impl<'a> TypeInference<'a> {
                 location,
             } => {
                 let declared_type = self.hir_type_to_concrete(var_type);
-                if let Some(init) = initializer {
-                    if let Some(message) = self.sized_narrowing(var_type, init) {
-                        self.errors.push(CompilerError::Validation {
-                            context: Box::new(
-                                crate::error::ErrorContext::new(
-                                    format!("{} for variable '{}'", message, name),
-                                    Some("Declare the variable with the wider type, or convert the value explicitly.".to_string()),
-                                    crate::error::ErrorType::Validation,
-                                    Some(location.clone()),
-                                )
-                                .with_error_code("SEM004"),
-                            ),
-                        });
-                    }
+                if let Some(ResolvedHirExpression::Variable {
+                    symbol_id: source, ..
+                }) = initializer
+                {
+                    self.check_sized_conversion(
+                        var_type,
+                        Some(*source),
+                        &format!("variable '{}'", name),
+                        location,
+                    );
                 }
 
                 let tast_initializer = if let Some(init_expr) = initializer {
                     // none (alias null) initializes only a `T?` or an `any`
                     // (type-system.md §8); `require_assignable` below reports
                     // `string s = none`.
-
-                    // Special handling for empty literals with explicit type annotations
-                    // Check if this is an empty array [] or empty pairs {} literal
-                    let is_empty_literal = match init_expr {
-                        // Empty array literal []
-                        ResolvedHirExpression::Array { elements, .. } => elements.is_empty(),
-                        _ => false,
-                    };
-
-                    let tast_init = if is_empty_literal {
-                        // For empty array literals, create an ArrayLiteral with empty elements
-                        // This ensures list<integer> myList = [] allocates an actual list
-                        // rather than setting the pointer to 0 (null)
-                        let element_type = match &declared_type {
-                            ConcreteType::Array(elem_type) => (**elem_type).clone(),
-                            _ => ConcreteType::Unknown,
-                        };
-                        TastExpression {
-                            kind: TastExpressionKind::ArrayLiteral {
-                                elements: vec![],
-                                element_type,
-                            },
-                            expr_type: declared_type.clone(),
-                            location: init_expr.location().clone(),
-                        }
+                    let tast_init = if let Some(empty) =
+                        self.empty_collection_literal(init_expr, &declared_type, location)
+                    {
+                        empty
                     } else {
                         // Normal inference for non-empty literals
                         let mut tast_init = self.infer_expression(init_expr)?;
@@ -2717,9 +2870,36 @@ impl<'a> TypeInference<'a> {
                     let mut tast_expr = self.infer_expression(return_expr)?;
 
                     // The returned value must be assignable to the declared
-                    // return type.
-                    if let Some(expected_return_type) = self.current_return_type.clone() {
-                        self.require_assignable(&mut tast_expr, &expected_return_type, location);
+                    // return type; a `void` method returns no value.
+                    match self.current_return_type.clone() {
+                        Some(ConcreteType::Null | ConcreteType::Undefined)
+                            if !matches!(
+                                tast_expr.expr_type,
+                                ConcreteType::Null
+                                    | ConcreteType::Undefined
+                                    | ConcreteType::Unknown
+                            ) =>
+                        {
+                            self.errors.push(CompilerError::type_error(
+                                format!(
+                                    "A void function cannot return a value (got {})",
+                                    tast_expr.expr_type.source_name(Some(self.symbol_table))
+                                ),
+                                Some(
+                                    "Declare the return type, or write `return` without a value"
+                                        .to_string(),
+                                ),
+                                Some(location.clone()),
+                            ));
+                        }
+                        Some(expected_return_type) => {
+                            self.require_assignable(
+                                &mut tast_expr,
+                                &expected_return_type,
+                                location,
+                            );
+                        }
+                        None => {}
                     }
 
                     Some(tast_expr)
@@ -2770,11 +2950,7 @@ impl<'a> TypeInference<'a> {
             } => {
                 // Infer condition type and ensure it's boolean
                 let tast_condition = self.infer_expression(condition)?;
-                self.add_constraint(TypeConstraint::Equality {
-                    left: tast_condition.expr_type.clone(),
-                    right: ConcreteType::Boolean,
-                    location: location.clone(),
-                });
+                self.require_condition("if", &tast_condition, location);
 
                 // Infer then branch
                 let tast_then_block = self.infer_block(then_branch)?;
@@ -2874,13 +3050,7 @@ impl<'a> TypeInference<'a> {
                 let tast_condition = self.infer_expression(condition)?;
 
                 // Ensure condition is boolean
-                if tast_condition.expr_type != ConcreteType::Boolean {
-                    self.add_constraint(TypeConstraint::Equality {
-                        left: tast_condition.expr_type.clone(),
-                        right: ConcreteType::Boolean,
-                        location: location.clone(),
-                    });
-                }
+                self.require_condition("while", &tast_condition, location);
 
                 // Infer body
                 let tast_body = self.infer_block(body)?;
@@ -2923,33 +3093,17 @@ impl<'a> TypeInference<'a> {
                     ResolvedHirLValue::Index { .. } => ConcreteType::Unknown,
                 };
 
-                // Special handling for empty literals with known target type
-                let is_empty_literal = match value {
-                    // Empty array literal []
-                    ResolvedHirExpression::Array { elements, .. } => elements.is_empty(),
-                    _ => false,
+                // An empty `[]` / `{}` takes the target's type when it is known.
+                let empty_literal = if matches!(target_type, ConcreteType::Unknown) {
+                    None
+                } else {
+                    self.empty_collection_literal(value, &target_type, location)
                 };
-
-                let mut tast_value =
-                    if is_empty_literal && !matches!(target_type, ConcreteType::Unknown) {
-                        // For empty array literals, create an ArrayLiteral with empty elements
-                        // This ensures the list gets properly allocated rather than set to 0
-                        let element_type = match &target_type {
-                            ConcreteType::Array(elem_type) => (**elem_type).clone(),
-                            _ => ConcreteType::Unknown,
-                        };
-                        TastExpression {
-                            kind: TastExpressionKind::ArrayLiteral {
-                                elements: vec![],
-                                element_type,
-                            },
-                            expr_type: target_type.clone(),
-                            location: value.location().clone(),
-                        }
-                    } else {
-                        // Normal inference
-                        self.infer_expression(value)?
-                    };
+                let is_empty_literal = empty_literal.is_some();
+                let mut tast_value = match empty_literal {
+                    Some(empty) => empty,
+                    None => self.infer_expression(value)?,
+                };
 
                 // Handle variable assignments (field access handled via PropertyAccess)
                 let tast_target = match target {
@@ -2990,6 +3144,14 @@ impl<'a> TypeInference<'a> {
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
                             self.require_assignable(&mut tast_value, &target_type, location);
+                        }
+                        if let Some(declared) = self.declared_hir_type(*symbol_id) {
+                            self.check_sized_conversion(
+                                &declared,
+                                Self::value_source_symbol(&tast_value),
+                                &format!("variable '{}'", name),
+                                location,
+                            );
                         }
 
                         TastExpression {
@@ -3078,6 +3240,14 @@ impl<'a> TypeInference<'a> {
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
                             self.require_assignable(&mut tast_value, &target_type, location);
+                        }
+                        if let Some(declared) = self.declared_hir_type(field_symbol_id) {
+                            self.check_sized_conversion(
+                                &declared,
+                                Self::value_source_symbol(&tast_value),
+                                &format!("field '{}'", field),
+                                location,
+                            );
                         }
 
                         TastExpression {
@@ -3561,6 +3731,16 @@ impl<'a> TypeInference<'a> {
         let mut tast_arguments = Vec::new();
         for arg in arguments {
             tast_arguments.push(self.infer_expression(arg)?);
+        }
+
+        let is_builtin =
+            function_symbol_id.0 == 0 || self.symbol_table.is_builtin(*function_symbol_id);
+        if let Some(list_fn) = function
+            .strip_prefix("list.")
+            .or_else(|| function.strip_prefix("list_"))
+            .filter(|_| is_builtin)
+        {
+            self.check_list_namespace_arguments(list_fn, &mut tast_arguments, location);
         }
 
         // Get the function type and add parameter type constraints.
@@ -4118,6 +4298,7 @@ impl<'a> TypeInference<'a> {
                 &mut tast_arguments,
                 location,
             );
+            self.append_default_arguments(resolved_method_symbol, &mut tast_arguments);
         }
 
         // SEM005: Private method access check.
@@ -4207,18 +4388,20 @@ impl<'a> TypeInference<'a> {
                 })
                 .and_then(|class_id| self.symbol_table.lookup_class_member(class_id, method))
         };
-        if let Some(method_symbol) = checked_method_symbol {
-            if let Some(sym) = self.symbol_table.get_symbol(method_symbol) {
-                if let SymbolKind::Method { parameters, .. } = &sym.kind {
-                    let param_types: Vec<ConcreteType> = parameters
-                        .iter()
-                        .map(|p| self.hir_type_to_concrete(p))
-                        .collect();
-                    for (param_type, arg) in param_types.iter().zip(tast_arguments.iter_mut()) {
-                        self.require_assignable(arg, param_type, location);
-                    }
-                }
-            }
+        if full_class_name == "list" {
+            self.check_list_namespace_arguments(method, &mut tast_arguments, location);
+        }
+
+        // FUNC002 / SEM001: the arguments must match the method's parameters;
+        // left-out trailing parameters take their defaults.
+        if let Some(method_symbol) = checked_method_symbol.filter(|id| {
+            matches!(
+                self.symbol_table.get_symbol(*id).map(|s| &s.kind),
+                Some(SymbolKind::Method { .. })
+            )
+        }) {
+            self.check_call_arguments(method_symbol, method, &mut tast_arguments, location);
+            self.append_default_arguments(method_symbol, &mut tast_arguments);
         }
 
         // NOTE: Use SymbolId(0) for built-in namespace methods
@@ -4392,6 +4575,7 @@ impl<'a> TypeInference<'a> {
             &mut tast_arguments,
             location,
         );
+        self.append_default_arguments(*constructor_symbol_id, &mut tast_arguments);
 
         // The constructor returns an instance of the class
         let instance_type = ConcreteType::Class {
@@ -4454,7 +4638,8 @@ impl<'a> TypeInference<'a> {
         let tast_expression = self.infer_expression(expression)?;
         let target_concrete_type = self.hir_type_to_concrete(target_type);
 
-        // Cast operations validated at compile time via type constraints
+        // A cast is lowered as a call to `cast_to_<type>`; the result has
+        // the target type.
         Ok((
             TastExpressionKind::FunctionCall {
                 function: Box::new(TastExpression {
@@ -4563,6 +4748,22 @@ impl<'a> TypeInference<'a> {
             tast_arguments.push(tast_arg);
         }
 
+        // FUNC002 / SEM001: `base(...)` calls the parent's constructor.
+        if let Some(constructor) = self.class_constructors.get(parent_class_symbol_id).copied() {
+            let parent_name = self
+                .symbol_table
+                .get_symbol(*parent_class_symbol_id)
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| "the parent class".to_string());
+            self.check_call_arguments(
+                constructor,
+                &format!("base ({} constructor)", parent_name),
+                &mut tast_arguments,
+                location,
+            );
+            self.append_default_arguments(constructor, &mut tast_arguments);
+        }
+
         // BaseCall returns null/void (it's a statement-like expression)
         Ok((
             TastExpressionKind::BaseCall {
@@ -4592,7 +4793,38 @@ impl<'a> TypeInference<'a> {
             None
         };
 
-        // Both start and end should be integers
+        // SEM001: a range counts in integers, so its bounds and step are
+        // integers (an `any` is checked at run time).
+        let bounds = [("start", Some(&tast_start)), ("end", Some(&tast_end))]
+            .into_iter()
+            .chain(std::iter::once(("step", tast_step.as_deref())));
+        let mut errors = Vec::new();
+        for (role, bound) in bounds {
+            let Some(bound) = bound else { continue };
+            if !matches!(
+                bound.expr_type,
+                ConcreteType::Integer
+                    | ConcreteType::IntegerSized { .. }
+                    | ConcreteType::Any
+                    | ConcreteType::Unknown
+                    | ConcreteType::Generic { .. }
+            ) {
+                errors.push(CompilerError::type_error(
+                    format!(
+                        "The {} of a range must be an integer, not {}",
+                        role,
+                        bound.expr_type.source_name(Some(self.symbol_table))
+                    ),
+                    Some(
+                        "A range counts in integers: `iterate i in 1 to 10 step 2`; convert a value with `.toInteger()`"
+                            .to_string(),
+                    ),
+                    Some(self.located(&Self::argument_location(bound, location))),
+                ));
+            }
+        }
+        self.errors.extend(errors);
+
         // The range is typed as a list of integers (of `integer:64` when a
         // bound or the step is one, so the loop variable holds every value);
         // the MIR/codegen generates actual range values
@@ -5215,7 +5447,7 @@ impl<'a> TypeInference<'a> {
 
                 // Validate argument count against required parameters (not total parameters)
                 if arguments.len() < required_count {
-                    return Err(CompilerError::type_error(
+                    return Err(CompilerError::semantic_error_with_code(
                         format!(
                             "Function requires at least {} arguments, got {}",
                             required_count,
@@ -5223,12 +5455,13 @@ impl<'a> TypeInference<'a> {
                         ),
                         None,
                         Some(location.clone()),
+                        "FUNC002",
                     ));
                 }
 
                 // Skip argument count check for variadic print functions
                 if !is_variadic_print_fn && arguments.len() > parameters.len() {
-                    return Err(CompilerError::type_error(
+                    return Err(CompilerError::semantic_error_with_code(
                         format!(
                             "Function accepts at most {} arguments, got {}",
                             parameters.len(),
@@ -5236,6 +5469,7 @@ impl<'a> TypeInference<'a> {
                         ),
                         None,
                         Some(location.clone()),
+                        "FUNC002",
                     ));
                 }
 
@@ -5255,6 +5489,14 @@ impl<'a> TypeInference<'a> {
                         }
                         self.require_assignable(arg, param_type, location);
                     }
+                }
+                if !is_generic_list_fn && !is_variadic_print_fn {
+                    let name = self
+                        .symbol_table
+                        .get_symbol(function_symbol_id)
+                        .map(|s| s.name.clone())
+                        .unwrap_or_default();
+                    self.check_sized_arguments(function_symbol_id, &name, arguments, location);
                 }
 
                 Ok((**return_type).clone())
@@ -5384,19 +5626,17 @@ impl<'a> TypeInference<'a> {
             if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
                 let function_name = &symbol.name;
 
-                // Check if the function name follows the static method pattern Class.method
+                // A `Class.method` name is typed as a static method call,
+                // with its own errors (FUNC001 / FUNC002).
                 if let Some(dot_pos) = function_name.find('.') {
                     let class_name = &function_name[..dot_pos];
                     let method_name = &function_name[dot_pos + 1..];
-                    // Try to infer as static method
-                    if let Ok(static_return_type) = self.infer_static_method_return_type(
+                    return self.infer_static_method_return_type(
                         class_name,
                         method_name,
                         arguments,
                         location,
-                    ) {
-                        return Ok(static_return_type);
-                    }
+                    );
                 }
             }
 
@@ -5681,6 +5921,34 @@ impl<'a> TypeInference<'a> {
             return;
         }
         for (param, arg) in signature.params.iter().zip(arguments.iter_mut()) {
+            let arg_location = Self::argument_location(arg, location);
+            self.require_assignable(arg, param, &arg_location);
+        }
+    }
+
+    /// SEM001: `list.f(items, args…)` is the namespace form of
+    /// `items.f(args…)`, so its arguments are checked against the list's
+    /// element type the same way (`list.add(numbers, "x")` is an error).
+    /// The argument count is checked with the return type.
+    fn check_list_namespace_arguments(
+        &mut self,
+        function: &str,
+        arguments: &mut [TastExpression],
+        location: &SourceLocation,
+    ) {
+        let Some((items, rest)) = arguments.split_first_mut() else {
+            return;
+        };
+        if !matches!(items.expr_type, ConcreteType::Array(_)) {
+            return;
+        }
+        let Some(signature) = Self::builtin_method_signature(&items.expr_type, function) else {
+            return;
+        };
+        if rest.len() < signature.required || rest.len() > signature.params.len() {
+            return;
+        }
+        for (param, arg) in signature.params.iter().zip(rest.iter_mut()) {
             let arg_location = Self::argument_location(arg, location);
             self.require_assignable(arg, param, &arg_location);
         }
@@ -6291,9 +6559,26 @@ impl<'a> TypeInference<'a> {
                     };
                 }
                 // The `json.` namespace has exactly the functions above
-                // (stdlib-reference.md §8). Other built-in namespaces also
-                // have functions the code generator provides by name.
-                if class_name == "json" {
+                // (stdlib-reference.md §8), and `math.` / `list.` the ones
+                // above and in the symbol table. `list.allocate` and the
+                // element-width list helpers are lowered by the code
+                // generator by name. Other built-in namespaces (`http.`,
+                // `input.`, `validator.`) also have functions the code
+                // generator provides by name.
+                let codegen_list_function = class_name == "list"
+                    && matches!(
+                        method_name,
+                        "allocate"
+                            | "removeAt"
+                            | "add_i64"
+                            | "add_f64"
+                            | "push_f64"
+                            | "getType"
+                            | "setType"
+                    );
+                if matches!(class_name, "json" | "math")
+                    || (class_name == "list" && !codegen_list_function)
+                {
                     return Err(CompilerError::semantic_error_with_code(
                         format!("Function '{}' not found", full_method_name),
                         Some(format!(
@@ -6395,19 +6680,31 @@ impl<'a> TypeInference<'a> {
                 | ConcreteType::Number
                 | ConcreteType::IntegerSized { .. }
                 | ConcreteType::NumberSized { .. } => Ok(operand_type.clone()),
-                // SEM004: unary minus is defined for numbers only.
-                ConcreteType::Boolean
-                | ConcreteType::String
-                | ConcreteType::Array(_)
-                | ConcreteType::Matrix(_)
-                | ConcreteType::Pairs(_, _)
-                | ConcreteType::Class { .. } => Err(CompilerError::semantic_error_with_code(
-                    format!("Unary '-' cannot be applied to a value of type {operand_type}"),
+                // An `any` is checked at run time; an unknown type was
+                // already reported.
+                ConcreteType::Any | ConcreteType::Unknown | ConcreteType::Generic { .. } => {
+                    Ok(ConcreteType::Unknown)
+                }
+                // SEM004: unary minus is defined for numbers only; a `T?`
+                // may be none and is unwrapped first.
+                ConcreteType::Optional(inner) => Err(CompilerError::semantic_error_with_code(
+                    format!(
+                        "Unary '-' cannot be applied to a value of type {}?",
+                        inner.source_name(Some(self.symbol_table))
+                    ),
+                    Some("The value may be none: negate `value!` or `value default 0`".to_string()),
+                    Some(location.clone()),
+                    "SEM004",
+                )),
+                _ => Err(CompilerError::semantic_error_with_code(
+                    format!(
+                        "Unary '-' cannot be applied to a value of type {}",
+                        operand_type.source_name(Some(self.symbol_table))
+                    ),
                     Some("Negation is defined for integer and number values".to_string()),
                     Some(location.clone()),
                     "SEM004",
                 )),
-                _ => Ok(ConcreteType::Unknown),
             },
             // SEM004: `not` is defined for booleans only (an `any` holding
             // a boolean is checked at runtime).
@@ -6541,35 +6838,99 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    /// type-system.md §5: `integer:N → integer:M` only when M >= N, and
-    /// `number:64 → number:32` is precision loss. 8–32-bit integers and both
-    /// number widths share one concrete type after inference, so the check
-    /// compares the declared types: a variable or parameter declared with a
-    /// wider explicit precision, assigned to a narrower explicit one.
-    fn sized_narrowing(&self, target: &HirType, init: &ResolvedHirExpression) -> Option<String> {
-        let (target_is_number, target_bits, _) = Self::explicit_precision(target)?;
-        let ResolvedHirExpression::Variable { symbol_id, .. } = init else {
-            return None;
+    /// The declared type of a variable, parameter, state variable or field.
+    fn declared_hir_type(&self, symbol_id: SymbolId) -> Option<HirType> {
+        match &self.symbol_table.get_symbol(symbol_id)?.kind {
+            SymbolKind::Variable { var_type, .. } | SymbolKind::StateVariable { var_type, .. } => {
+                Some(var_type.clone())
+            }
+            SymbolKind::Parameter { param_type } => Some(param_type.clone()),
+            SymbolKind::Field { field_type, .. } => Some(field_type.clone()),
+            _ => None,
+        }
+    }
+
+    /// The variable or field a value is read from, if it is one.
+    fn value_source_symbol(value: &TastExpression) -> Option<SymbolId> {
+        match &value.kind {
+            TastExpressionKind::Variable { symbol_id, .. } => Some(*symbol_id),
+            TastExpressionKind::PropertyAccess {
+                property_symbol, ..
+            } => Some(*property_symbol),
+            _ => None,
+        }
+    }
+
+    /// type-system.md §5: `integer:N → integer:M` only when M >= N and the
+    /// signedness is the same, and `number:64 → number:32` is precision
+    /// loss. 8–32-bit integers and both number widths share one concrete
+    /// type after inference, so the check compares the declared types of a
+    /// variable, parameter or field stored where a narrower (or differently
+    /// signed) explicit precision is declared: a declaration, assignment or
+    /// argument (SEM004).
+    fn check_sized_conversion(
+        &mut self,
+        target: &HirType,
+        source: Option<SymbolId>,
+        what: &str,
+        location: &SourceLocation,
+    ) {
+        let Some(source_type) = source.and_then(|id| self.declared_hir_type(id)) else {
+            return;
         };
-        let source_type = match &self.symbol_table.get_symbol(*symbol_id)?.kind {
-            SymbolKind::Variable { var_type, .. } => var_type.clone(),
-            SymbolKind::Parameter { param_type } => param_type.clone(),
-            _ => return None,
+        let Some(message) = Self::sized_conversion_error(target, &source_type) else {
+            return;
         };
-        let (source_is_number, source_bits, source_unsigned) =
-            Self::explicit_precision(&source_type)?;
-        if source_is_number != target_is_number || source_bits <= target_bits {
+        self.errors.push(CompilerError::Validation {
+            context: Box::new(
+                crate::error::ErrorContext::new(
+                    format!("{} for {}", message, what),
+                    Some(
+                        "Declare the target with the wider type, or convert the value explicitly."
+                            .to_string(),
+                    ),
+                    crate::error::ErrorType::Validation,
+                    Some(self.located(location)),
+                )
+                .with_error_code("SEM004"),
+            ),
+        });
+    }
+
+    /// Why a `source` sized type may not be stored as a `target` sized type
+    /// (see `check_sized_conversion`), or None when it may.
+    fn sized_conversion_error(target: &HirType, source: &HirType) -> Option<String> {
+        let (target_is_number, target_bits, target_unsigned) = Self::explicit_precision(target)?;
+        let (source_is_number, source_bits, source_unsigned) = Self::explicit_precision(source)?;
+        if source_is_number != target_is_number {
             return None;
         }
-        let kind = if source_is_number {
-            "number"
-        } else {
-            "integer"
+        let name = |bits: u8, unsigned: bool| {
+            let kind = if source_is_number {
+                "number"
+            } else {
+                "integer"
+            };
+            format!("{kind}:{bits}{}", if unsigned { "u" } else { "" })
         };
-        let suffix = if source_unsigned { "u" } else { "" };
-        Some(format!(
-            "Narrowing assignment: {kind}:{source_bits}{suffix} cannot be assigned to {kind}:{target_bits} (precision loss)"
-        ))
+        let from = name(source_bits, source_unsigned);
+        let to = name(target_bits, target_unsigned);
+        if source_bits > target_bits {
+            return Some(format!(
+                "Narrowing assignment: {from} cannot be assigned to {to} (precision loss)"
+            ));
+        }
+        // 64-bit integers keep their signedness in their concrete type; the
+        // constraint solver reports that mismatch.
+        if !source_is_number
+            && source_unsigned != target_unsigned
+            && !(source_bits == 64 && target_bits == 64)
+        {
+            return Some(format!(
+                "Signedness mismatch: {from} cannot be assigned to {to}"
+            ));
+        }
+        None
     }
 
     /// Convert HIR type to concrete type
@@ -6773,17 +7134,6 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    /// Gap 1 helper: Determine whether a TAST block unconditionally terminates
-    /// with a `return` statement on every reachable path.
-    ///
-    /// The analysis is intentionally conservative (may produce false-positive
-    /// warnings) rather than false-negatives that would mask bugs:
-    ///   - A block definitively returns if its last statement is `Return`.
-    ///   - A block definitively returns if its last statement is an `If` that
-    ///     has an `else` branch and both branches definitively return.
-    ///   - All other cases are considered *not* definitively returning.
-    ///
-    /// This keeps the implementation simple and avoids rejecting valid code.
     /// Returns true if the block contains any `return none` path (a return statement
     /// where the value's type is ConcreteType::Null coming from a `none` literal).
     /// Recurses into if/else branches and try/catch blocks.

@@ -1,0 +1,40 @@
+// Test: bugfixes/base_call_checked_against_parent_constructor
+// Grammar: base_call
+// Semantic: FUNC002, SEM001 — `base(...)` calls the parent's constructor, so
+//   its arguments must match that constructor's parameters
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   A value of type string cannot be used as integer
+//   'base (Shape constructor)' expects 2 argument(s), got 1
+//
+// Regression: `base(...)` arguments were not checked: a string reached an
+// integer field, and a missing argument produced invalid WebAssembly.
+
+start:
+	Dog d = Dog("rex")
+	print(d.legs.toString())
+	Square s = Square(4)
+	print(s.w.toString())
+
+class Animal
+	public:
+		integer legs
+
+	constructor(integer l)
+		legs = l
+
+class Dog is Animal
+	constructor(string n)
+		base(n)
+
+class Shape
+	public:
+		integer w
+
+	constructor(integer a, integer b)
+		w = a + b
+
+class Square is Shape
+	constructor(integer n)
+		base(n)

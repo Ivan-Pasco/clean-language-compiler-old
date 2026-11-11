@@ -1,0 +1,35 @@
+// Test: bugfixes/parameter_default_must_match_parameter_type
+// Grammar: parameter (default value)
+// Semantic: SEM001 — a parameter default is stored into the parameter like
+//   an argument, so it must have the parameter's type
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   A value of type string cannot be used as integer
+//   A value of type integer cannot be used as string
+//   A value of type boolean cannot be used as number
+//
+// Regression: defaults were not checked against the parameter type:
+// `integer f(integer a = "hello")` compiled and added a string pointer.
+
+start:
+	print(f().toString())
+	print(g())
+	Box b = Box()
+	print(b.scale().toString())
+
+class Box
+	public:
+		number v = 1.0
+
+	functions:
+		public:
+			number scale(number k = true)
+				return v * k
+
+functions:
+	integer f(integer a = "hello")
+		return a + 1
+
+	string g(string s = 42)
+		return s

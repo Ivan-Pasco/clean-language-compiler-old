@@ -1,0 +1,24 @@
+// Test: bugfixes/constructor_body_errors_are_reported
+// Grammar: constructor
+// Semantic: SEM004 — an error in a constructor body is reported like one in
+//   a method body
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   A value of type string has no field 'nosuchfield'
+//
+// Regression: the type checker dropped a constructor whose body had an
+// error, so the compile failed later with "Function 'Box.constructor' not
+// found in function map" and no word about the real problem.
+
+start:
+	Box b = Box(3)
+	print(b.v.toString())
+
+class Box
+	public:
+		integer v
+
+	constructor(integer x)
+		string s = "abc"
+		v = s.nosuchfield

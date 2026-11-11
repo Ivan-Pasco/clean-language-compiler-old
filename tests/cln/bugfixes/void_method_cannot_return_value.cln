@@ -1,0 +1,21 @@
+// Test: bugfixes/void_method_cannot_return_value
+// Grammar: return_statement
+// Semantic: SEM001 — a `void` method returns no value
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   A void function cannot return a value (got string)
+//
+// Regression: `return "abc"` in a `void` method compiled; the value was
+// dropped.
+
+start:
+	Box b = Box()
+	b.f()
+	print("ok")
+
+class Box
+	functions:
+		public:
+			void f()
+				return "abc"

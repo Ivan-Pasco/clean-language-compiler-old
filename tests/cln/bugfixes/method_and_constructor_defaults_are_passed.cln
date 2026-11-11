@@ -1,0 +1,51 @@
+// Test: bugfixes/method_and_constructor_defaults_are_passed
+// Grammar: parameter (default value), method_call, constructor_call, base_call
+// Semantic: FUNC002 — a call may leave out trailing parameters that have a
+//   default; the default is passed
+// Fixed in: compiler 0.33.183
+// Expected output:
+//   6
+//   11
+//   7
+//   9
+//   12
+//   20
+//   3
+//
+// Regression: method and constructor defaults were dropped by the type
+// checker, so `b.f()` with `integer f(integer a = 5)` produced invalid
+// WebAssembly ("expected i32 but nothing on stack").
+
+start:
+	Box b = Box(1)
+	print(b.f().toString())
+	print(b.f(10).toString())
+	Box c = Box()
+	print(c.v.toString())
+	print(c.f(2).toString())
+	print(Util.add(2).toString())
+	print(Util.add(2, 18).toString())
+	Kid k = Kid()
+	print(k.v.toString())
+
+class Box
+	public:
+		integer v
+
+	constructor(integer x = 7)
+		v = x
+
+	functions:
+		public:
+			integer f(integer a = 5)
+				return a + v
+
+class Kid is Box
+	constructor()
+		base(3)
+
+class Util
+	functions:
+		public:
+			integer add(integer a, integer b = 10)
+				return a + b

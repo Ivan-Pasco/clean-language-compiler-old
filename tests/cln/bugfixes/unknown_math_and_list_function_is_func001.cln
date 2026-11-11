@@ -1,0 +1,23 @@
+// Test: bugfixes/unknown_math_and_list_function_is_func001
+// Grammar: namespace_call
+// Semantic: FUNC001 — a function the `math.` or `list.` namespace does not
+//   have is an error found by the type checker (`cln check`)
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   FUNC001
+//   Function 'math.frob' not found
+//   Function 'list.frob' not found
+//
+// Regression: unknown namespace functions typed as unknown, so `cln check`
+// said OK and the compile failed in code generation with COD000.
+
+start:
+	number r = math.frob(2.0)
+	print(r.toString())
+	print(firstOf([1]).toString())
+
+functions:
+	integer firstOf(list<integer> items)
+		list<integer> l = list.frob(items)
+		return l[0]

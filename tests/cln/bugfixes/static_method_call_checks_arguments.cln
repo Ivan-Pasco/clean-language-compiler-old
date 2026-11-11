@@ -1,0 +1,23 @@
+// Test: bugfixes/static_method_call_checks_arguments
+// Grammar: static_method_call
+// Semantic: FUNC002 — `Class.method(...)` must pass as many arguments as the
+//   method has parameters
+// Fixed in: compiler 0.33.183
+// Expected output:
+// Expected error:
+//   FUNC002
+//   'twice' expects 2 argument(s), got 3
+//   'twice' expects 2 argument(s), got 1
+//
+// Regression: the argument count of a static call was not checked; three
+// arguments compiled and one produced invalid WebAssembly.
+
+start:
+	print(Util.twice(3, 4, 5).toString())
+	print(Util.twice(3).toString())
+
+class Util
+	functions:
+		public:
+			integer twice(integer a, integer b)
+				return a * b
