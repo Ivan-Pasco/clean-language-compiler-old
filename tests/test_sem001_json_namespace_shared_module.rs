@@ -52,12 +52,13 @@ functions:
 ";
 
     // Entry module: frame.server — defines a load function
+    // Fixed: was plugins: before import:, grammar.ebnf program requires import: first
     let entry_source = "\
-plugins:
-\tframe.server
-
 import:
 \thelper
+
+plugins:
+\tframe.server
 
 functions:
 \tany load(Request request)

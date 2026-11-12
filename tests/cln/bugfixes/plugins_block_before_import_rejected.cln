@@ -1,0 +1,21 @@
+// Test: bugfixes/plugins_block_before_import_rejected
+// Grammar: program (grammar.ebnf 6, import: before plugins: before start:)
+// Semantic: SYN007
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SYN007
+//   'import:' section is out of order
+//
+// Developer decision: import: comes strictly before plugins:, as the
+// grammar.ebnf `program` production orders them. Release 0.33.183 let the two
+// appear in either order; a plugins: block above import: is a SYN007 error.
+
+plugins:
+	frame.locale
+
+import:
+	module_call_helpers as H
+
+start:
+	print(H.twice(7))

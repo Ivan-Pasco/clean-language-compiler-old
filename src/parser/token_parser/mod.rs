@@ -27,11 +27,8 @@ use std::collections::HashSet;
 use tracing::{debug, trace};
 
 /// Returns the ordering index for the core sections, or None for auxiliary sections.
-/// Order: import: and plugins: (1, either order) → start: (2) → state: (3)
-/// → class / can (4) → functions: (5)
-///
-/// The grammar's prose groups `import/plugins` ahead of `start:`; files written
-/// with `plugins:` above `import:` stay valid.
+/// Order: import: (1) → plugins: (2) → start: (3) → state: (4) → class / can (5)
+/// → functions: (6)
 ///
 /// `can` declarations are class-like structural declarations that belong at the same
 /// ordering slot as `class`. See grammar.ebnf §6.4 and §6.4a.
@@ -39,11 +36,12 @@ use tracing::{debug, trace};
 /// Enforces the `program` production in `foundation/spec/grammar/grammar.ebnf` §6.
 fn core_section_order(kind: &TokenKind) -> Option<u8> {
     match kind {
-        TokenKind::Import | TokenKind::Plugins => Some(1),
-        TokenKind::Start => Some(2),
-        TokenKind::State => Some(3),
-        TokenKind::Class | TokenKind::Can => Some(4),
-        TokenKind::Functions => Some(5),
+        TokenKind::Import => Some(1),
+        TokenKind::Plugins => Some(2),
+        TokenKind::Start => Some(3),
+        TokenKind::State => Some(4),
+        TokenKind::Class | TokenKind::Can => Some(5),
+        TokenKind::Functions => Some(6),
         _ => None,
     }
 }
@@ -257,7 +255,7 @@ impl TokenParser {
                                         current_name, last_name
                                     ),
                                     Some(
-                                        "Expected section order: import: and plugins: (either order), start:, state:, class, functions:"
+                                        "Expected section order: import:, plugins:, start:, state:, class, functions:"
                                             .to_string(),
                                     ),
                                     ErrorType::Syntax,

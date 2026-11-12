@@ -39,8 +39,9 @@ fn multi_module_with_server_plugin_no_duplicate_preamble() {
     };
 
     // Entry module: declares the plugin and imports the shared module
+    // Fixed: was plugins: before import:, grammar.ebnf program requires import: first
     let entry_source =
-        "plugins:\n\tframe.server\n\nimport:\n\tshared\n\nstart:\n\tprint(\"hello\")\n";
+        "import:\n\tshared\n\nplugins:\n\tframe.server\n\nstart:\n\tprint(\"hello\")\n";
 
     // Shared logic module: no plugins: block — must NOT receive preamble helpers
     let shared_source = "functions:\n\tinteger double(integer n)\n\t\treturn n * 2\n";
