@@ -1,0 +1,20 @@
+// Test: bugfixes/return_empty_list_literal
+// Grammar: return_statement, list_literal
+// Semantic: SEM001 — an empty `[]` returned from a function takes the declared
+//   return type, as it does in a declaration (`list<string> l = []`)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   0
+//   1
+//   x
+
+start:
+	print(names().length())
+	list<string> more = names()
+	more.add("x")
+	print(more.length())
+	print(more.get(0))
+
+functions:
+	list<string> names()
+		return []

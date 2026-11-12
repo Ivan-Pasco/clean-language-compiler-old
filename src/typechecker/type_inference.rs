@@ -2872,7 +2872,18 @@ impl<'a> TypeInference<'a> {
             }
 
             ResolvedHirStatement::Return { value, location } => {
-                let return_type = if let Some(return_expr) = value {
+                // An empty `[]` / `{}` takes the declared return type, as in a
+                // declaration.
+                let empty_literal = match (value, self.current_return_type.clone()) {
+                    (Some(_), Some(ConcreteType::Null | ConcreteType::Undefined)) => None,
+                    (Some(return_expr), Some(expected)) => {
+                        self.empty_collection_literal(return_expr, &expected, location)
+                    }
+                    _ => None,
+                };
+                let return_type = if let Some(empty) = empty_literal {
+                    Some(empty)
+                } else if let Some(return_expr) = value {
                     let mut tast_expr = self.infer_expression(return_expr)?;
 
                     // The returned value must be assignable to the declared
