@@ -1,7 +1,11 @@
 // Test: core/capabilities — claiming a capability that was never declared
 // Grammar: can_clause identifier resolution
 // Semantic: SEM012 (undefined capability) — semantic-rules.md §SEM012
-// Expected compile error: SEM012
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM012
+//   Undefined capability 'Movable'
 
 start:
 	print("unreachable")

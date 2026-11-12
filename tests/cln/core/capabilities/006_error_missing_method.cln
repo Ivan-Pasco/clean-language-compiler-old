@@ -2,7 +2,11 @@
 //                            method must fail with SEM011
 // Grammar: capability conformance validation in the resolver
 // Semantic: SEM011 (missing capability method) — semantic-rules.md §SEM011
-// Expected compile error: SEM011
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM011
+//   does not implement required method 'draw()'
 
 start:
 	print("unreachable")

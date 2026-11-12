@@ -1,7 +1,12 @@
 // Test: validation/class005_ensure_ordering
 // Grammar: ensure_statement
 // Semantic: CLASS005
-// Expected: compile error CLASS005 — ensure must appear before other statements
+// Rejected: ensure must appear before other statements
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   CLASS005
+//   `ensure` must appear before other statements
 
 start:
 	print(divide(10, 2).toString())

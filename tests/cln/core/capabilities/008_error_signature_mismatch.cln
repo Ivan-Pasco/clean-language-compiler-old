@@ -2,7 +2,11 @@
 //                            capability's declared signature
 // Grammar: capability method signature match
 // Semantic: SEM013 (signature mismatch) — semantic-rules.md §SEM013
-// Expected compile error: SEM013
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM013
+//   does not match capability 'Draw': signature mismatch
 
 start:
 	print("unreachable")

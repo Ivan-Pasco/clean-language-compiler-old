@@ -1,7 +1,12 @@
 // Test: validation/syn008_empty_print_block
 // Grammar: print_block_statement
 // Semantic: SYN008
-// Expected: compile error SYN008 — print: block must contain at least one expression
+// Rejected: print: block must contain at least one expression
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SYN008
+//   print: block must contain at least one expression
 
 start:
 	print:
