@@ -43,26 +43,28 @@ start:
 
 class Calculator
 	functions:
-		integer square(integer n)
-			return n * n
+		// Changed in 0.33.184: Calculator.method() outside public: is private, SEM005 per developer decision
+		public:
+			integer square(integer n)
+				return n * n
 
-		integer cube(integer n)
-			return n * n * n
+			integer cube(integer n)
+				return n * n * n
 
-		integer add(integer a, integer b)
-			return a + b
+			integer add(integer a, integer b)
+				return a + b
 
-		integer multiply(integer a, integer b)
-			return a * b
+			integer multiply(integer a, integer b)
+				return a * b
 
-		boolean isEven(integer n)
-			return n % 2 == 0
+			boolean isEven(integer n)
+				return n % 2 == 0
 
-		boolean isPositive(integer n)
-			return n > 0
+			boolean isPositive(integer n)
+				return n > 0
 
-		integer absolute(integer n)
-			if n < 0
-				return 0 - n
-			return n
+			integer absolute(integer n)
+				if n < 0
+					return 0 - n
+				return n
 

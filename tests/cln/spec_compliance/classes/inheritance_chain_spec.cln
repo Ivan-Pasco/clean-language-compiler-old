@@ -19,11 +19,13 @@ class Counter
 		count = initial
 
 	functions:
-		integer getCount()
-			return count
+		// Changed in 0.33.184: a parent's method outside public: (increment, getCount) is private, SEM005 per developer decision
+		public:
+			integer getCount()
+				return count
 
-		void increment()
-			count = count + 1
+			void increment()
+				count = count + 1
 
 class NamedCounter is Counter
 	string label

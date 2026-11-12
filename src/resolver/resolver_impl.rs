@@ -900,10 +900,12 @@ impl NameResolver {
                     self.symbol_table.current_scope_id(),
                     function.location.clone(),
                 );
-                // A declaration outside `public:` is private (SEM005).
-                if function.is_private {
+                // A declaration outside `public:` is private to its file
+                // (SEM005). A screen's functions are its namespace, called
+                // as `Screen.fn()` from anywhere (SCOPE005).
+                if function.is_private && function.owner_screen.is_none() {
                     self.symbol_table
-                        .mark_as_private(symbol_id, "<module>".to_string());
+                        .mark_as_private(symbol_id, MODULE_OWNER.to_string());
                 }
             }
         }
@@ -1058,7 +1060,7 @@ impl NameResolver {
                     // A declaration outside `public:` is private (SEM005).
                     if state_decl.is_private {
                         self.symbol_table
-                            .mark_as_private(symbol_id, "<module>".to_string());
+                            .mark_as_private(symbol_id, MODULE_OWNER.to_string());
                     }
                 }
             }

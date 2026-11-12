@@ -106,20 +106,23 @@ start:
 
 class Shape
 	string name
-	number:64 area
+	// Changed in 0.33.184: a parent field outside public: (area, written by Rectangle and Circle) is private, SEM005 per developer decision
+	public:
+		number:64 area
 
 	constructor(string shapeName)
 		name = shapeName
 		area = 0.0
 
 	functions:
-		void setArea(number:64 newArea)
-			area = newArea
-
-		string toString()
-			return name + " with area " + area.toString()
-
+		// Changed in 0.33.184: a parent's method outside public: (toString, called on Rectangle and Circle) is private, SEM005 per developer decision
 		public:
+			void setArea(number:64 newArea)
+				area = newArea
+
+			string toString()
+				return name + " with area " + area.toString()
+
 			string getName()
 				return name
 

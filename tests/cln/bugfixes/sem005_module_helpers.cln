@@ -1,0 +1,23 @@
+// Test: bugfixes/sem005_module_helpers
+// Semantic: SEM005 — module imported by the sem005_*module* pins. It
+//   declares a private and a public function and a private and a public
+//   state variable; only the public ones are visible to importing files.
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   43
+
+start:
+	print(revealed())
+
+state:
+	integer hits = 1
+	public:
+		integer total = 10
+
+functions:
+	integer secretValue()
+		return 42
+
+	public:
+		integer revealed()
+			return secretValue() + hits

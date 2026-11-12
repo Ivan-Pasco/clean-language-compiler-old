@@ -52,6 +52,14 @@ pub fn is_synthetic_file_marker(file: &str) -> bool {
         || file == "plugin"
 }
 
+/// True when `location` points into a user source file rather than
+/// plugin-generated or compiler-synthesized code.
+pub fn is_user_source_location(location: &SourceLocation) -> bool {
+    !location.file.is_empty()
+        && !is_synthetic_file_marker(&location.file)
+        && plugin_name_from_origin_marker(&location.file).is_none()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize)]
 pub struct SourceLocation {
     pub line: usize,

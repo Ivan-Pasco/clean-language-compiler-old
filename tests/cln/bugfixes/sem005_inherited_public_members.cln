@@ -1,0 +1,48 @@
+// Test: bugfixes/sem005_inherited_public_members
+// Grammar: class_declaration, public_functions_section (grammar.ebnf §6.2a)
+// Semantic: SEM005 — public fields and methods are inherited; a class uses its own
+//   private members, also through `this` and `Class.method()`
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   3
+//   6
+//   9
+//   16
+
+start:
+	Kid k = Kid()
+	print(k.shown())
+	print(k.doubled())
+	print(k.viaThis())
+	print(Calc.run(4))
+
+class Base
+	integer secret = 1
+	public:
+		integer open = 2
+
+	functions:
+		integer hidden()
+			return secret
+
+		public:
+			integer shown()
+				return hidden() + open
+
+class Kid is Base
+	functions:
+		public:
+			integer doubled()
+				open = open + 1
+				return shown() * 2 - 2
+			integer viaThis()
+				return this.shown() * 3 - 3
+
+class Calc
+	functions:
+		integer square(integer n)
+			return n * n
+
+		public:
+			integer run(integer n)
+				return Calc.square(n)

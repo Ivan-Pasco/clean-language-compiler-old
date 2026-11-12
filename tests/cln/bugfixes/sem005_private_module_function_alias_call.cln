@@ -1,0 +1,15 @@
+// Test: bugfixes/sem005_private_module_function_alias_call
+// Grammar: import_block, public_functions_section (grammar.ebnf §6.2a),
+//   public_state_section (§6.8a)
+// Semantic: SEM005 — a call through a module alias to a non-public function
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM005
+//   'secretValue' is private and cannot be accessed from outside 'sem005_module_helpers'
+
+import:
+	sem005_module_helpers as H
+
+start:
+	print(H.secretValue())

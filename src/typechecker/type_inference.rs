@@ -17,7 +17,7 @@ use crate::resolver::{
     GlobalSymbolTable, ResolvedHirBlock, ResolvedHirClass, ResolvedHirExpression,
     ResolvedHirFunction, ResolvedHirLValue, ResolvedHirMethod, ResolvedHirParameter,
     ResolvedHirProgram, ResolvedHirStateBlock, ResolvedHirStatement, ResolvedHirWatchBlock,
-    SymbolId, SymbolKind,
+    SymbolId, SymbolKind, MODULE_OWNER,
 };
 use std::collections::HashMap;
 
@@ -3140,6 +3140,8 @@ impl<'a> TypeInference<'a> {
                             }
                         }
 
+                        self.check_private_state_access(*symbol_id, name, var_location);
+
                         // Only add constraint if not an empty literal (already handled)
                         if !is_empty_literal {
                             self.require_assignable(&mut tast_value, &target_type, location);
@@ -3211,23 +3213,8 @@ impl<'a> TypeInference<'a> {
                             (target_type, *field_symbol_id)
                         };
 
-                        // SEM005: a private field is written only inside its class
-                        // (or a class derived from it).
-                        let field_owner = match self
-                            .symbol_table
-                            .get_symbol(field_symbol_id)
-                            .map(|s| &s.kind)
-                        {
-                            Some(SymbolKind::Field { class_id, .. }) => Some(*class_id),
-                            _ => None,
-                        };
-                        let inside_owner_hierarchy = match (self.current_class, field_owner) {
-                            (Some(current), Some(owner)) => {
-                                self.class_is_subclass_of(current, owner)
-                            }
-                            _ => false,
-                        };
-                        if field_symbol_id.0 != 0 && !inside_owner_hierarchy {
+                        // SEM005: a private field is written only inside its class.
+                        if field_symbol_id.0 != 0 {
                             self.check_private_member_access(
                                 field_symbol_id,
                                 field,
@@ -3672,6 +3659,7 @@ impl<'a> TypeInference<'a> {
         name: &str,
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        self.check_private_state_access(*symbol_id, name, location);
         let var_type = self.type_env.get(symbol_id).cloned().unwrap_or_else(|| {
             self.errors.push(CompilerError::type_error(
                 format!("Variable {} not found in type environment", name),
@@ -3762,6 +3750,11 @@ impl<'a> TypeInference<'a> {
                 *function_symbol_id,
                 location,
             )?;
+        }
+
+        // SEM005: a private function or method is called only from its owner.
+        if function_symbol_id.0 != 0 && !is_builtin {
+            self.check_private_member_access(*function_symbol_id, function, None, location);
         }
 
         // Look up function type and determine return type
@@ -4046,18 +4039,20 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    /// SEM005: a private class member (field or method) may only be used from
-    /// inside the class that declares it.
+    /// SEM005: a private member may only be used from inside its owner.
     ///
-    /// `method_receiver` is the receiver type of a method call (None for field
-    /// access). Method calls are only checked when the receiver is statically
-    /// typed as the owning class: calling a non-public parent method through a
-    /// subclass-typed receiver is accepted, because programs in tests/cln
-    /// (spec_compliance/classes/inheritance_spec.cln, class001_parent_must_exist.cln,
-    /// inheritance_chain_spec.cln, language/classes/15_classes_inheritance.cln,
-    /// integration/comprehensive/33_complex_integration.cln) rely on it and
-    /// semantic-rules.md §SEM005 does not settle whether inherited members are
-    /// visible through a subclass.
+    /// * A private class field or method is used only inside the class that
+    ///   declares it. Private members are not inherited: a subclass that
+    ///   reads, writes or calls one of its parent's private members is
+    ///   outside the owner too.
+    /// * A private module function or `state:` variable is used only inside
+    ///   the file that declares it. Plugin-generated and compiler-synthesized
+    ///   code has no source file and is not checked.
+    ///
+    /// `method_receiver` is the receiver type of an instance method call. The
+    /// call is checked only when the receiver is the owning class or one of
+    /// its subclasses; for any other receiver (a capability, `any`, an
+    /// unrelated class) the method symbol is not the receiver's own member.
     fn check_private_member_access(
         &mut self,
         member_symbol: SymbolId,
@@ -4065,53 +4060,177 @@ impl<'a> TypeInference<'a> {
         method_receiver: Option<&ConcreteType>,
         location: &SourceLocation,
     ) {
-        let owner = match self.symbol_table.get_symbol(member_symbol) {
-            Some(sym) if sym.is_private => match &sym.owner_scope_name {
-                Some(owner) => owner.clone(),
-                None => return,
-            },
-            _ => return,
-        };
-        let inside_owner = self
+        let (owner, owner_class, is_method, declared_in) =
+            match self.symbol_table.get_symbol(member_symbol) {
+                Some(sym) if sym.is_private => {
+                    let Some(owner) = sym.owner_scope_name.clone() else {
+                        return;
+                    };
+                    let (owner_class, is_method) = match &sym.kind {
+                        SymbolKind::Method { class_id, .. } => (Some(*class_id), true),
+                        SymbolKind::Field { class_id, .. } => (Some(*class_id), false),
+                        _ => (None, false),
+                    };
+                    (owner, owner_class, is_method, sym.location.file.clone())
+                }
+                _ => return,
+            };
+
+        if owner == MODULE_OWNER {
+            self.check_private_module_member(member_symbol, member_name, &declared_in, location);
+            return;
+        }
+
+        let current_class_name = self
             .current_class
             .and_then(|cid| self.symbol_table.get_symbol(cid))
-            .map(|s| s.name == owner)
-            .unwrap_or(false);
-        if inside_owner {
+            .map(|s| s.name.clone());
+        if current_class_name.as_deref() == Some(owner.as_str()) {
             return;
         }
         if let Some(receiver) = method_receiver {
-            let receiver_is_owner = match receiver {
-                ConcreteType::Class { symbol_id, .. } => self
-                    .symbol_table
-                    .get_symbol(*symbol_id)
-                    .map(|s| s.name == owner)
-                    .unwrap_or(false),
+            let receiver_in_owner_hierarchy = match (receiver, owner_class) {
+                (ConcreteType::Class { symbol_id, .. }, Some(owner_id)) => {
+                    self.class_is_subclass_of(*symbol_id, owner_id)
+                }
                 _ => false,
             };
-            if !receiver_is_owner {
+            if !receiver_in_owner_hierarchy {
                 return;
             }
         }
-        let help = if method_receiver.is_some() {
+
+        let section = if is_method {
+            format!("a `public:` sub-section of `{owner}`'s `functions:` block")
+        } else {
+            format!("the `public:` sub-section of `{owner}`'s class body")
+        };
+        let kind = if is_method { "method" } else { "field" };
+        let inherited_into = match (self.current_class, owner_class) {
+            (Some(current), Some(owner_id)) if self.class_is_subclass_of(current, owner_id) => {
+                current_class_name.clone()
+            }
+            _ => None,
+        };
+        let mut help = match inherited_into {
+            Some(child) => format!(
+                "Private members are not inherited: `{child}` cannot use `{owner}`'s private \
+                 {kind} `{member_name}`. Move `{member_name}` under {section}."
+            ),
+            None if is_method => format!(
+                "Class methods are private by default (semantic-rules.md §SEM005). \
+                 To call `{member_name}` from outside `{owner}`, move its declaration under \
+                 {section}."
+            ),
+            None => format!(
+                "Class fields are private by default (semantic-rules.md §SEM005). \
+                 To read or write `{member_name}` from outside `{owner}`, move its declaration \
+                 under {section}."
+            ),
+        };
+        if is_method {
+            if let Some(capability) =
+                owner_class.and_then(|owner_id| self.capability_requiring(owner_id, member_name))
+            {
+                help.push_str(&format!(
+                    " `{member_name}` implements capability `{capability}`; capability methods \
+                     belong under `functions: public:`."
+                ));
+            }
+        }
+        self.push_access_violation(member_name, &owner, help, location);
+    }
+
+    /// SEM005 for a private `state:` variable named from another file.
+    fn check_private_state_access(
+        &mut self,
+        symbol_id: SymbolId,
+        name: &str,
+        location: &SourceLocation,
+    ) {
+        if matches!(
+            self.symbol_table.get_symbol(symbol_id).map(|s| &s.kind),
+            Some(SymbolKind::StateVariable { .. })
+        ) {
+            self.check_private_member_access(symbol_id, name, None, location);
+        }
+    }
+
+    /// SEM005 for a private module function or `state:` variable used from a
+    /// file other than the one that declares it.
+    fn check_private_module_member(
+        &mut self,
+        member_symbol: SymbolId,
+        member_name: &str,
+        declared_in: &str,
+        location: &SourceLocation,
+    ) {
+        let declared_in_source = self
+            .symbol_table
+            .get_symbol(member_symbol)
+            .is_some_and(|s| crate::ast::is_user_source_location(&s.location));
+        if !declared_in_source
+            || !crate::ast::is_user_source_location(location)
+            || location.file == declared_in
+        {
+            return;
+        }
+        let module = std::path::Path::new(declared_in)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| declared_in.to_string());
+        let is_state = matches!(
+            self.symbol_table.get_symbol(member_symbol).map(|s| &s.kind),
+            Some(SymbolKind::StateVariable { .. })
+        );
+        let help = if is_state {
             format!(
-                "Class methods are private by default (semantic-rules.md §Visibility). \
-                 To call `{member_name}` from outside `{owner}`, move its declaration under a \
-                 `public:` sub-section inside `{owner}`'s `functions:` block."
+                "State variables are private to the file that declares them \
+                 (semantic-rules.md §SEM005). To read or write `{member_name}` from another \
+                 file, move its declaration under the `public:` sub-section of the `state:` \
+                 block in module `{module}`."
             )
         } else {
             format!(
-                "Class fields are private by default (semantic-rules.md §Visibility). \
-                 To read or write `{member_name}` from outside `{owner}`, move its declaration \
-                 under the `public:` sub-section of `{owner}`'s class body."
+                "Module functions are private to the file that declares them \
+                 (semantic-rules.md §SEM005). To call `{member_name}` from another file, \
+                 move its declaration under the `public:` sub-section of the `functions:` \
+                 block in module `{module}`."
             )
         };
+        self.push_access_violation(member_name, &module, help, location);
+    }
+
+    /// The capability of `class_id` (or one it inherits) that declares a
+    /// method named `method`.
+    fn capability_requiring(&self, class_id: SymbolId, method: &str) -> Option<String> {
+        let capabilities = self.class_conformance.get(&class_id)?;
+        let mut names: Vec<String> = capabilities
+            .iter()
+            .filter_map(|cap| self.symbol_table.get_symbol(*cap))
+            .filter(|sym| match &sym.kind {
+                SymbolKind::Capability { methods } => methods.iter().any(|m| m.name == method),
+                _ => false,
+            })
+            .map(|sym| sym.name.clone())
+            .collect();
+        names.sort();
+        names.into_iter().next()
+    }
+
+    fn push_access_violation(
+        &mut self,
+        member_name: &str,
+        scope: &str,
+        help: String,
+        location: &SourceLocation,
+    ) {
         self.errors.push(CompilerError::Validation {
             context: Box::new(
                 crate::error::ErrorContext::new(
                     format!(
                         "'{}' is private and cannot be accessed from outside '{}'",
-                        member_name, owner
+                        member_name, scope
                     ),
                     Some(help),
                     crate::error::ErrorType::Validation,
@@ -4401,6 +4520,8 @@ impl<'a> TypeInference<'a> {
         }) {
             self.check_call_arguments(method_symbol, method, &mut tast_arguments, location);
             self.append_default_arguments(method_symbol, &mut tast_arguments);
+            // SEM005: `Class.method()` reaches a private method only inside `Class`.
+            self.check_private_member_access(method_symbol, method, None, location);
         }
 
         // NOTE: Use SymbolId(0) for built-in namespace methods

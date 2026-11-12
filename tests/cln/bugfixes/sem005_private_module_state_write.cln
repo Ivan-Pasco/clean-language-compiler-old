@@ -1,0 +1,16 @@
+// Test: bugfixes/sem005_private_module_state_write
+// Grammar: import_block, public_functions_section (grammar.ebnf §6.2a),
+//   public_state_section (§6.8a)
+// Semantic: SEM005 — writing an imported module's non-public state variable
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM005
+//   'hits' is private and cannot be accessed from outside 'sem005_module_helpers'
+
+import:
+	sem005_module_helpers
+
+start:
+	hits = 5
+	print("written")

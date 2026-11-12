@@ -168,6 +168,10 @@ pub enum SymbolKind {
     },
 }
 
+/// `Symbol::owner_scope_name` of a private module-level function or state
+/// variable: it is private to the file that declares it (SEM005).
+pub const MODULE_OWNER: &str = "<module>";
+
 /// Symbol information stored in the symbol table
 #[derive(Debug, Clone)]
 pub struct Symbol {
@@ -182,7 +186,7 @@ pub struct Symbol {
     /// The type checker reports SEM005 for a private class field or method
     /// used outside its class.
     pub is_private: bool,
-    /// The name of the class (or `"<module>"`) that owns this private symbol.
+    /// The name of the class (or [`MODULE_OWNER`]) that owns this private symbol.
     /// Used by the type checker to determine whether access is permitted.
     /// `None` for public symbols (the field is irrelevant in that case).
     pub owner_scope_name: Option<String>,
@@ -629,7 +633,7 @@ impl GlobalSymbolTable {
     }
 
     /// Mark a symbol as private and record the name of its owning scope
-    /// (the class name for class members, or `"<module>"` for module-level private items).
+    /// (the class name for class members, or [`MODULE_OWNER`] for module-level private items).
     ///
     /// Called by the resolver after creating a symbol declared outside a `public:` sub-section.
     pub fn mark_as_private(&mut self, symbol_id: SymbolId, owner_scope_name: String) {

@@ -8,5 +8,7 @@ start:
 	printl("other " + s.toString())
 
 functions:
-	integer helper()
-		return 1
+	// Changed in 0.33.184: an imported module function outside public: (helper) is private, SEM005 per developer decision
+	public:
+		integer helper()
+			return 1

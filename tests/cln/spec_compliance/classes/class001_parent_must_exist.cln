@@ -18,8 +18,10 @@ class Animal
 		name = nameParam
 
 	functions:
-		string kind()
-			return "Animal"
+		// Changed in 0.33.184: a parent's method outside public: (kind) is private, SEM005 per developer decision
+		public:
+			string kind()
+				return "Animal"
 
 class Dog is Animal
 	constructor(string nameParam)

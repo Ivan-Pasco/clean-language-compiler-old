@@ -53,6 +53,8 @@ class ColoredPoint is Point
 	// Test 3: Static-style methods (class methods)
 class MathUtils
 	functions:
-		integer add(integer a, integer b)
-			return a + b
+		// Changed in 0.33.184: MathUtils.add outside public: is private, SEM005 per developer decision
+		public:
+			integer add(integer a, integer b)
+				return a + b
 

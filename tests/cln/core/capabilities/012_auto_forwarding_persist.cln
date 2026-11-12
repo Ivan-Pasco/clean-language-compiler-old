@@ -20,12 +20,14 @@ can Persist:
 
 class UserData
 	functions:
-		boolean save(User target)
-			print("saved user")
-			return true
-		boolean delete(User target)
-			print("deleted user")
-			return true
+		// Changed in 0.33.184: UserData.save/delete outside public: (called by User's forwarders) is private, SEM005 per developer decision
+		public:
+			boolean save(User target)
+				print("saved user")
+				return true
+			boolean delete(User target)
+				print("deleted user")
+				return true
 
 class User can Persist
 	UserData data

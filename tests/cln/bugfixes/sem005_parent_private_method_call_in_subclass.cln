@@ -1,0 +1,37 @@
+// Test: bugfixes/sem005_parent_private_method_call_in_subclass
+// Grammar: class_declaration, public_functions_section (grammar.ebnf §6.2a)
+// Semantic: SEM005 — private methods are not inherited: a subclass may not call its
+//   parent's private method, plainly or through `this`
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM005
+//   'hidden' is private and cannot be accessed from outside 'Base'
+//   Private members are not inherited: `Kid` cannot use `Base`'s private method `hidden`
+//   :35:
+//   :37:
+
+start:
+	Kid k = Kid()
+	print(k.twice())
+
+class Base
+	integer secret = 1
+	public:
+		integer open = 2
+
+	functions:
+		integer hidden()
+			return secret
+
+		public:
+			integer shown()
+				return hidden() + open
+
+class Kid is Base
+	functions:
+		public:
+			integer twice()
+				return hidden() * 2
+			integer thrice()
+				return this.hidden() * 3

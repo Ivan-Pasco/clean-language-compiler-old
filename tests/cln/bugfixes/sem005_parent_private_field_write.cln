@@ -1,0 +1,34 @@
+// Test: bugfixes/sem005_parent_private_field_write
+// Grammar: class_declaration, public_functions_section (grammar.ebnf §6.2a)
+// Semantic: SEM005 — private fields are not inherited: a subclass may not write its
+//   parent's private field
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM005
+//   'secret' is private and cannot be accessed from outside 'Base'
+//   Private members are not inherited: `Kid` cannot use `Base`'s private field `secret`
+
+start:
+	Kid k = Kid()
+	k.reset()
+	print(k.shown())
+
+class Base
+	integer secret = 1
+	public:
+		integer open = 2
+
+	functions:
+		integer hidden()
+			return secret
+
+		public:
+			integer shown()
+				return hidden() + open
+
+class Kid is Base
+	functions:
+		public:
+			void reset()
+				secret = 0

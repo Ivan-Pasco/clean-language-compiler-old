@@ -44,8 +44,10 @@ can Persist:
 
 class Registry
 	functions:
-		boolean save(Persist target)
-			return target.save()
+		// Changed in 0.33.184: Registry.save was private, SEM005 per developer decision
+		public:
+			boolean save(Persist target)
+				return target.save()
 
 class Session can Persist
 	functions:

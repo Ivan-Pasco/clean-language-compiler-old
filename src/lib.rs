@@ -1641,14 +1641,6 @@ struct MultiFileFrontend {
     type_count: usize,
 }
 
-/// True when `location` points into a user source file rather than
-/// plugin-generated or compiler-synthesized code.
-fn is_user_source_location(location: &ast::SourceLocation) -> bool {
-    !location.file.is_empty()
-        && !ast::is_synthetic_file_marker(&location.file)
-        && ast::plugin_name_from_origin_marker(&location.file).is_none()
-}
-
 /// Type-check a project from its entry file through the same front end as
 /// `cln compile` (module discovery, `package:` manifests, plugins, imports,
 /// screen and state merging), without generating WASM. Used by `cln check`
@@ -1996,8 +1988,8 @@ fn run_multi_file_frontend(
                         match all_functions.iter().find(|f| f.name == func.name) {
                             None => all_functions.push(func.clone()),
                             Some(existing)
-                                if is_user_source_location(&existing.location)
-                                    && is_user_source_location(&func.location) =>
+                                if ast::is_user_source_location(&existing.location)
+                                    && ast::is_user_source_location(&func.location) =>
                             {
                                 duplicate_functions.push(CompilerError::semantic_error_with_code(
                                     format!(
@@ -2225,12 +2217,12 @@ fn run_multi_file_frontend(
     let function_count = merged_hir
         .functions
         .iter()
-        .filter(|f| is_user_source_location(&f.location))
+        .filter(|f| ast::is_user_source_location(&f.location))
         .count();
     let type_count = merged_hir
         .classes
         .iter()
-        .filter(|c| is_user_source_location(&c.location))
+        .filter(|c| ast::is_user_source_location(&c.location))
         .count();
 
     let mut bridge_functions = registry

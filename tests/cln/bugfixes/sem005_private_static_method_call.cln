@@ -1,0 +1,17 @@
+// Test: bugfixes/sem005_private_static_method_call
+// Grammar: class_declaration, public_functions_section (grammar.ebnf §6.2a)
+// Semantic: SEM005 — `ClassName.method()` reaches a non-public method only inside the
+//   class
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM005
+//   'square' is private and cannot be accessed from outside 'Calc'
+
+start:
+	print(Calc.square(4))
+
+class Calc
+	functions:
+		integer square(integer n)
+			return n * n

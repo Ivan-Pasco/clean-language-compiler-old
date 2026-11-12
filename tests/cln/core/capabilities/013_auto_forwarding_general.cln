@@ -16,8 +16,10 @@ can Renderable:
 
 class Renderer
 	functions:
-		render(Widget target)
-			print("rendered")
+		// Changed in 0.33.184: Renderer.render outside public: (called by Widget's forwarder) is private, SEM005 per developer decision
+		public:
+			render(Widget target)
+				print("rendered")
 
 class Widget can Renderable
 	Renderer renderer

@@ -10,8 +10,10 @@ start:
 	print("helpers loaded")
 
 functions:
-	integer twice(integer n)
-		return n * 2
+	// Changed in 0.33.184: twice and label were private, SEM005 per developer decision
+	public:
+		integer twice(integer n)
+			return n * 2
 
-	string label(string s)
-		return "<" + s + ">"
+		string label(string s)
+			return "<" + s + ">"

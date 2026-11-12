@@ -1,0 +1,22 @@
+// Test: bugfixes/sem005_public_module_members_import
+// Grammar: import_block, public_functions_section (grammar.ebnf §6.2a),
+//   public_state_section (§6.8a)
+// Semantic: SEM005 — public functions and state of an imported module are usable, and a
+//   public function may use its own file's private members
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   43
+//   43
+//   43
+//   10
+//   11
+
+import:
+	sem005_module_helpers as H
+
+start:
+	print(revealed())
+	print(H.revealed())
+	print(total)
+	total = total + 1
+	print(total)

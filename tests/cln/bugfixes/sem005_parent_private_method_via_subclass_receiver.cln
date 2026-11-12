@@ -1,0 +1,30 @@
+// Test: bugfixes/sem005_parent_private_method_via_subclass_receiver
+// Grammar: class_declaration, public_functions_section (grammar.ebnf §6.2a)
+// Semantic: SEM005 — a parent's private method called from outside through a
+//   subclass-typed receiver
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM005
+//   'hidden' is private and cannot be accessed from outside 'Base'
+//   To call `hidden` from outside `Base`, move its declaration under a `public:` sub-section
+
+start:
+	Kid k = Kid()
+	print(k.hidden())
+
+class Base
+	integer secret = 1
+	public:
+		integer open = 2
+
+	functions:
+		integer hidden()
+			return secret
+
+		public:
+			integer shown()
+				return hidden() + open
+
+class Kid is Base
+	integer extra = 3

@@ -5,8 +5,10 @@ import:
 	utils
 
 functions:
-	integer square(integer n)
-		return multiply(n, n)
+	// Changed in 0.33.184: an imported module function outside public: (square, quadruple) is private, SEM005 per developer decision
+	public:
+		integer square(integer n)
+			return multiply(n, n)
 
-	integer quadruple(integer n)
-		return double_value(double_value(n))
+		integer quadruple(integer n)
+			return double_value(double_value(n))

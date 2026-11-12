@@ -50,23 +50,27 @@ import:
 \tutils
 
 functions:
-\tinteger perimeter(Square s)
-\t\treturn times(s.side, 4)
+\t// Changed in 0.33.184: an imported module function outside public: (perimeter, total) is private, SEM005 per developer decision
+\tpublic:
+\t\tinteger perimeter(Square s)
+\t\t\treturn times(s.side, 4)
 
-\tinteger total(list<integer> xs)
-\t\tinteger sum = 0
-\t\titerate x in xs
-\t\t\tsum = sum + x
-\t\treturn sum
+\t\tinteger total(list<integer> xs)
+\t\t\tinteger sum = 0
+\t\t\titerate x in xs
+\t\t\t\tsum = sum + x
+\t\t\treturn sum
 ";
 
 const UTILS: &str = "\
 functions:
-\tinteger times(integer a, integer b)
-\t\treturn a * b
+\t// Changed in 0.33.184: an imported module function outside public: (times, plus) is private, SEM005 per developer decision
+\tpublic:
+\t\tinteger times(integer a, integer b)
+\t\t\treturn a * b
 
-\tinteger plus(integer a, integer b)
-\t\treturn a + b
+\t\tinteger plus(integer a, integer b)
+\t\t\treturn a + b
 
 \tstring label(integer n)
 \t\treturn \"n=\" + n.toString()
@@ -81,8 +85,10 @@ start:
 \tprint(seed)
 
 functions:
-\tinteger next()
-\t\treturn plus(times(2, 3), 1)
+\t// Changed in 0.33.184: an imported module function outside public: (next) is private, SEM005 per developer decision
+\tpublic:
+\t\tinteger next()
+\t\t\treturn plus(times(2, 3), 1)
 ";
 
 #[test]

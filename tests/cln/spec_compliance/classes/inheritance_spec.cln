@@ -33,14 +33,16 @@ class Animal
 		age = animalAge
 
 	functions:
-		string getName()
-			return name
+		// Changed in 0.33.184: a parent's method outside public: (getName, getAge) is private, SEM005 per developer decision
+		public:
+			string getName()
+				return name
 
-		integer getAge()
-			return age
+			integer getAge()
+				return age
 
-		string speak()
-			return name + " makes a sound"
+			string speak()
+				return name + " makes a sound"
 
 class Dog is Animal
 	string breed

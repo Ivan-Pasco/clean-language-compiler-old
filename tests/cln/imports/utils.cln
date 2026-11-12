@@ -1,11 +1,13 @@
 // utils.cln - Utility module for import testing
 
 functions:
-	integer add(integer a, integer b)
-		return a + b
+	// Changed in 0.33.184: an imported module function outside public: (add, multiply, double_value) is private, SEM005 per developer decision
+	public:
+		integer add(integer a, integer b)
+			return a + b
 
-	integer multiply(integer a, integer b)
-		return a * b
+		integer multiply(integer a, integer b)
+			return a * b
 
-	integer double_value(integer n)
-		return n * 2
+		integer double_value(integer n)
+			return n * 2
