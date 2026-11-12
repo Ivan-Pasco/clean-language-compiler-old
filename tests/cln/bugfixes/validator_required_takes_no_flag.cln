@@ -1,0 +1,16 @@
+// Test: bugfixes/validator_required_takes_no_flag
+// Grammar: function_call (validator.required)
+// Semantic: stdlib-reference §15 — `validator.required(v)` takes only the
+//   validator; the old `validator.required(v, flag)` form is rejected
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   validator.required
+//
+// Regression: the compiler accepted `validator.required(v, flag)` and
+// rejected the §15 form `validator.required(v)`.
+
+start:
+	integer v = validator.field(validator.create(), "email", "ada@example.com")
+	v = validator.required(v, 1)
+	print(validator.isOk(validator.run(v, 0)))

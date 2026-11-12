@@ -19,9 +19,10 @@ start:
 	integer rules = validator.create()
 	list<string> names = ["alpha", "beta", "gamma"]
 	string label = "before " + names.get(0)
-	validator.field(rules, "email")
-	validator.required(rules, 1)
-	validator.field(rules, "age")
+	// Changed in 0.33.184: validator.field/required follow stdlib-reference §15 (developer decision)
+	validator.field(rules, "email", "ada@example.com")
+	validator.required(rules)
+	validator.field(rules, "age", "36")
 	validator.minLength(rules, 3)
 	print(label)
 	print(names.get(1))

@@ -10,7 +10,7 @@ pub const VALIDATION_RESULT_TYPE_ID: u32 = 20;
 pub const VALIDATION_RULES_TYPE_ID: u32 = 21;
 
 /// Byte size of a single field entry in the fields array
-/// Layout (80 bytes total):
+/// Layout (84 bytes total):
 ///   0:  field_name_ptr       (4 bytes)
 ///   4:  required flag        (4 bytes, 0=optional 1=required)
 ///   8:  pattern_ptr          (4 bytes, 0=none)
@@ -31,7 +31,12 @@ pub const VALIDATION_RULES_TYPE_ID: u32 = 21;
 ///  68:  max_value            (4 bytes, i32 maximum value)
 ///  72:  min_value_active     (4 bytes, 0=inactive 1=active)
 ///  76:  max_value_active     (4 bytes, 0=inactive 1=active)
-const FIELD_ENTRY_SIZE: i32 = 80;
+///  80:  value_ptr            (4 bytes, 0=none; the value bound by
+///                            `validator.field(v, name, value)`)
+const FIELD_ENTRY_SIZE: i32 = 84;
+
+/// Number of 4-byte words in a field entry.
+const FIELD_ENTRY_WORDS: u32 = (FIELD_ENTRY_SIZE / 4) as u32;
 
 /// Initial capacity for the fields array (number of field slots)
 const INITIAL_FIELD_CAPACITY: i32 = 8;
@@ -309,21 +314,33 @@ impl ValidatorManager {
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
-        // validator.field(rules_ptr, field_name_ptr) -> rules_ptr
+        // validator.field(rules_ptr, field_name_ptr, value_ptr) -> rules_ptr
         register_stdlib_function_with_locals(
             codegen,
             "validator.field",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             &[WasmType::I32, WasmType::I32], // locals: field_count, field_entry_ptr
             self.generate_validator_field(),
         )?;
 
-        // validator.required(rules_ptr, is_required) -> rules_ptr
+        // __validator_schema_field(rules_ptr, field_name_ptr) -> rules_ptr
+        // A field with no bound value, for `validate name:` blocks: its value
+        // is the input of `validator.run`.
+        register_stdlib_function_with_locals(
+            codegen,
+            "__validator_schema_field",
+            &[WasmType::I32, WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32, WasmType::I32], // locals: field_count, field_entry_ptr
+            self.generate_validator_schema_field(),
+        )?;
+
+        // validator.required(rules_ptr) -> rules_ptr
         register_stdlib_function_with_locals(
             codegen,
             "validator.required",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32],
             Some(WasmType::I32),
             &[WasmType::I32], // local: field_entry_ptr
             self.generate_validator_required(),
@@ -556,7 +573,7 @@ impl ValidatorManager {
 
     /// `validator.create() -> ValidationRules`
     ///
-    /// Allocates a 16-byte ValidationRules header and an 8-slot field array (8 * 80 = 640 bytes).
+    /// Allocates a 16-byte ValidationRules header and an 8-slot field array (8 * 84 = 672 bytes).
     /// Locals: 0=rules_ptr (extra 0), 1=fields_ptr (extra 1)
     /// (params: none, so extra locals start at index 0)
     fn generate_validator_create(&self) -> Vec<Instruction<'static>> {
@@ -892,15 +909,25 @@ impl ValidatorManager {
             Instruction::LocalSet(9),
         ]);
 
-        // Look up field value from input pairs.
-        // pairs.get is not available at a known static call index yet — the input_ptr
-        // itself is treated as the field_value_ptr when the validator is called with
-        // a single string value (runField pattern). For validator.run with a pairs
-        // input, field_value_ptr defaults to input_ptr (non-zero = present).
+        // field_value_ptr = the value bound by `validator.field` (entry offset 80).
+        // A field without a bound value is checked against the input instead.
+        // pairs.get is not available at a known static call index yet, so a
+        // pairs input is not looked up per field: input_ptr itself is the
+        // value (non-zero = present).
         // Full per-field lookup requires dynamic call-index resolution tracked in TASKS.md.
         instrs.extend([
-            Instruction::LocalGet(1), // input_ptr used as field_value_ptr (non-zero = present)
-            Instruction::LocalSet(8), // field_value_ptr
+            Instruction::LocalGet(5),
+            Instruction::I32Load(MemArg {
+                offset: 80,
+                align: 2,
+                memory_index: 0,
+            }),
+            Instruction::LocalTee(8), // field_value_ptr
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(1), // input_ptr used as field_value_ptr
+            Instruction::LocalSet(8),
+            Instruction::End,
         ]);
 
         // --- Required check ---
@@ -911,8 +938,7 @@ impl ValidatorManager {
             Instruction::I32Eqz,
             Instruction::BrIf(0),     // skip if not required
             Instruction::LocalGet(8), // field_value_ptr
-            Instruction::I32Eqz,
-            Instruction::BrIf(0), // skip if field present (ptr != 0 means present)
+            Instruction::BrIf(0),     // skip if field present (ptr != 0 means present)
             // field is required and missing: fail
             Instruction::I32Const(0),
             Instruction::LocalSet(17), // validation_passed = 0
@@ -1252,10 +1278,9 @@ impl ValidatorManager {
         instrs.extend([
             Instruction::LocalGet(8),
             Instruction::I32Eqz,
-            Instruction::BrIf(0),
+            Instruction::BrIf(0),     // skip if not required
             Instruction::LocalGet(2), // field_value_ptr param
-            Instruction::I32Eqz,
-            Instruction::BrIf(0),
+            Instruction::BrIf(0),     // skip if field present (ptr != 0 means present)
             Instruction::I32Const(0),
             Instruction::LocalSet(18),
         ]);
@@ -1317,8 +1342,9 @@ impl ValidatorManager {
 
         instrs.push(Instruction::End); // end value-present block
 
-        // Exit the outer block (found the rule, done iterating)
-        instrs.push(Instruction::Br(1)); // break outer block
+        // Exit the outer block (found the rule, done iterating).
+        // Labels here: 0 = found block, 1 = loop, 2 = outer block.
+        instrs.push(Instruction::Br(2)); // break outer block
 
         instrs.push(Instruction::End); // end found block
 
@@ -1624,14 +1650,35 @@ impl ValidatorManager {
 
     // ==================== Code Generation: Rule Builders ====================
 
-    /// `validator.field(rules_ptr, field_name_ptr) -> rules_ptr`
+    /// `validator.field(rules_ptr, field_name_ptr, value_ptr) -> rules_ptr`
     ///
-    /// Appends a new 80-byte zeroed field entry to the fields array and stores
-    /// field_name_ptr at its offset 0. Increments field_count.
+    /// Starts a new field rule named `field_name_ptr` whose value is
+    /// `value_ptr`; the rule calls that follow apply to it.
+    ///
+    /// Params: 0=rules_ptr, 1=field_name_ptr, 2=value_ptr
+    /// Extra locals: 3=field_count, 4=field_entry_ptr
+    fn generate_validator_field(&self) -> Vec<Instruction<'static>> {
+        Self::append_field_entry(3, 4, Some(2))
+    }
+
+    /// `__validator_schema_field(rules_ptr, field_name_ptr) -> rules_ptr`
+    ///
+    /// Starts a new field rule with no bound value (value_ptr = 0).
     ///
     /// Params: 0=rules_ptr, 1=field_name_ptr
     /// Extra locals: 2=field_count, 3=field_entry_ptr
-    fn generate_validator_field(&self) -> Vec<Instruction<'static>> {
+    fn generate_validator_schema_field(&self) -> Vec<Instruction<'static>> {
+        Self::append_field_entry(2, 3, None)
+    }
+
+    /// Appends a zeroed field entry to the fields array, stores the field name
+    /// (param 1) at its offset 0 and, when given, the bound value at offset 80,
+    /// increments field_count and returns rules_ptr (param 0).
+    fn append_field_entry(
+        count_local: u32,
+        entry_local: u32,
+        value_param: Option<u32>,
+    ) -> Vec<Instruction<'static>> {
         let mut instrs: Vec<Instruction<'static>> = Vec::new();
 
         // field_count = rules.field_count (offset 0)
@@ -1642,7 +1689,7 @@ impl ValidatorManager {
                 align: 2,
                 memory_index: 0,
             }),
-            Instruction::LocalSet(2), // field_count
+            Instruction::LocalSet(count_local),
         ]);
 
         // field_entry_ptr = fields_ptr + field_count * FIELD_ENTRY_SIZE
@@ -1653,20 +1700,20 @@ impl ValidatorManager {
                 align: 2,
                 memory_index: 0,
             }), // fields_ptr
-            Instruction::LocalGet(2), // field_count
+            Instruction::LocalGet(count_local),
             Instruction::I32Const(FIELD_ENTRY_SIZE),
             Instruction::I32Mul,
             Instruction::I32Add,
-            Instruction::LocalSet(3), // field_entry_ptr
+            Instruction::LocalSet(entry_local),
         ]);
 
-        // Zero out the 80-byte entry (20 words of 4 bytes each)
-        for word_offset in (0..80u32).step_by(4) {
+        // Zero out the entry word by word
+        for word in 0..FIELD_ENTRY_WORDS {
             instrs.extend([
-                Instruction::LocalGet(3),
+                Instruction::LocalGet(entry_local),
                 Instruction::I32Const(0),
                 Instruction::I32Store(MemArg {
-                    offset: word_offset as u64,
+                    offset: (word * 4) as u64,
                     align: 2,
                     memory_index: 0,
                 }),
@@ -1675,8 +1722,8 @@ impl ValidatorManager {
 
         // Store field_name_ptr at entry offset 0
         instrs.extend([
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(1), // field_name_ptr
+            Instruction::LocalGet(entry_local),
+            Instruction::LocalGet(1),
             Instruction::I32Store(MemArg {
                 offset: 0,
                 align: 2,
@@ -1684,10 +1731,23 @@ impl ValidatorManager {
             }),
         ]);
 
+        // Store the bound value at entry offset 80
+        if let Some(value_param) = value_param {
+            instrs.extend([
+                Instruction::LocalGet(entry_local),
+                Instruction::LocalGet(value_param),
+                Instruction::I32Store(MemArg {
+                    offset: 80,
+                    align: 2,
+                    memory_index: 0,
+                }),
+            ]);
+        }
+
         // rules.field_count = field_count + 1
         instrs.extend([
             Instruction::LocalGet(0),
-            Instruction::LocalGet(2),
+            Instruction::LocalGet(count_local),
             Instruction::I32Const(1),
             Instruction::I32Add,
             Instruction::I32Store(MemArg {
@@ -1709,16 +1769,16 @@ impl ValidatorManager {
         Self::emit_get_last_field_entry(rules_local, dest_local)
     }
 
-    /// `validator.required(rules_ptr, is_required) -> rules_ptr`
+    /// `validator.required(rules_ptr) -> rules_ptr`
     ///
-    /// Sets required flag (offset 4) in the last field entry.
-    /// Params: 0=rules_ptr, 1=is_required
-    /// Extra locals: 2=field_entry_ptr
+    /// Stores 1 into the required flag (offset 4) of the last field entry.
+    /// Params: 0=rules_ptr
+    /// Extra locals: 1=field_entry_ptr
     fn generate_validator_required(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = Self::last_field_entry_instrs(0, 1);
         instrs.extend([
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(1), // is_required
+            Instruction::LocalGet(1),
+            Instruction::I32Const(1),
             Instruction::I32Store(MemArg {
                 offset: 4,
                 align: 2,
@@ -2265,8 +2325,8 @@ impl ValidatorManager {
             Instruction::LocalSet(11),
         ]);
 
-        // Copy 80 bytes word-by-word (20 words of 4 bytes)
-        for word in 0u32..20u32 {
+        // Copy the entry word-by-word
+        for word in 0..FIELD_ENTRY_WORDS {
             let off = word * 4;
             instrs.extend([
                 Instruction::LocalGet(11),
@@ -2333,8 +2393,8 @@ impl ValidatorManager {
             Instruction::LocalSet(11),
         ]);
 
-        // Copy 80 bytes word-by-word
-        for word in 0u32..20u32 {
+        // Copy the entry word-by-word
+        for word in 0..FIELD_ENTRY_WORDS {
             let off = word * 4;
             instrs.extend([
                 Instruction::LocalGet(11),
@@ -2382,15 +2442,18 @@ mod tests {
 
     #[test]
     fn test_field_entry_size_constant() {
-        // Verify FIELD_ENTRY_SIZE covers all 20 fields at 4 bytes each
-        assert_eq!(FIELD_ENTRY_SIZE, 80);
+        // Changed in 0.33.184: validator.field/required follow stdlib-reference §15 (developer decision)
+        // Verify FIELD_ENTRY_SIZE covers all 21 fields at 4 bytes each
+        // (the 21st is the value bound by validator.field).
+        assert_eq!(FIELD_ENTRY_SIZE, 84);
     }
 
     #[test]
     fn test_initial_capacity_bytes() {
         // Verify field array allocation size
         let expected_bytes = INITIAL_FIELD_CAPACITY * FIELD_ENTRY_SIZE;
-        assert_eq!(expected_bytes, 640);
+        // Changed in 0.33.184: validator.field/required follow stdlib-reference §15 (developer decision)
+        assert_eq!(expected_bytes, 672);
     }
 
     #[test]
@@ -2546,5 +2609,59 @@ mod tests {
             loop_count, 2,
             "validator.merge must contain exactly 2 copy loops"
         );
+    }
+
+    #[test]
+    fn test_field_stores_bound_value_at_offset_80() {
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
+        let instrs = manager.generate_validator_field();
+        let stores_value = instrs.windows(2).any(|w| {
+            matches!(
+                w,
+                [
+                    Instruction::LocalGet(2),
+                    Instruction::I32Store(MemArg { offset: 80, .. })
+                ]
+            )
+        });
+        assert!(
+            stores_value,
+            "validator.field must store its value param at offset 80"
+        );
+    }
+
+    #[test]
+    fn test_schema_field_leaves_value_unbound() {
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
+        let instrs = manager.generate_validator_schema_field();
+        let stores_param = instrs.windows(2).any(|w| {
+            matches!(
+                w,
+                [
+                    Instruction::LocalGet(_),
+                    Instruction::I32Store(MemArg { offset: 80, .. })
+                ]
+            )
+        });
+        assert!(
+            !stores_param,
+            "__validator_schema_field must leave offset 80 zeroed"
+        );
+    }
+
+    #[test]
+    fn test_required_sets_flag_to_one() {
+        let manager = ValidatorManager::new_with_malloc_idx(TEST_MALLOC_INDEX);
+        let instrs = manager.generate_validator_required();
+        let sets_one = instrs.windows(2).any(|w| {
+            matches!(
+                w,
+                [
+                    Instruction::I32Const(1),
+                    Instruction::I32Store(MemArg { offset: 4, .. })
+                ]
+            )
+        });
+        assert!(sets_one, "validator.required must store 1 at offset 4");
     }
 }

@@ -3197,12 +3197,12 @@ impl HirBuilder {
     // The desugaring for a schema named `foo` with two fields looks like:
     //
     //   foo = validator.createWithName("foo")
-    //   foo = validator.field(foo, "name")
-    //   foo = validator.required(foo, 1)
+    //   foo = __validator_schema_field(foo, "name")
+    //   foo = validator.required(foo)
     //   foo = validator.minLength(foo, 1)
     //   foo = validator.maxLength(foo, 50)
-    //   foo = validator.field(foo, "email")
-    //   foo = validator.required(foo, 1)
+    //   foo = __validator_schema_field(foo, "email")
+    //   foo = validator.required(foo)
     //   foo = validator.match(foo, "email")
     //   foo = validator.message(foo, "Please enter a valid email address")
     //   foo = validator.message(foo, "Please check this field")   // default
@@ -7886,9 +7886,10 @@ impl HirBuilder {
         };
 
         for field in &schema.fields {
-            // validator.field(schema, "fieldName")
+            // __validator_schema_field(schema, "fieldName"): a field whose value
+            // is the input of `schemaName.check`, not bound here.
             let field_call = HirExpression::Call {
-                function: "validator.field".to_string(),
+                function: "__validator_schema_field".to_string(),
                 arguments: vec![
                     HirExpression::Variable {
                         name: schema_name.clone(),
@@ -7931,16 +7932,10 @@ impl HirBuilder {
                 let constraint_call = match constraint {
                     ValidateConstraint::Required => HirExpression::Call {
                         function: "validator.required".to_string(),
-                        arguments: vec![
-                            HirExpression::Variable {
-                                name: schema_name.clone(),
-                                location: loc.clone(),
-                            },
-                            HirExpression::Literal {
-                                value: Value::Integer(1),
-                                location: loc.clone(),
-                            },
-                        ],
+                        arguments: vec![HirExpression::Variable {
+                            name: schema_name.clone(),
+                            location: loc.clone(),
+                        }],
                         location: loc.clone(),
                     },
                     ValidateConstraint::Trim => HirExpression::Call {
@@ -8151,10 +8146,10 @@ impl HirBuilder {
             // Emit per-field message overrides first
             for (field_name, msg_text) in &messages.field_messages {
                 // To set a per-field message we need to:
-                // 1. Re-select the field: validator.field(schema, fieldName) updates the "current field" pointer
+                // 1. Re-select the field: __validator_schema_field(schema, fieldName) updates the "current field" pointer
                 // 2. Call validator.message(schema, "text")
                 let re_field_call = HirExpression::Call {
-                    function: "validator.field".to_string(),
+                    function: "__validator_schema_field".to_string(),
                     arguments: vec![
                         HirExpression::Variable {
                             name: schema_name.clone(),
@@ -8204,13 +8199,13 @@ impl HirBuilder {
             // the runtime's fallback logic.
             // The simplest correct approach: just call validator.message with the schema ptr
             // directly — the last field in the schema will receive it. Instead, we emit
-            // a dedicated "default" message by calling validator.field("") then validator.message.
+            // a dedicated "default" message by calling __validator_schema_field("") then validator.message.
             if let Some(default_msg) = &messages.default_message {
                 // Use an empty field name as sentinel for the default message.
                 // The validator runtime stores this per-field; if none of the real fields
                 // have a message set, the runtime returns this as the fallback.
                 let default_field_call = HirExpression::Call {
-                    function: "validator.field".to_string(),
+                    function: "__validator_schema_field".to_string(),
                     arguments: vec![
                         HirExpression::Variable {
                             name: schema_name.clone(),
