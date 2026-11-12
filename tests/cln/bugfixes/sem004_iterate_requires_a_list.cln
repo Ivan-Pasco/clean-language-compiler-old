@@ -1,13 +1,13 @@
 // Test: bugfixes/sem004_iterate_requires_a_list
 // Grammar: iterate_statement
-// Semantic: SEM004 — `iterate x in value` walks a list (or a range); any
+// Semantic: SEM004 — `iterate x in value` walks a list, a string or a range; any
 //   other statically typed value is rejected with a hint.
 // Fixed in: compiler 0.33.176
 // Expected output:
 // Expected error:
-//   error[SEM004]: Cannot iterate over a value of type string
-//   sem004_iterate_requires_a_list.cln:22:
-//   help: `iterate` walks the elements of a list or a range
+//   error[SEM004]: Cannot iterate over a value of type integer
+//   sem004_iterate_requires_a_list.cln:25:
+//   help: `iterate` walks the elements of a list, the characters of a string or a range
 //
 // Regression: iterating a non-list gave the loop variable a type variable
 // that was never resolved, and the loop read garbage.
@@ -15,9 +15,12 @@
 // Fixed: this pin iterated an `any` (from json.decode). type-system.md §9
 // says an `any` is not type-checked, and a JSON array is a `list<any>`
 // (stdlib-reference.md §8), so iterating an `any` is accepted and walks the
-// array (bugfixes/json_array_any_as_list.cln). A string is still rejected.
+// array (bugfixes/json_array_any_as_list.cln).
+//
+// Fixed: was iterating a string, spec requires that to walk its characters
+// (13-control-flow.md: `iterate ch in "Clean"`); an integer is rejected.
 
 start:
-	string data = "12"
+	integer data = 12
 	iterate x in data
 		printl(x)

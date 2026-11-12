@@ -1,0 +1,90 @@
+// Test: bugfixes/iterate_string_walks_characters
+// Grammar: iterate_statement, break_statement, continue_statement
+// Semantic: SEM004 — `iterate ch in text` walks a string one character at a
+//   time; each step binds `ch` as a one-character `string`. Characters are
+//   the string's bytes, as `.length()` and `.charAt(i)` count them, so the
+//   loop runs `.length()` times and step i binds `text.charAt(i)`.
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   C
+//   l
+//   e
+//   a
+//   n
+//   A-B-C-
+//   xy!
+//   zero
+//   a1
+//   a2
+//   b1
+//   b2
+//   b
+//   abd
+//   joined: hey
+//   last: y
+//   upper: Q
+//   bytes 6 length 6
+//
+// Regression: the type checker rejected `iterate ch in "Clean"` (shown in
+// the control-flow spec) with SEM004 "Cannot iterate over a value of type
+// string".
+
+start:
+	iterate ch in "Clean"
+		print(ch)
+
+	string word = "ABC"
+	string dashed = ""
+	iterate c in word
+		dashed = dashed + c + "-"
+	print(dashed)
+
+	string built = ""
+	iterate c2 in "x" + "y" + "!"
+		built = built + c2
+	print(built)
+
+	integer zero = 0
+	iterate e in ""
+		zero = zero + 1
+	if zero == 0
+		print("zero")
+
+	iterate a in "ab"
+		iterate n in "12"
+			print(a + n)
+
+	iterate b in "abcdef"
+		if b == "c"
+			break
+		if b == "a"
+			continue
+		print(b)
+
+	string kept = ""
+	iterate f in "abcd"
+		if f == "c"
+			continue
+		kept = kept + f
+	print(kept)
+
+	list<string> letters = []
+	string last = ""
+	iterate g in "hey"
+		letters.add(g)
+		last = g
+	string filler = "0123456789012345678901234567890123456789"
+	string more = filler + filler
+	print("joined: " + list.join(letters, ""))
+	print("last: " + last)
+
+	iterate h in "qrs"
+		string up = h.toUpperCase()
+		if h == "q"
+			print("upper: " + up)
+
+	string accented = "héllo"
+	integer count = 0
+	iterate k in accented
+		count = count + 1
+	print("bytes " + count.toString() + " length " + accented.length().toString())

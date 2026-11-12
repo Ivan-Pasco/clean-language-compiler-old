@@ -2035,6 +2035,10 @@ iterate k in 10 to 1 step -2
 iterate item in myList
 	print(item.toString())
 
+// Iterate over a string (one 1-character string per byte, as .length() counts)
+iterate ch in "Clean"
+	print(ch)
+
 // While loop (condition-based)                             // ✓ v0.28.0+
 integer i = 0
 while i < 10

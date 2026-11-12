@@ -1439,6 +1439,10 @@ impl MirBuilder {
                 // `any` is walked as the `list<any>` a JSON array is.
                 let iterable_value = self.build_expression(context, iterable)?;
                 let iterable_is_any = matches!(iterable.expr_type, ConcreteType::Any);
+                // A string is walked byte by byte, like `.length()` and
+                // `.charAt(i)` count it: its length sits at offset 0 like a
+                // list's, and each step binds `string.charAt(text, i)`.
+                let iterable_is_string = matches!(iterable.expr_type, ConcreteType::String);
                 let iterable_value = if iterable_is_any {
                     self.emit_unbox_any(
                         context,
@@ -1544,7 +1548,9 @@ impl MirBuilder {
                 use crate::typechecker::tast::ConcreteType;
                 let element_mir_type = match &iterable.expr_type {
                     ConcreteType::Array(elem) => MirType::from_concrete_type(elem),
-                    ConcreteType::Any => MirType::from_concrete_type(&ConcreteType::Any),
+                    ConcreteType::Any | ConcreteType::String => {
+                        MirType::from_concrete_type(&iterable.expr_type)
+                    }
                     _ => MirType::I32,
                 };
                 let iterator_local = MirLocal {
@@ -1664,54 +1670,72 @@ impl MirBuilder {
                     self.emit_mem_scope_push(context, location.clone());
                 }
 
-                // NOTE: Get the address of the element, then LOAD the value
-                // GetElementPtr returns a pointer, not the value itself!
+                if iterable_is_string {
+                    let char_at = self.builtin_symbol("string.charAt", location)?;
+                    self.add_instruction(
+                        context,
+                        MirInstruction {
+                            dest: Some(iterator_value_id),
+                            operation: MirOperation::Call {
+                                function: MirOperand::Function(char_at),
+                                arguments: vec![
+                                    MirOperand::Value(iterable_value),
+                                    MirOperand::Value(current_index_value_id),
+                                ],
+                            },
+                            location: location.clone(),
+                        },
+                    );
+                } else {
+                    // NOTE: Get the address of the element, then LOAD the value
+                    // GetElementPtr returns a pointer, not the value itself!
 
-                // Step 1: Get element pointer.
-                // The pointer carries the element MIR type as its inner T — GEP codegen
-                // reads it to pick the right per-element stride (4 bytes for i32-class,
-                // 8 bytes for f64/i64). Hardcoding Ptr<I32> here made list<number>
-                // iteration decode every element after the first as garbage
-                // (RUNTIME_ITERATE_LIST_NUMBER_WRONG_LOAD).
-                let element_ptr_value_id = ValueId(context.function.next_value_id);
-                context.function.next_value_id += 1;
-                self.register_temp_local(
-                    context,
-                    element_ptr_value_id,
-                    MirType::Ptr(Box::new(element_mir_type.clone())),
-                    location.clone(),
-                );
+                    // Step 1: Get element pointer.
+                    // The pointer carries the element MIR type as its inner T — GEP codegen
+                    // reads it to pick the right per-element stride (4 bytes for i32-class,
+                    // 8 bytes for f64/i64). Hardcoding Ptr<I32> here made list<number>
+                    // iteration decode every element after the first as garbage
+                    // (RUNTIME_ITERATE_LIST_NUMBER_WRONG_LOAD).
+                    let element_ptr_value_id = ValueId(context.function.next_value_id);
+                    context.function.next_value_id += 1;
+                    self.register_temp_local(
+                        context,
+                        element_ptr_value_id,
+                        MirType::Ptr(Box::new(element_mir_type.clone())),
+                        location.clone(),
+                    );
 
-                trace!(current_block = ?self.current_block, "Before GetElementPtr");
-                let get_ptr_instruction = MirInstruction {
-                    dest: Some(element_ptr_value_id),
-                    operation: MirOperation::GetElementPtr {
-                        base: MirOperand::Value(iterable_value),
-                        indices: vec![MirOperand::Value(current_index_value_id)],
-                        is_array: true, // Array iteration - needs header offset
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, get_ptr_instruction);
-                trace!(
-                    instruction_count = context
-                        .function
-                        .blocks
-                        .get(&body_block_id)
-                        .map(|b| b.instructions.len())
-                        .unwrap_or(0),
-                    "After GetElementPtr"
-                );
+                    trace!(current_block = ?self.current_block, "Before GetElementPtr");
+                    let get_ptr_instruction = MirInstruction {
+                        dest: Some(element_ptr_value_id),
+                        operation: MirOperation::GetElementPtr {
+                            base: MirOperand::Value(iterable_value),
+                            indices: vec![MirOperand::Value(current_index_value_id)],
+                            is_array: true, // Array iteration - needs header offset
+                        },
+                        location: location.clone(),
+                    };
+                    self.add_instruction(context, get_ptr_instruction);
+                    trace!(
+                        instruction_count = context
+                            .function
+                            .blocks
+                            .get(&body_block_id)
+                            .map(|b| b.instructions.len())
+                            .unwrap_or(0),
+                        "After GetElementPtr"
+                    );
 
-                // Step 2: Load the actual value from that pointer
-                let load_element_instruction = MirInstruction {
-                    dest: Some(iterator_value_id),
-                    operation: MirOperation::Load {
-                        source: MirOperand::Value(element_ptr_value_id),
-                    },
-                    location: location.clone(),
-                };
-                self.add_instruction(context, load_element_instruction);
+                    // Step 2: Load the actual value from that pointer
+                    let load_element_instruction = MirInstruction {
+                        dest: Some(iterator_value_id),
+                        operation: MirOperation::Load {
+                            source: MirOperand::Value(element_ptr_value_id),
+                        },
+                        location: location.clone(),
+                    };
+                    self.add_instruction(context, load_element_instruction);
+                }
 
                 trace!(
                     function_name = %context.function.name,

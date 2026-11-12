@@ -2999,13 +2999,16 @@ impl<'a> TypeInference<'a> {
                 let tast_iterable = self.infer_expression(iterable)?;
 
                 // `iterate x in items` walks a list (a range is a list of
-                // integers); the loop variable has the element type. An
-                // `any` is not type-checked (type-system.md §9): it is
-                // walked as the `list<any>` a JSON array is
+                // integers); the loop variable has the element type. A
+                // string is walked one character at a time, each a
+                // one-character `string` (control-flow spec, `iterate ch in
+                // "Clean"`). An `any` is not type-checked (type-system.md
+                // §9): it is walked as the `list<any>` a JSON array is
                 // (stdlib-reference.md §8), and a value that is not a list
                 // raises at run time.
                 let element_type = match &tast_iterable.expr_type {
                     ConcreteType::Array(element_type) => (**element_type).clone(),
+                    ConcreteType::String => ConcreteType::String,
                     ConcreteType::Any => ConcreteType::Any,
                     // Already reported where the type became unknown.
                     ConcreteType::Unknown => ConcreteType::Unknown,
@@ -3013,7 +3016,7 @@ impl<'a> TypeInference<'a> {
                         return Err(CompilerError::semantic_error_with_code(
                             format!("Cannot iterate over a value of type {}", other),
                             Some(
-                                "`iterate` walks the elements of a list or a range (`iterate i in 1 to 10`)"
+                                "`iterate` walks the elements of a list, the characters of a string or a range (`iterate i in 1 to 10`)"
                                     .to_string(),
                             ),
                             Some(tast_iterable.location.clone()),

@@ -1,0 +1,28 @@
+// Test: control/loops/iterate_string
+// Grammar: iterate_statement (foundation/spec/grammar/grammar.ebnf)
+// Spec: 13-control-flow.md — `iterate ch in "Clean"` walks the characters
+//   of a string; each step binds a one-character `string`.
+//
+// Expected output:
+//   C
+//   l
+//   e
+//   a
+//   n
+//   n-a-e-l-C
+//   5
+
+start:
+	iterate ch in "Clean"
+		print(ch)
+
+	string reversed = ""
+	integer steps = 0
+	iterate letter in "Clean"
+		if steps == 0
+			reversed = letter
+		else
+			reversed = letter + "-" + reversed
+		steps = steps + 1
+	print(reversed)
+	print(steps.toString())
