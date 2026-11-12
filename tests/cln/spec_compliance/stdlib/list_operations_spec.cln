@@ -15,9 +15,10 @@ start:
 
 	// Test 3: list.get with different indices
 	list<integer> values = [10, 20, 30, 40, 50]
-	integer first = list.get(values, 0)
-	integer middle = list.get(values, 2)
-	integer last = list.get(values, 4)
+	// Fixed: was list.get(l, i), spec defines l.get(i)
+	integer first = values.get(0)
+	integer middle = values.get(2)
+	integer last = values.get(4)
 	print("First: " + first.toString())
 	print("Middle: " + middle.toString())
 	print("Last: " + last.toString())
@@ -25,7 +26,8 @@ start:
 	// Test 4: list.set - modifying elements
 	list<integer> data = [1, 2, 3]
 	list.set(data, 1, 99)
-	integer modified = list.get(data, 1)
+	// Fixed: was list.get(l, i), spec defines l.get(i)
+	integer modified = data.get(1)
 	print("Modified element: " + modified.toString())
 
 	// Test 5: list.first and list.last

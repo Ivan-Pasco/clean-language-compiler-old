@@ -54,7 +54,8 @@ functions:
 		print("list.size([1,2,3,4,5]): ")
 		print(myListLength.toString())
 
-		integer firstItem = list.get(numbers, 0)
+		// Fixed: was list.get(l, i), spec defines l.get(i)
+		integer firstItem = numbers.get(0)
 		print("list.get(numbers, 0): ")
 		print(firstItem.toString())
 

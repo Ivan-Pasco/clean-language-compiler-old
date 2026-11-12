@@ -5,8 +5,9 @@ start:
 	// Basic list operations
 	list<integer> numbers = [1, 2, 3, 4, 5]
 	integer size = list.size(numbers)
-	integer first = list.get(numbers, 0)
-	integer last = list.get(numbers, 4)
+	// Fixed: was list.get(l, i), spec defines l.get(i)
+	integer first = numbers.get(0)
+	integer last = numbers.get(4)
 	print("List: [1, 2, 3, 4, 5]")
 	print("Length: " + size.toString())
 	print("First: " + first.toString())

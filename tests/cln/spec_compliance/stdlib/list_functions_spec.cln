@@ -11,8 +11,9 @@ start:
 	print("List length: " + len.toString())
 
 	// Test 3: list.get to access elements
-	integer first = list.get(numbers, 0)
-	integer third = list.get(numbers, 2)
+	// Fixed: was list.get(l, i), spec defines l.get(i)
+	integer first = numbers.get(0)
+	integer third = numbers.get(2)
 	print("First element: " + first.toString())
 	print("Third element: " + third.toString())
 

@@ -35,9 +35,10 @@ start:
 
 	// Test 7: Access list elements
 	list<integer> vals = [10, 20, 30]
-	integer first = list.get(vals, 0)
-	integer second = list.get(vals, 1)
-	integer third = list.get(vals, 2)
+	// Fixed: was list.get(l, i), spec defines l.get(i)
+	integer first = vals.get(0)
+	integer second = vals.get(1)
+	integer third = vals.get(2)
 	print("Elements: " + first.toString() + ", " + second.toString() + ", " + third.toString())
 
 	// Test 8: Iterate over list
