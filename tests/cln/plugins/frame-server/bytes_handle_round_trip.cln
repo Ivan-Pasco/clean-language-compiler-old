@@ -3,7 +3,11 @@
 // Semantic: type-system.md §9b Opaque Handle Convention; CONC002
 // Fixed in: compiler 0.33.65
 // Expected output:
-//   (compiles; POST /upload responds "ok" when the body is written)
+// Expected compile: success
+//
+// Compile-only: the endpoint needs the server's request bridges, which
+// wasmtime_runner does not provide. Under the server, POST /upload responds
+// "ok" when the body is written.
 
 // Guards the tarball-upload chain used by the errors dashboard: read the
 // raw request body as an opaque byte handle, then write the exact wire

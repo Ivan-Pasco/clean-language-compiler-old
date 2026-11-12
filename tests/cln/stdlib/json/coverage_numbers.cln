@@ -4,13 +4,14 @@
 // The parser normalizes numbers to their decimal expansion; scientific
 // notation on input round-trips to the plain form on output. That's a
 // serializer choice, not a parse loss — the numeric value is preserved.
+// Changed in 0.33.184: a JSON number parsed as a decimal keeps .0 (developer decision; matches json_encode_nested_typed_lists and pairs_number_integer64_and_any_values)
 // Expected output:
 //   0
 //   -1
 //   1000000
 //   1.5
 //   -3.14
-//   10000000000
+//   10000000000.0
 //   0.0015
 
 start:

@@ -3,7 +3,11 @@
 // Semantic: bridge registry parity (SEM: unknown-import must not fire on _dev_snapshot)
 // Fixed in: compiler 0.33.71
 // Expected output:
-//   ok
+// Expected compile: success
+//
+// Compile-only: the endpoint imports server bridges (`_http_respond`) that
+// wasmtime_runner does not provide, so the module cannot be run here.
+// Under the server, `start:` prints "ok".
 
 // Smoke test that a frame.server-plugin app compiles cleanly after the
 // _dev_snapshot bridge was added to the compiler's registry. Framework
