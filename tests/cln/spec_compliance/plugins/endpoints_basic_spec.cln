@@ -1,3 +1,7 @@
+// Fixed: was an endpoints: block with no plugins: declaration, spec requires the owning plugin declared in the program file (foundation/docs/specification 1.0/22-plugin-system.md, "Example: HTTP Endpoints Plugin")
+plugins:
+	frame.server
+
 start:
 	print("Endpoints DSL test completed")
 functions:
@@ -13,8 +17,17 @@ functions:
 // Spec Section: 18 - Plugin System
 // Tests: endpoints: DSL block
 
+// Fixed: was `GET "/users" -> listUsers` (arrow form), spec requires
+// `GET "/path":` with an indented handler body and `:name` path segments
+// (foundation/spec/framework/grammar/frame-server.ebnf route_declaration, route_path)
 endpoints:
-	GET "/users" -> listUsers
-	GET "/users/{id}" -> getUser
-	POST "/users" -> createUser
+	GET "/users":
+		list<string> users = listUsers()
+		return list.join(users, ", ")
+
+	GET "/users/:id":
+		return getUser(req.param("id"))
+
+	POST "/users":
+		return createUser()
 

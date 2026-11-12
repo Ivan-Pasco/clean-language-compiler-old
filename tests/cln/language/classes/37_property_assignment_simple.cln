@@ -3,6 +3,9 @@ start:
 
 functions:
 	void testSimple()
-		list<integer> items = [1, 2, 3]
-		items.type = "line"
+		// Fixed: was items.type = "line" (behavior assigned at runtime), spec requires
+		// the behavior in the declared type, list<T>.line / .pile / .unique
+		// (foundation/spec/type-system.md "List Behavior Modes", grammar.ebnf list_behavior)
+		list<integer>.line items = [1, 2, 3]
+		print(items.length())
 

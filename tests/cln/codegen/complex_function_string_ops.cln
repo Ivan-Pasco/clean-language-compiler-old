@@ -8,8 +8,11 @@
 //   __html = __html + head
 //   __html = __html + " World"
 
+// Fixed: was "{" and "}" unescaped in string literals, spec requires \{ and \}
+// for literal braces since {expr} is interpolation (grammar.ebnf 1.6 escaped_char,
+// string_interpolation)
 start:
-	print(processText("Hello {!head} World"))
+	print(processText("Hello \{!head\} World"))
 
 functions:
 	string processText(string text)
@@ -17,7 +20,7 @@ functions:
 		string remaining = text
 
 		while remaining.length() > 0
-			integer brace_start = remaining.indexOf("{")
+			integer brace_start = remaining.indexOf("\{")
 
 			if brace_start == -1
 				result = result + "__html = __html + \"" + remaining + "\""
@@ -27,7 +30,7 @@ functions:
 					string before = remaining.substring(0, brace_start)
 					result = result + "__html = __html + \"" + before + "\"\n"
 
-				integer brace_end = remaining.indexOf("}", brace_start + 1)
+				integer brace_end = remaining.indexOf("\}", brace_start + 1)
 
 				if brace_end == -1
 					result = result + "__html = __html + \"" + remaining + "\""

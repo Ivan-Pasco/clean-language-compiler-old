@@ -1,3 +1,7 @@
+// Fixed: was an endpoints: block with no plugins: declaration, spec requires the owning plugin declared in the program file (foundation/docs/specification 1.0/22-plugin-system.md, "Example: HTTP Endpoints Plugin")
+plugins:
+	frame.server
+
 start:
 	Router router = Router()
 	print("API server ready")
@@ -24,7 +28,15 @@ functions:
 	void createUser()
 		print("Creating new user")
 
+// Fixed: was `GET "/users" -> listUsers` (arrow form), spec requires
+// `GET "/path":` with an indented handler body and `:name` path segments
+// (foundation/spec/framework/grammar/frame-server.ebnf route_declaration, route_path)
 endpoints:
-	GET "/users" -> listUsers
-	POST "/users" -> createUser
+	GET "/users":
+		listUsers()
+		return "ok"
+
+	POST "/users":
+		createUser()
+		return "created"
 

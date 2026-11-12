@@ -3,18 +3,11 @@ start:
 
 functions:
 	void testPropertyAssignment()
-		// Create a list
-		list<integer> items = [1, 2, 3]
-
-		// Test assigning "line" behavior (FIFO queue)
-		items.type = "line"
-
-		// Test assigning "pile" behavior (LIFO stack)
-		items.type = "pile"
-
-		// Test assigning "unique" behavior (no duplicates)
-		items.type = "unique"
-
-		// Test assigning combined behavior
-		items.type = "line,unique"
-
+		// Fixed: was items.type = "line" (behavior assigned at runtime), spec requires
+		// the behavior in the declared type, list<T>.line / .pile / .unique
+		// (foundation/spec/type-system.md "List Behavior Modes", grammar.ebnf list_behavior)
+		list<integer>.line queue = [1, 2, 3]
+		list<integer>.pile stack = [1, 2, 3]
+		list<integer>.unique distinct = [1, 2, 3]
+		list<integer>.line.unique uniqueQueue = [1, 2, 3]
+		print(queue.length() + stack.length() + distinct.length() + uniqueQueue.length())
