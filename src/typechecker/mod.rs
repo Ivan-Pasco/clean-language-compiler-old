@@ -13,7 +13,7 @@
 
 use crate::error::CompilerError;
 use crate::resolver::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub mod constraint_solver;
 mod erase_optional;
@@ -41,16 +41,20 @@ pub struct TypeCheckResult {
 impl TypeChecker {
     /// Type check a resolved HIR program using constraint-based type inference
     pub fn check(resolved_hir: ResolvedHirProgram) -> Result<TypeCheckResult, Vec<CompilerError>> {
-        Self::check_with_required_counts(resolved_hir, HashMap::new())
+        Self::check_project(resolved_hir, HashMap::new(), HashSet::new())
     }
 
-    /// Like `check`, but pre-seeds the required parameter count map.
+    /// Like `check`, for a multi-file project.
     ///
-    /// Use this when bridge language aliases have optional parameters (param_defaults)
-    /// that the resolver cannot encode in `SymbolKind::Function` alone.
-    pub fn check_with_required_counts(
+    /// `required_counts` pre-seeds the required parameter count map, for
+    /// bridge language aliases with optional parameters (param_defaults) that
+    /// the resolver cannot encode in `SymbolKind::Function` alone.
+    /// `plugin_generated_files` names the plugin-injected modules, whose code
+    /// may call private functions of user modules.
+    pub fn check_project(
         resolved_hir: ResolvedHirProgram,
         required_counts: HashMap<crate::resolver::SymbolId, usize>,
+        plugin_generated_files: HashSet<String>,
     ) -> Result<TypeCheckResult, Vec<CompilerError>> {
         // Clone symbol table to satisfy borrow checker (TypeInference needs a reference
         // but infer_types consumes the resolved_hir)
@@ -62,6 +66,7 @@ impl TypeChecker {
         if !required_counts.is_empty() {
             inference_engine.seed_required_param_counts(required_counts);
         }
+        inference_engine.set_plugin_generated_files(plugin_generated_files);
 
         // Perform type inference
         let inference_result = inference_engine.infer_types(resolved_hir);

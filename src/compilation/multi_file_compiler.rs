@@ -546,6 +546,9 @@ impl MultiFileCompiler {
                     synthetic_path,
                     injected.content,
                 );
+                if let Some(module) = unit.get_module_mut(id) {
+                    module.plugin_generated = true;
+                }
                 graph.add_module(id);
                 tracing::debug!("Generated synthetic page route registrations (E-PGREG fix)");
             }

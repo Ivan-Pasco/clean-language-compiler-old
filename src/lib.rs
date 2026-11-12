@@ -1932,6 +1932,11 @@ fn run_multi_file_frontend(
     let compiler = MultiFileCompiler::with_config(config);
     let unit = compiler.build_from_file(entry_path)?;
 
+    // Files of plugin-injected modules, which may call private functions of
+    // user modules (SEM005).
+    let mut plugin_generated_files: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+
     // Step 2: Merge all HIR programs into a single unified program
     let mut merged_hir = {
         use crate::hir::{HirFunction, HirProgram};
@@ -1954,6 +1959,9 @@ fn run_multi_file_frontend(
 
         for module_id in &unit.compilation_order {
             if let Some(module) = unit.get_module(*module_id) {
+                if module.plugin_generated {
+                    plugin_generated_files.insert(module.file_path.to_string_lossy().to_string());
+                }
                 // Client-mode filter: drop server-only modules before merging their HIR.
                 //
                 // The entry module is exempt. Its `start_function` is now
@@ -2382,7 +2390,8 @@ fn run_multi_file_frontend(
         .as_ref()
         .map(|reg| required_param_counts(reg, &resolved_hir))
         .unwrap_or_default();
-    let type_result = TypeChecker::check_with_required_counts(resolved_hir, required_counts)?;
+    let type_result =
+        TypeChecker::check_project(resolved_hir, required_counts, plugin_generated_files)?;
     let mut warnings = validation_warnings;
     warnings.extend(type_result.warnings.iter().cloned());
 

@@ -53,6 +53,12 @@ pub struct CompiledModule {
     /// the module's parsed program during plugin expansion.
     pub plugin_expansion: Option<ModulePluginExpansion>,
 
+    /// True for a synthetic module a plugin's assemble hook injected
+    /// (`_inject_source_file`, contracts/assemble.md §6.1) rather than a
+    /// source file the user wrote. Its code may call the private functions of
+    /// user modules (SEM005 exemption, developer decision 2026-11-12).
+    pub plugin_generated: bool,
+
     /// Source location for error reporting
     pub location: SourceLocation,
 }
@@ -76,6 +82,7 @@ impl CompiledModule {
             exports: HashMap::new(),
             is_entry,
             plugin_expansion: None,
+            plugin_generated: false,
             location: SourceLocation {
                 file: file_path.to_string_lossy().to_string(),
                 line: 1,

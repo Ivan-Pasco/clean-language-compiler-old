@@ -52,6 +52,10 @@ pub struct TypeInference<'a> {
     /// Class → Interface unification rule.
     class_conformance: HashMap<SymbolId, std::collections::HashSet<SymbolId>>,
 
+    /// Files of plugin-injected modules; their code may call private
+    /// functions of user modules (SEM005).
+    plugin_generated_files: std::collections::HashSet<String>,
+
     /// Current context for inference
     current_function: Option<SymbolId>,
     current_class: Option<SymbolId>,
@@ -97,6 +101,7 @@ impl<'a> TypeInference<'a> {
             param_defaults: HashMap::new(),
             class_constructors: HashMap::new(),
             class_conformance: HashMap::new(),
+            plugin_generated_files: std::collections::HashSet::new(),
             current_function: None,
             current_class: None,
             current_return_type: None,
@@ -113,6 +118,11 @@ impl<'a> TypeInference<'a> {
         for (id, count) in counts {
             self.required_param_counts.insert(id, count);
         }
+    }
+
+    /// Name the files of plugin-injected modules (see `plugin_generated_files`).
+    pub fn set_plugin_generated_files(&mut self, files: std::collections::HashSet<String>) {
+        self.plugin_generated_files = files;
     }
 
     /// Perform type inference on a resolved HIR program
@@ -4046,8 +4056,9 @@ impl<'a> TypeInference<'a> {
     ///   reads, writes or calls one of its parent's private members is
     ///   outside the owner too.
     /// * A private module function or `state:` variable is used only inside
-    ///   the file that declares it. Plugin-generated and compiler-synthesized
-    ///   code has no source file and is not checked.
+    ///   the file that declares it. Plugin-generated code (plugin-origin
+    ///   locations and plugin-injected modules) and compiler-synthesized code
+    ///   may call them.
     ///
     /// `method_receiver` is the receiver type of an instance method call. The
     /// call is checked only when the receiver is the owning class or one of
@@ -4171,6 +4182,7 @@ impl<'a> TypeInference<'a> {
             .is_some_and(|s| crate::ast::is_user_source_location(&s.location));
         if !declared_in_source
             || !crate::ast::is_user_source_location(location)
+            || self.plugin_generated_files.contains(&location.file)
             || location.file == declared_in
         {
             return;
