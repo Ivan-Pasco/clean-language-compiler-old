@@ -621,7 +621,7 @@ impl OptimizationPass for DeadCodeEliminationPass {
 /// destination value, so it must stay even when that value is unused: memory
 /// and global writes, every kind of call (including dynamic capability
 /// dispatch), the `!` check (it halts on none even when its value is not
-/// used), and a short-circuit `and`/`or` whose right-hand side contains one
+/// used), a division that may divide by zero, and a short-circuit `and`/`or` whose right-hand side contains one
 /// of those.
 fn has_side_effects(operation: &MirOperation) -> bool {
     match operation {
@@ -635,6 +635,17 @@ fn has_side_effects(operation: &MirOperation) -> bool {
             op: MirUnaryOp::Required,
             ..
         } => true,
+        // An integer division by zero raises "division by zero".
+        MirOperation::BinaryOp {
+            op: MirBinaryOp::Div | MirBinaryOp::Rem,
+            right,
+            ..
+        } => {
+            !matches!(
+                right,
+                MirOperand::Constant(MirConstant::Integer(n) | MirConstant::Integer64(n)) if *n != 0
+            ) && !matches!(right, MirOperand::Constant(MirConstant::Float(_)))
+        }
         MirOperation::LogicalShortCircuit {
             rhs_instructions, ..
         } => rhs_instructions

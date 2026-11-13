@@ -2124,6 +2124,8 @@ number n = x.toNumber()
 integer back = n.toInteger()
 integer parsed = "123".toInteger()
 number fparsed = "3.14".toNumber()
+// Text that is not a number, or is out of range, raises an error:
+integer safe = "abc".toInteger() onError 0
 ```
 
 ## Print Output
@@ -2428,6 +2430,8 @@ functions:
 
 start:
 	integer result = divide(10, 0) onError 0
+	integer count = 0
+	integer average = 10 / count onError 0  // integer division by zero raises "division by zero"
 ```
 
 ## Computed Properties (on classes)

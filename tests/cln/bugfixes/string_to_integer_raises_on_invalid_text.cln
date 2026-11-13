@@ -1,0 +1,50 @@
+// Test: bugfixes/string_to_integer_raises_on_invalid_text
+// Semantic: stdlib-reference.md §3 — .toInteger() of text that is not a
+//   whole number, or is out of the integer range, raises an error that
+//   onError catches (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   42
+//   -17
+//   8
+//   2147483647
+//   -2147483648
+//   -1
+//   -2
+//   -3
+//   -4
+//   -5
+//   -6
+//   -7
+//   caught: 'x1' is not a valid integer
+//   -8
+
+start:
+	print("42".toInteger())
+	print("-17".toInteger())
+	print("+8".toInteger())
+	print("2147483647".toInteger())
+	print("-2147483648".toInteger())
+	integer a = "abc".toInteger() onError -1
+	print(a)
+	integer b = "12abc".toInteger() onError -2
+	print(b)
+	integer c = "".toInteger() onError -3
+	print(c)
+	integer d = "99999999999".toInteger() onError -4
+	print(d)
+	integer e = "-2147483649".toInteger() onError -5
+	print(e)
+	integer f = " 42".toInteger() onError -6
+	print(f)
+	integer g = "-".toInteger() onError -7
+	print(g)
+	string text = "x1"
+	integer h = text.toInteger() onError:
+		print("caught: " + error)
+	integer k = parseCount("1.5") onError -8
+	print(k)
+
+functions:
+	integer parseCount(string text)
+		return text.toInteger()

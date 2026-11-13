@@ -1,7 +1,7 @@
 //! Native WASM type conversion operations
 //!
 //! Provides pure WASM bytecode implementations of type conversions
-//! like int_to_string, bool_to_string, string_to_int.
+//! like int_to_string, bool_to_string and the text-to-number conversions.
 
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
@@ -372,23 +372,103 @@ pub fn gen_int64_to_string(malloc_func: u32) -> Vec<Instruction<'static>> {
     ]
 }
 
-/// Generate instructions for string_to_int
-/// Parses a decimal string to integer
+/// The errors a text-to-number conversion raises (`__conversion_error`).
 ///
-/// Parameters:
-///   - local 0: str_ptr
+/// `raise` is the index of `__conversion_error(text, suffix)`; the other
+/// fields are length-prefixed suffix strings completing the message that
+/// starts with the quoted text: `'abc' is not a valid integer`.
+#[derive(Clone, Copy)]
+pub struct ConversionErrors {
+    pub raise: u32,
+    pub invalid: u32,
+    pub too_large: u32,
+    pub too_small: u32,
+}
+
+/// `__conversion_error(text, suffix)`: raise the error `'<text><suffix>`
+/// (`__err_raise`), which an `onError` region catches.
 ///
-/// Returns: i32 (parsed integer)
-///
-/// Uses locals:
-///   - local 1: len
-///   - local 2: is_negative
-///   - local 3: i (loop counter)
-///   - local 4: result
-///   - local 5: char
-pub fn gen_string_to_int() -> Vec<Instruction<'static>> {
+/// Parameters: local 0 the text, local 1 the message suffix (it starts with
+/// the closing quote).
+pub fn gen_conversion_error(
+    concat_idx: u32,
+    err_raise_idx: u32,
+    quote_ptr: u32,
+) -> Vec<Instruction<'static>> {
     vec![
-        // Get length -> local 1
+        Instruction::I32Const(quote_ptr as i32),
+        Instruction::LocalGet(0),
+        Instruction::Call(concat_idx),
+        Instruction::LocalGet(1),
+        Instruction::Call(concat_idx),
+        Instruction::Call(err_raise_idx),
+    ]
+}
+
+/// Load the byte at `text[local i]` (local 0 is the text).
+fn byte_at(i: u32) -> [Instruction<'static>; 6] {
+    [
+        Instruction::LocalGet(0),
+        Instruction::I32Const(STRING_DATA_OFFSET as i32),
+        Instruction::I32Add,
+        Instruction::LocalGet(i),
+        Instruction::I32Add,
+        Instruction::I32Load8U(MemArg {
+            offset: 0,
+            align: 0,
+            memory_index: 0,
+        }),
+    ]
+}
+
+/// Raise the error whose suffix `suffix` pushes, for the text in local 0,
+/// and return `zero`.
+fn raise_and_return(
+    raise: u32,
+    suffix: Vec<Instruction<'static>>,
+    zero: Instruction<'static>,
+) -> Vec<Instruction<'static>> {
+    let mut v = vec![Instruction::LocalGet(0)];
+    v.extend(suffix);
+    v.extend([Instruction::Call(raise), zero, Instruction::Return]);
+    v
+}
+
+/// `__string_to_int(text) -> i32` (`wide == false`) and
+/// `__string_to_int64(text) -> i64` (`wide == true`): `.toInteger()` of a
+/// string (stdlib-reference.md §3).
+///
+/// The text is an optional `+` or `-` followed by one or more decimal
+/// digits, nothing else. Other text raises `'<text>' is not a valid
+/// integer`; a value outside the target's range raises `... is too large
+/// for integer` (`too small` when negative). The function then returns 0.
+///
+/// Locals: 0 text (parameter), 1 len, 2 negative, 3 i, 4 magnitude (i64),
+/// 5 byte, then its digit value, 6 limit (i64, the largest magnitude
+/// allowed), 7 digit (i64).
+pub fn gen_string_to_integer(wide: bool, errors: ConversionErrors) -> Vec<Instruction<'static>> {
+    let zero = if wide {
+        Instruction::I64Const(0)
+    } else {
+        Instruction::I32Const(0)
+    };
+    // The negative limit of integer:64 is 2^63, i64::MIN read unsigned.
+    let (max, negative_limit) = if wide {
+        (i64::MAX, i64::MIN)
+    } else {
+        (i32::MAX as i64, -(i32::MIN as i64))
+    };
+    let invalid = || vec![Instruction::I32Const(errors.invalid as i32)];
+    let out_of_range = vec![
+        Instruction::LocalGet(2),
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::I32Const(errors.too_small as i32),
+        Instruction::Else,
+        Instruction::I32Const(errors.too_large as i32),
+        Instruction::End,
+    ];
+
+    let mut v = vec![
         Instruction::LocalGet(0),
         Instruction::I32Load(MemArg {
             offset: 0,
@@ -396,76 +476,92 @@ pub fn gen_string_to_int() -> Vec<Instruction<'static>> {
             memory_index: 0,
         }),
         Instruction::LocalSet(1),
-        // Initialize
         Instruction::I32Const(0),
-        Instruction::LocalSet(2), // is_negative = false
+        Instruction::LocalSet(2),
         Instruction::I32Const(0),
-        Instruction::LocalSet(3), // i = 0
-        Instruction::I32Const(0),
-        Instruction::LocalSet(4), // result = 0
-        // Check for empty string
+        Instruction::LocalSet(3),
+        Instruction::I64Const(0),
+        Instruction::LocalSet(4),
+        // A leading sign.
         Instruction::LocalGet(1),
-        Instruction::I32Eqz,
-        Instruction::If(BlockType::Result(ValType::I32)),
-        Instruction::I32Const(0),
-        Instruction::Else,
-        // Check for minus sign at position 0
-        Instruction::LocalGet(0),
-        Instruction::I32Const(STRING_DATA_OFFSET as i32),
-        Instruction::I32Add,
-        Instruction::I32Load8U(MemArg {
-            offset: 0,
-            align: 0,
-            memory_index: 0,
-        }),
-        Instruction::I32Const(45), // '-'
+        Instruction::If(BlockType::Empty),
+    ];
+    v.extend(byte_at(3));
+    v.extend([
+        Instruction::LocalTee(5),
+        Instruction::I32Const(b'-' as i32),
         Instruction::I32Eq,
         Instruction::If(BlockType::Empty),
         Instruction::I32Const(1),
-        Instruction::LocalSet(2), // is_negative = true
+        Instruction::LocalSet(2),
         Instruction::I32Const(1),
-        Instruction::LocalSet(3), // i = 1 (skip minus)
+        Instruction::LocalSet(3),
         Instruction::End,
-        // Parse digits
+        Instruction::LocalGet(5),
+        Instruction::I32Const(b'+' as i32),
+        Instruction::I32Eq,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(1),
+        Instruction::LocalSet(3),
+        Instruction::End,
+        Instruction::End,
+        // No digits at all.
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32GeU,
+        Instruction::If(BlockType::Empty),
+    ]);
+    v.extend(raise_and_return(errors.raise, invalid(), zero.clone()));
+    v.extend([
+        Instruction::End,
+        Instruction::LocalGet(2),
+        Instruction::If(BlockType::Result(ValType::I64)),
+        Instruction::I64Const(negative_limit),
+        Instruction::Else,
+        Instruction::I64Const(max),
+        Instruction::End,
+        Instruction::LocalSet(6),
         Instruction::Block(BlockType::Empty),
         Instruction::Loop(BlockType::Empty),
-        // if i >= len, exit
         Instruction::LocalGet(3),
         Instruction::LocalGet(1),
         Instruction::I32GeU,
         Instruction::BrIf(1),
-        // Load char
-        Instruction::LocalGet(0),
-        Instruction::I32Const(STRING_DATA_OFFSET as i32),
-        Instruction::I32Add,
-        Instruction::LocalGet(3),
-        Instruction::I32Add,
-        Instruction::I32Load8U(MemArg {
-            offset: 0,
-            align: 0,
-            memory_index: 0,
-        }),
-        Instruction::LocalSet(5), // char
-        // Check if char is digit (48-57 = '0'-'9')
-        Instruction::LocalGet(5),
-        Instruction::I32Const(48),
-        Instruction::I32GeU,
-        Instruction::LocalGet(5),
-        Instruction::I32Const(57),
-        Instruction::I32LeU,
-        Instruction::I32And,
-        Instruction::If(BlockType::Empty),
-        // result = result * 10 + (char - '0')
-        Instruction::LocalGet(4),
-        Instruction::I32Const(10),
-        Instruction::I32Mul,
-        Instruction::LocalGet(5),
-        Instruction::I32Const(48),
+    ]);
+    v.extend(byte_at(3));
+    v.extend([
+        Instruction::I32Const(b'0' as i32),
         Instruction::I32Sub,
-        Instruction::I32Add,
-        Instruction::LocalSet(4),
+        Instruction::LocalTee(5),
+        Instruction::I32Const(9),
+        Instruction::I32GtU,
+        Instruction::If(BlockType::Empty),
+    ]);
+    v.extend(raise_and_return(errors.raise, invalid(), zero.clone()));
+    v.extend([
         Instruction::End,
-        // i++
+        Instruction::LocalGet(5),
+        Instruction::I64ExtendI32U,
+        Instruction::LocalSet(7),
+        // magnitude * 10 + digit must not pass the limit (unsigned).
+        Instruction::LocalGet(4),
+        Instruction::LocalGet(6),
+        Instruction::LocalGet(7),
+        Instruction::I64Sub,
+        Instruction::I64Const(10),
+        Instruction::I64DivU,
+        Instruction::I64GtU,
+        Instruction::If(BlockType::Empty),
+    ]);
+    v.extend(raise_and_return(errors.raise, out_of_range, zero));
+    v.extend([
+        Instruction::End,
+        Instruction::LocalGet(4),
+        Instruction::I64Const(10),
+        Instruction::I64Mul,
+        Instruction::LocalGet(7),
+        Instruction::I64Add,
+        Instruction::LocalSet(4),
         Instruction::LocalGet(3),
         Instruction::I32Const(1),
         Instruction::I32Add,
@@ -473,15 +569,191 @@ pub fn gen_string_to_int() -> Vec<Instruction<'static>> {
         Instruction::Br(0),
         Instruction::End,
         Instruction::End,
-        // Apply negative sign if needed
         Instruction::LocalGet(2),
-        Instruction::If(BlockType::Result(ValType::I32)),
-        Instruction::I32Const(0),
+        Instruction::If(BlockType::Result(ValType::I64)),
+        Instruction::I64Const(0),
         Instruction::LocalGet(4),
-        Instruction::I32Sub, // negate
+        Instruction::I64Sub,
         Instruction::Else,
         Instruction::LocalGet(4),
         Instruction::End,
-        Instruction::End, // End empty string check
-    ]
+    ]);
+    if !wide {
+        v.push(Instruction::I32WrapI64);
+    }
+    v
+}
+
+/// Count the decimal digits starting at `text[local 2]`: advance local 2
+/// past them and add their number to `count_local` (locals as in
+/// [`gen_string_to_number`]).
+fn skip_digits(count_local: u32) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32GeU,
+        Instruction::BrIf(1),
+    ];
+    v.extend(byte_at(2));
+    v.extend([
+        Instruction::I32Const(b'0' as i32),
+        Instruction::I32Sub,
+        Instruction::I32Const(9),
+        Instruction::I32GtU,
+        Instruction::BrIf(1),
+        Instruction::LocalGet(count_local),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(count_local),
+        Instruction::LocalGet(2),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(2),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+    ]);
+    v
+}
+
+/// When `text[local 2]` exists and is one of `chars`, advance local 2.
+/// Leaves 1 on the stack when it advanced, 0 otherwise.
+fn skip_one_of(chars: &[u8]) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32LtU,
+        Instruction::If(BlockType::Result(ValType::I32)),
+    ];
+    v.extend(byte_at(2));
+    v.push(Instruction::LocalSet(3));
+    for (n, c) in chars.iter().enumerate() {
+        v.extend([
+            Instruction::LocalGet(3),
+            Instruction::I32Const(*c as i32),
+            Instruction::I32Eq,
+        ]);
+        if n > 0 {
+            v.push(Instruction::I32Or);
+        }
+    }
+    v.extend([
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::LocalGet(2),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(2),
+        Instruction::I32Const(1),
+        Instruction::Else,
+        Instruction::I32Const(0),
+        Instruction::End,
+        Instruction::Else,
+        Instruction::I32Const(0),
+        Instruction::End,
+    ]);
+    v
+}
+
+/// `__string_to_number(text) -> f64`: `.toNumber()` of a string
+/// (stdlib-reference.md §3).
+///
+/// The text is a decimal number: an optional sign, digits with an optional
+/// fraction (`12`, `1.5`, `.5`, `5.`; at least one digit), and an optional
+/// exponent (`e` or `E`, an optional sign, one or more digits). Other text
+/// raises `'<text>' is not a valid number`. Valid text is converted by the
+/// host's `string_to_float`; a result beyond the `number` range raises
+/// `... is too large for number` (`too small` when negative). The function
+/// then returns 0.
+///
+/// Locals: 0 text (parameter), 1 len, 2 i, 3 byte, 4 mantissa digits,
+/// 5 exponent digits, 6 result (f64).
+pub fn gen_string_to_number(
+    string_to_float_idx: u32,
+    errors: ConversionErrors,
+) -> Vec<Instruction<'static>> {
+    let invalid = || {
+        raise_and_return(
+            errors.raise,
+            vec![Instruction::I32Const(errors.invalid as i32)],
+            Instruction::F64Const(0.0),
+        )
+    };
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(1),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(2),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(4),
+        Instruction::I32Const(0),
+        Instruction::LocalSet(5),
+    ];
+    // Sign, integer digits, fraction.
+    v.extend(skip_one_of(b"+-"));
+    v.push(Instruction::Drop);
+    v.extend(skip_digits(4));
+    v.extend(skip_one_of(b"."));
+    v.push(Instruction::If(BlockType::Empty));
+    v.extend(skip_digits(4));
+    v.push(Instruction::End);
+    v.extend([
+        Instruction::LocalGet(4),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+    ]);
+    v.extend(invalid());
+    v.push(Instruction::End);
+    // Exponent.
+    v.extend(skip_one_of(b"eE"));
+    v.push(Instruction::If(BlockType::Empty));
+    v.extend(skip_one_of(b"+-"));
+    v.push(Instruction::Drop);
+    v.extend(skip_digits(5));
+    v.extend([
+        Instruction::LocalGet(5),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+    ]);
+    v.extend(invalid());
+    v.extend([Instruction::End, Instruction::End]);
+    // Anything after the number.
+    v.extend([
+        Instruction::LocalGet(2),
+        Instruction::LocalGet(1),
+        Instruction::I32Ne,
+        Instruction::If(BlockType::Empty),
+    ]);
+    v.extend(invalid());
+    v.extend([
+        Instruction::End,
+        Instruction::LocalGet(0),
+        Instruction::Call(string_to_float_idx),
+        Instruction::LocalTee(6),
+        Instruction::F64Abs,
+        Instruction::F64Const(f64::INFINITY),
+        Instruction::F64Eq,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(6),
+        Instruction::F64Const(0.0),
+        Instruction::F64Lt,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::I32Const(errors.too_small as i32),
+        Instruction::Else,
+        Instruction::I32Const(errors.too_large as i32),
+        Instruction::End,
+        Instruction::Call(errors.raise),
+        Instruction::F64Const(0.0),
+        Instruction::Return,
+        Instruction::End,
+        Instruction::LocalGet(6),
+    ]);
+    v
 }

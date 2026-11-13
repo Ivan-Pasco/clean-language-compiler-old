@@ -10,10 +10,23 @@ impl MirBuilder {
         instruction: MirInstruction,
     ) {
         // A call to a Clean function (or `error(...)`, a conversion or
-        // `.length()` of an `any`, or `json.textToData`) may raise: follow
-        // it with the `onError` unwinding check (removed again when the
-        // program has no `onError` region).
+        // `.length()` of an `any`, a text-to-number conversion, or
+        // `json.textToData`) and an integer division may raise: follow it
+        // with the `onError` unwinding check (removed again when the program
+        // has no `onError` region).
         let may_raise = match &instruction.operation {
+            MirOperation::BinaryOp {
+                op: MirBinaryOp::Div | MirBinaryOp::Rem,
+                left,
+                right,
+            } => Self::may_divide_integer_by_zero(context, left, right),
+            MirOperation::UnboxAnyToI32 { .. }
+            | MirOperation::UnboxAnyToI64 { .. }
+            | MirOperation::UnboxAnyToF64 { .. }
+            | MirOperation::OptionalConvert {
+                conversion: crate::mir::mir_types::OptionalConversion::FromAny { .. },
+                ..
+            } => true,
             MirOperation::Call {
                 function: MirOperand::Function(_),
                 ..
@@ -26,6 +39,8 @@ impl MirBuilder {
                 matches!(
                     name.as_str(),
                     "__err_raise"
+                        | "string.toInteger"
+                        | "string.toNumber"
                         | "__json_decode_v2_or_raise"
                         | crate::stdlib::json_class::JSON_TO_CLN_LIST
                         | crate::stdlib::json_class::ANY_LENGTH
@@ -56,6 +71,30 @@ impl MirBuilder {
                 location,
             });
         }
+    }
+
+    /// Whether `left / right` (or `%`) may divide an integer by zero, which
+    /// raises "division by zero" (codegen `emit_integer_division`): not for a
+    /// number operand (IEEE division) and not for a non-zero constant divisor.
+    fn may_divide_integer_by_zero(
+        context: &FunctionBuildContext,
+        left: &MirOperand,
+        right: &MirOperand,
+    ) -> bool {
+        let is_number = |operand: &MirOperand| match operand {
+            MirOperand::Constant(MirConstant::Float(_)) => true,
+            MirOperand::Value(id) => context
+                .function
+                .locals
+                .get(id)
+                .is_some_and(|local| matches!(local.local_type, MirType::F64 | MirType::F32)),
+            _ => false,
+        };
+        let non_zero_constant = matches!(
+            right,
+            MirOperand::Constant(MirConstant::Integer(n) | MirConstant::Integer64(n)) if *n != 0
+        );
+        !non_zero_constant && !is_number(left) && !is_number(right)
     }
 
     /// Emit a call to an error-handling runtime function

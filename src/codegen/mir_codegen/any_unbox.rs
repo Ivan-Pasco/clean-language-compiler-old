@@ -21,7 +21,9 @@
 //! Conversions follow `foundation/spec/type-system.md` §7 and
 //! `stdlib-reference.md` §3: numbers truncate toward zero and saturate at the
 //! integer range (`trunc_sat`, so NaN and out-of-range values never trap),
-//! booleans convert to 0/1, strings are parsed, and null converts to zero.
+//! booleans convert to 0/1, strings are parsed as `.toInteger()` /
+//! `.toNumber()` parse them (text that is not a number in range raises an
+//! error `onError` catches), and null converts to zero.
 //! A list or object has no numeric or boolean value; converting one traps
 //! with a message naming the target type.
 
@@ -209,7 +211,7 @@ impl MirCodeGenerator<'_> {
                 ]
             }
             AnyUnboxTarget::I64 => {
-                let string_to_int = self.any_runtime_function("__string_to_int")?;
+                let string_to_int64 = self.any_runtime_function("__string_to_int64")?;
                 vec![
                     (AnyTypeTag::Null, vec![Instruction::I64Const(0)]),
                     (AnyTypeTag::Integer, i64_payload(ptr)),
@@ -223,17 +225,14 @@ impl MirCodeGenerator<'_> {
                     ),
                     (
                         AnyTypeTag::String,
-                        then(
-                            i32_payload(ptr),
-                            &[Instruction::Call(string_to_int), Instruction::I64ExtendI32S],
-                        ),
+                        then(i32_payload(ptr), &[Instruction::Call(string_to_int64)]),
                     ),
                     (AnyTypeTag::List, not_convertible.clone()),
                     (AnyTypeTag::Object, not_convertible),
                 ]
             }
             AnyUnboxTarget::F64 => {
-                let string_to_float = self.any_runtime_function("string_to_float")?;
+                let string_to_number = self.any_runtime_function("__string_to_number")?;
                 vec![
                     (AnyTypeTag::Null, vec![Instruction::F64Const(0.0)]),
                     (
@@ -247,7 +246,7 @@ impl MirCodeGenerator<'_> {
                     (AnyTypeTag::Number, f64_payload(ptr)),
                     (
                         AnyTypeTag::String,
-                        then(i32_payload(ptr), &[Instruction::Call(string_to_float)]),
+                        then(i32_payload(ptr), &[Instruction::Call(string_to_number)]),
                     ),
                     (AnyTypeTag::List, not_convertible.clone()),
                     (AnyTypeTag::Object, not_convertible),

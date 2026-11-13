@@ -1,0 +1,43 @@
+// Test: bugfixes/string_to_number_raises_on_invalid_text
+// Semantic: stdlib-reference.md §3 — .toNumber() of text that is not a
+//   decimal number, or is beyond the number range, raises an error that
+//   onError catches (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   1.5
+//   0.5
+//   5
+//   -1000
+//   0.025
+//   -1
+//   -2
+//   -3
+//   -4
+//   -5
+//   -6
+//   -7
+//   caught: '1e999' is too large for number
+
+start:
+	print("1.5".toNumber())
+	print(".5".toNumber())
+	print("5.".toNumber())
+	print("-1e3".toNumber())
+	print("2.5E-2".toNumber())
+	number a = "abc".toNumber() onError -1.0
+	print(a)
+	number b = "1.2.3".toNumber() onError -2.0
+	print(b)
+	number c = "".toNumber() onError -3.0
+	print(c)
+	number d = "1e".toNumber() onError -4.0
+	print(d)
+	number e = "inf".toNumber() onError -5.0
+	print(e)
+	number f = ".".toNumber() onError -6.0
+	print(f)
+	number g = "-1e999".toNumber() onError -7.0
+	print(g)
+	string big = "1e999"
+	number h = big.toNumber() onError:
+		print("caught: " + error)

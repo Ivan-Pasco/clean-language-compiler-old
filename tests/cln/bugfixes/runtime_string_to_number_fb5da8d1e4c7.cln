@@ -1,7 +1,7 @@
 // Test: bugfixes/runtime_string_to_number_fb5da8d1e4c7
 // Regression: string.toNumber() runtime dispatch (fingerprint fb5da8d1e4c7)
 // Grammar: method_call receiver.toNumber()
-// Semantic: stdlib-reference.md — .toNumber() on non-numeric string returns 0.0
+// Semantic: stdlib-reference.md — .toNumber() on non-numeric string raises an error
 //
 // Before the fix, string.toNumber resolved to the generic value-decoding body in
 // method_style.rs which read the length prefix as an i32 and converted THAT to f64
@@ -23,7 +23,8 @@ start:
 	number b = "42".toNumber()
 	number c = "-2.5".toNumber()
 	number d = "1e6".toNumber()
-	number e = "not-a-number".toNumber()
+	// Changed in 0.33.184: non-numeric text raises an error instead of giving 0 (developer decision)
+	number e = "not-a-number".toNumber() onError 0.0
 	print(a)
 	print(b)
 	print(c)

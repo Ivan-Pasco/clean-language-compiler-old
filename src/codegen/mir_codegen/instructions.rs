@@ -123,7 +123,12 @@ impl MirCodeGenerator<'_> {
                 }
 
                 // Generate the operation
-                if use_i64 {
+                if matches!(op, MirBinaryOp::Div | MirBinaryOp::Rem)
+                    && !left_is_float
+                    && !right_is_float
+                {
+                    self.emit_integer_division(op, use_i64, right)?;
+                } else if use_i64 {
                     self.generate_i64_binary_operation(op);
                 } else {
                     self.generate_binary_operation(op, left, right)?;
@@ -2771,6 +2776,74 @@ impl MirCodeGenerator<'_> {
         };
 
         self.current_instructions.push(instruction);
+        Ok(())
+    }
+
+    /// Integer `/` or `%` with both operands on the stack (i64 when `wide`).
+    /// A zero divisor raises "division by zero" (`__err_raise`: `onError`
+    /// catches it, otherwise the program stops with the message) and the
+    /// result is 0; the `ErrorCheck` the MIR builder put after the operation
+    /// unwinds to the handler. A non-zero constant divisor needs no test.
+    fn emit_integer_division(
+        &mut self,
+        op: &MirBinaryOp,
+        wide: bool,
+        divisor: &MirOperand,
+    ) -> Result<(), CompilerError> {
+        let operation = match (op, wide) {
+            (MirBinaryOp::Div, false) => Instruction::I32DivS,
+            (MirBinaryOp::Rem, false) => Instruction::I32RemS,
+            (MirBinaryOp::Div, true) => Instruction::I64DivS,
+            _ => Instruction::I64RemS,
+        };
+        let constant_divisor = match divisor {
+            MirOperand::Constant(MirConstant::Integer(n) | MirConstant::Integer64(n)) => Some(*n),
+            _ => None,
+        };
+        let non_zero_constant = match constant_divisor {
+            Some(n) if wide => n != 0,
+            Some(n) => n as i32 != 0,
+            None => false,
+        };
+        if non_zero_constant {
+            self.current_instructions.push(operation);
+            return Ok(());
+        }
+        let err_raise = self
+            .wasm_generator
+            .get_function_index("__err_raise")
+            .ok_or_else(|| {
+                CompilerError::codegen_error(
+                    "integer division requires __err_raise, which was not registered".to_string(),
+                    None,
+                    None,
+                )
+            })?;
+        let message = self
+            .wasm_generator
+            .get_or_create_string_offset("division by zero")?;
+        let (val_type, zero, is_zero) = if wide {
+            (ValType::I64, Instruction::I64Const(0), Instruction::I64Eqz)
+        } else {
+            (ValType::I32, Instruction::I32Const(0), Instruction::I32Eqz)
+        };
+        let divisor_local = self.alloc_temp_local(val_type);
+        let dividend_local = self.alloc_temp_local(val_type);
+        self.current_instructions.extend([
+            Instruction::LocalSet(divisor_local),
+            Instruction::LocalSet(dividend_local),
+            Instruction::LocalGet(divisor_local),
+            is_zero,
+            Instruction::If(BlockType::Result(val_type)),
+            Instruction::I32Const(message as i32),
+            Instruction::Call(err_raise),
+            zero,
+            Instruction::Else,
+            Instruction::LocalGet(dividend_local),
+            Instruction::LocalGet(divisor_local),
+            operation,
+            Instruction::End,
+        ]);
         Ok(())
     }
 

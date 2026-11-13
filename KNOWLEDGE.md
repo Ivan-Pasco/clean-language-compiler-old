@@ -239,7 +239,7 @@ A `while` / `iterate` whose body always ends in `break` (or `return`) has no bac
 
 - `MirConstant::Integer` is an `i32` at runtime (`load_constant` narrows the `i64` payload): fold with `i32` wrapping arithmetic and compare as `i32`.
 - `MirConstant::Integer64` is an `i64`: fold with `i64` wrapping arithmetic.
-- Integer `Div`/`Rem` that trap at runtime (`b == 0`, `MIN / -1`) are left unfolded so the trap still happens.
+- Integer `Div`/`Rem` by zero (which raises "division by zero") and `MIN / -1` (which traps) are left unfolded so the runtime behavior still happens.
 - Floats compare with exact IEEE-754 equality (`f64.eq`), never an epsilon.
 
 **Regression test:** `tests/cln/bugfixes/mir_constant_folding_matches_runtime.cln`.
@@ -274,6 +274,8 @@ A `while` / `iterate` whose body always ends in `break` (or `return`) has no bac
 ## 19. `onError` Regions and Error Unwinding
 
 **What:** `error(msg)` lowers to the native `__err_raise(msg)`: with no `onError` region active (`ERROR_DEPTH_GLOBAL == 0`) it prints the message and traps; inside one it sets `ERROR_PENDING_GLOBAL`. The HIR builder brackets each protected part with `__err_region_begin()` / `__err_region_end()` followed by `if __err_take(): <handler>` (standalone `onError:` covers the statements since the block start or the previous handler; `expr onError:` covers the expression). The MIR builder turns a region into a loop that runs once (`begin_error_region`), and after every call to a Clean function or `__err_raise` emits `MirOperation::ErrorCheck`: while an error is pending it branches to the innermost region's exit (a loop exit label) or returns the zero value, so callers unwind to the region. `expr onError fallback` is the same region plus `if __err_take(): result = fallback`. Programs without any region get no checks (they are stripped after the build).
+
+Runtime operations raise the same way: `.toInteger()` / `.toNumber()` of text (`__string_to_int`, `__string_to_int64`, `__string_to_number`, through `__conversion_error`; also reached by `any` → integer / number conversions) and integer `/` / `%` by zero (`emit_integer_division`, "division by zero"). `add_instruction` puts an `ErrorCheck` after those calls, after `UnboxAnyTo{I32,I64,F64}` / `OptionalConvert::FromAny`, and after a `Div`/`Rem` that is not by a non-zero constant or on numbers; `has_side_effects` keeps such a division when its result is unused.
 
 **Where:** `src/hir/hir_builder.rs` (`build_block_inner`), `src/mir/mir_builder/helpers.rs` (`add_instruction`, `begin_error_region`, `end_error_region`, `leave_error_regions`), `src/codegen/mir_codegen/instructions.rs` (`ErrorCheck`), `src/codegen/codegen_registration.rs` (`register_error_handling_operations`), globals 5-6 in `native_stdlib/mod.rs`.
 

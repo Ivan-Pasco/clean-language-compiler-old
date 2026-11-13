@@ -622,30 +622,7 @@ impl super::CodeGenerator {
             self.add_function_alias("boolean.toString", bts_idx);
         }
 
-        // NATIVE: string_to_int - parses decimal string to integer
-        // Parameters: str_ptr (i32)
-        // Returns: integer (i32)
-        let string_to_int_instructions = native_stdlib::type_conversions::gen_string_to_int();
-        self.register_function(
-            "__string_to_int",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            &string_to_int_instructions,
-        )?;
-        // Create aliases - string_to_int is the internal name used throughout the pipeline
-        if let Some(sti_idx) = self.get_function_index("__string_to_int") {
-            self.add_function_alias("string_to_int", sti_idx);
-            self.add_function_alias("string.toInteger", sti_idx);
-        }
-
-        // Route string.toNumber to the host-imported string_to_float parser.
-        // Without this alias, string.toNumber resolves to the generic value-decoding
-        // body from method_style.rs which reads the length prefix as an integer and
-        // converts THAT to f64 — so "3.14".toNumber() returns 4.0. Aliasing here mirrors
-        // the string.toInteger → __string_to_int wiring above.
-        if let Some(stf_idx) = self.get_function_index("string_to_float") {
-            self.add_function_alias("string.toNumber", stf_idx);
-        }
+        self.register_text_to_number_conversions()?;
 
         // List methods (get, set, pop, indexOf, contains, ...) are registered
         // by `ListManager` in `register_list_operations`.
@@ -667,6 +644,99 @@ impl super::CodeGenerator {
             self.add_function_alias("array_push", lpu_idx);
         }
 
+        Ok(())
+    }
+
+    /// `.toInteger()` and `.toNumber()` of a string (stdlib-reference.md §3):
+    /// `__string_to_int` (`string.toInteger`), `__string_to_int64` (an `any`
+    /// holding text converted to `integer:64`) and `__string_to_number`
+    /// (`string.toNumber`). Text that is not a number, or a number outside
+    /// the target's range, raises an error through `__conversion_error`
+    /// (`__err_raise`), so `onError` catches it. Needs `__string_concat` and
+    /// the error-handling runtime.
+    fn register_text_to_number_conversions(&mut self) -> Result<(), CompilerError> {
+        use native_stdlib::type_conversions::{
+            gen_conversion_error, gen_string_to_integer, gen_string_to_number, ConversionErrors,
+        };
+        let required = |this: &Self, name: &str| {
+            this.get_function_index(name).ok_or_else(|| {
+                CompilerError::codegen_error(
+                    format!("text-to-number conversions need '{name}', which was not registered"),
+                    None,
+                    None,
+                )
+            })
+        };
+        let concat_idx = required(self, "__string_concat")?;
+        let err_raise_idx = required(self, "__err_raise")?;
+        let string_to_float_idx = required(self, "string_to_float")?;
+
+        let quote_ptr = self.get_or_create_string_offset("'")?;
+        let raise = self.register_function(
+            "__conversion_error",
+            &[WasmType::I32, WasmType::I32],
+            None,
+            &gen_conversion_error(concat_idx, err_raise_idx, quote_ptr),
+        )?;
+
+        let integer_errors = ConversionErrors {
+            raise,
+            invalid: self.get_or_create_string_offset("' is not a valid integer")?,
+            too_large: self.get_or_create_string_offset("' is too large for integer")?,
+            too_small: self.get_or_create_string_offset("' is too small for integer")?,
+        };
+        let integer64_errors = ConversionErrors {
+            too_large: self.get_or_create_string_offset("' is too large for integer:64")?,
+            too_small: self.get_or_create_string_offset("' is too small for integer:64")?,
+            ..integer_errors
+        };
+        let integer_locals = [
+            WasmType::I32, // 1: len
+            WasmType::I32, // 2: negative
+            WasmType::I32, // 3: i
+            WasmType::I64, // 4: magnitude
+            WasmType::I32, // 5: byte / digit
+            WasmType::I64, // 6: limit
+            WasmType::I64, // 7: digit
+        ];
+        let to_int = self.register_function_with_locals(
+            "__string_to_int",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &integer_locals,
+            &gen_string_to_integer(false, integer_errors),
+        )?;
+        self.add_function_alias("string_to_int", to_int);
+        self.add_function_alias("string.toInteger", to_int);
+        self.register_function_with_locals(
+            "__string_to_int64",
+            &[WasmType::I32],
+            Some(WasmType::I64),
+            &integer_locals,
+            &gen_string_to_integer(true, integer64_errors),
+        )?;
+
+        let number_errors = ConversionErrors {
+            raise,
+            invalid: self.get_or_create_string_offset("' is not a valid number")?,
+            too_large: self.get_or_create_string_offset("' is too large for number")?,
+            too_small: self.get_or_create_string_offset("' is too small for number")?,
+        };
+        let to_number = self.register_function_with_locals(
+            "__string_to_number",
+            &[WasmType::I32],
+            Some(WasmType::F64),
+            &[
+                WasmType::I32, // 1: len
+                WasmType::I32, // 2: i
+                WasmType::I32, // 3: byte
+                WasmType::I32, // 4: mantissa digits
+                WasmType::I32, // 5: exponent digits
+                WasmType::F64, // 6: result
+            ],
+            &gen_string_to_number(string_to_float_idx, number_errors),
+        )?;
+        self.add_function_alias("string.toNumber", to_number);
         Ok(())
     }
 

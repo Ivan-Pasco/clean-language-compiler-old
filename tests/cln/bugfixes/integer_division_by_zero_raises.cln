@@ -1,0 +1,46 @@
+// Test: bugfixes/integer_division_by_zero_raises
+// Semantic: semantic-rules.md RUN003 — integer `/` and `%` by zero raise
+//   "division by zero", which onError catches (developer decision,
+//   compiler 0.33.184); number division keeps IEEE results
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   3
+//   1
+//   -1
+//   -2
+//   -3
+//   -4
+//   -5
+//   caught: division by zero
+//   -6
+//   2
+
+start:
+	integer ten = 10
+	integer three = 3
+	integer zero = 0
+	print(ten / three)
+	print(ten % three)
+	integer a = ten / zero onError -1
+	print(a)
+	integer b = ten % zero onError -2
+	print(b)
+	integer:64 big = 10
+	integer:64 bigZero = 0
+	integer:64 c = big / bigZero onError -3
+	print(c)
+	integer:8 small = 10
+	integer:8 smallZero = 0
+	integer:8 d = small / smallZero onError -4
+	print(d)
+	integer e = divide(ten, zero) onError -5
+	print(e)
+	integer f = ten / zero onError:
+		print("caught: " + error)
+	integer g = ten / zero onError -6
+	print(g)
+	print(ten / 5)
+
+functions:
+	integer divide(integer a, integer b)
+		return a / b

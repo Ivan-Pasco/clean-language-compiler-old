@@ -32,6 +32,6 @@ start:
 	number z = "0".toNumber()
 	print("zero=" + z.toString())
 
-	// Invalid parse must safely return 0 (not trap, not garbage)
-	number bad = "not a number".toNumber()
+	// Changed in 0.33.184: an invalid parse raises an error, caught here (developer decision)
+	number bad = "not a number".toNumber() onError 0.0
 	print("bad=" + bad.toString())

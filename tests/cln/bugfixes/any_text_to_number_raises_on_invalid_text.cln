@@ -1,0 +1,22 @@
+// Test: bugfixes/any_text_to_number_raises_on_invalid_text
+// Semantic: stdlib-reference.md §3 — an `any` holding text converts as
+//   .toInteger() / .toNumber() of that text: invalid text raises an error
+//   that onError catches (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   12
+//   2.5
+//   -1
+//   -2
+//   12345678901
+
+start:
+	any data = json.textToData("{\"a\": \"12\", \"b\": \"2.5\", \"c\": \"x\", \"d\": \"12345678901\"}")
+	print(data.a.toInteger())
+	print(data.b.toNumber())
+	integer c = data.c.toInteger() onError -1
+	print(c)
+	number n = data.c.toNumber() onError -2.0
+	print(n)
+	integer:64 big = data.d
+	print(big)
