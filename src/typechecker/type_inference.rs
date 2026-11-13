@@ -1541,6 +1541,14 @@ impl<'a> TypeInference<'a> {
                 return;
             }
         }
+        // An integer constant stored into an integer type is checked by its
+        // value (`fit_into_sized_integer`: "... does not fit in ..."), not by
+        // the type of the literal (`integer:64`, `integer:64u`), so an
+        // out-of-range constant is reported once.
+        if Self::integer_constant(value).is_some() && Self::concrete_integer_range(target).is_some()
+        {
+            return;
+        }
         self.add_constraint(TypeConstraint::Subtype {
             subtype: value_type,
             supertype: target.clone(),
