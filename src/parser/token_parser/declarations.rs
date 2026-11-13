@@ -321,6 +321,7 @@ impl TokenParser {
                     (Type::Void, name)
                 } else {
                     // Successfully parsed a type, expect function name next
+                    Self::reject_handler_return_type(&typ, &start_location)?;
                     let name_token = self.expect_function_name()?;
                     (typ, name_token.text.clone())
                 }
@@ -1198,6 +1199,7 @@ impl TokenParser {
                         (Type::Void, name)
                     } else {
                         // Parsed a real return type; next token is the method name.
+                        Self::reject_handler_return_type(&typ, &method_location)?;
                         let name_token = self.expect_name()?;
                         (typ, name_token.text.clone())
                     }
@@ -1565,6 +1567,36 @@ impl TokenParser {
             name,
             alias,
             is_file_import: false,
+        })
+    }
+
+    /// SYN002 when `return_type`, written at `location`, is `handler`:
+    /// grammar.ebnf `function_return_type` and `external_return_type` do not
+    /// include `handler_type` (type-system.md §"The `handler` Type").
+    pub(super) fn reject_handler_return_type(
+        return_type: &Type,
+        location: &crate::ast::SourceLocation,
+    ) -> Result<(), CompilerError> {
+        if !matches!(return_type, Type::Handler) {
+            return Ok(());
+        }
+        use crate::error::{ErrorContext, ErrorType};
+        Err(CompilerError::Syntax {
+            context: Box::new(
+                ErrorContext::new(
+                    "`handler` cannot be a function's return type: a handler is a variable \
+                     or parameter type only"
+                        .to_string(),
+                    Some(
+                        "Return the value the handler would produce, or pass the function \
+                         itself as a `handler` parameter"
+                            .to_string(),
+                    ),
+                    ErrorType::Syntax,
+                    Some(location.clone()),
+                )
+                .with_error_code("SYN002"),
+            ),
         })
     }
 

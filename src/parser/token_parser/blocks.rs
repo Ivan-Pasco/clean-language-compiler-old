@@ -2899,6 +2899,7 @@ impl TokenParser {
             // Parse an external function declaration: return_type name(params)
             match self.current_kind() {
                 TokenKind::Identifier(type_name) => {
+                    let return_type_location = self.current().location.clone();
                     // Check if this is "void" return type
                     let return_type = if type_name == "void" {
                         self.bump();
@@ -2906,6 +2907,7 @@ impl TokenParser {
                     } else {
                         self.parse_type()?
                     };
+                    Self::reject_handler_return_type(&return_type, &return_type_location)?;
 
                     self.skip_whitespace();
 
