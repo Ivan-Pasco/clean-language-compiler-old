@@ -346,3 +346,15 @@ Where it is handled:
 - `x!` must stay in the program when its value is unused: `has_side_effects` keeps `Required`.
 
 **Regression:** `tests/cln/bugfixes/optional_primitive_zero_is_a_value.cln`, `optional_primitive_params_returns_fields.cln`, `optional_sized_primitive_holds_every_value.cln`, `optional_primitive_collections_and_any.cln`, `optional_primitive_list_search_sort_onerror.cln`; `tests/test_required_halts_on_none.rs` (`!` halts only on none).
+
+## 25. Overridden Methods Dispatch on the Object Header
+
+**What:** A call `x.m()` on a class-typed receiver runs the method of the object's own class when a subclass of the declared type redefines `m` (15-classes-and-objects.md "Method Overriding"). `MirBuilder::method_overrides` (`mir_builder/helpers.rs`) lists, for the statically bound method, each overriding method with the class-ids of the subclasses that run it (nearest definition by name from each subclass up); when the list is not empty the MethodCall arm emits `MirOperation::CallVirtual` instead of `Call`. Codegen (`generate_call_virtual`, `mir_codegen/instructions.rs`) compares the header word with each class's header and runs one ordinary `generate_call_instruction` per arm, so argument coercion and result storage are those of a direct call; any other class (and the declared class itself) runs the bound method. A leaf type, a method no subclass redefines, a private method, `ClassName.method()` and constructors stay direct calls.
+
+**Watch for:**
+- Every method of a class that has subclasses takes `this` (`type_inference.rs` `in_hierarchy`); otherwise a parent method of a class without fields is lowered static and its overrides cannot take the same call.
+- An override whose parameters or result lower to other WASM types than the bound method's is not dispatched to (the spec has no rule for such a redefinition yet).
+- A new pass over MIR calls (reachability BFS, preamble fixpoint, `onError` checks, liveness) must treat `CallVirtual` as a call of every method it names.
+- `obj.toString()` with no `toString` on the declared class is still the declared class's name.
+
+**Regression:** `tests/cln/bugfixes/overridden_method_*.cln`, `overridden_void_and_number_methods_dispatch.cln`.

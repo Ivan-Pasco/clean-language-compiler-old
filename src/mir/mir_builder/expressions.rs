@@ -2736,6 +2736,10 @@ impl MirBuilder {
                     }
                 }
 
+                // Methods that a subclass overrides run the method of the
+                // receiver's own class (`CallVirtual`).
+                let mut virtual_overrides = Vec::new();
+
                 // Check if this is a built-in method that should be mapped to a conversion function
                 // SymbolId(0) is used as a placeholder for built-in methods that don't have real symbols
                 let (function_symbol, mir_arguments) = if method_symbol.0 == 0 {
@@ -3262,6 +3266,12 @@ impl MirBuilder {
                         })
                         .unwrap_or_default();
 
+                    if let (false, ConcreteType::Class { symbol_id, .. }) =
+                        (method_is_static, &receiver.expr_type)
+                    {
+                        virtual_overrides = self.method_overrides(*symbol_id, *method_symbol);
+                    }
+
                     // Only pass the receiver when the method actually accepts `this`.
                     // Side effects in the receiver expression already executed when we
                     // built `receiver_id` above; we just drop the resulting ValueId.
@@ -3523,12 +3533,21 @@ impl MirBuilder {
                     }
                 };
 
-                let instruction = MirInstruction {
-                    dest: dest_opt,
-                    operation: MirOperation::Call {
+                let operation = if virtual_overrides.is_empty() {
+                    MirOperation::Call {
                         function: function_operand,
                         arguments: mir_arguments,
-                    },
+                    }
+                } else {
+                    MirOperation::CallVirtual {
+                        method: function_symbol,
+                        overrides: virtual_overrides,
+                        arguments: mir_arguments,
+                    }
+                };
+                let instruction = MirInstruction {
+                    dest: dest_opt,
+                    operation,
                     location: expression.location.clone(),
                 };
 

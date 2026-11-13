@@ -1,0 +1,54 @@
+// Test: bugfixes/overridden_void_and_number_methods_dispatch
+// Grammar: class_declaration ("is" parent), method_call, expression_statement
+// Semantic: 15-classes-and-objects.md "Method Overriding" — overrides of a
+//   void method, of a number method, and of a method whose result is
+//   discarded or tested in a condition run the object's own method
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   animal sound
+//   woof
+//   1.5
+//   4.25
+//   dog bumped
+//   heavy
+
+start:
+	list<Animal> animals = []
+	animals.add(Animal())
+	animals.add(Dog())
+	iterate a in animals
+		a.speak()
+	iterate a in animals
+		print(a.weight(1).toString())
+	Animal d = Dog()
+	d.bump()
+	if d.weight(2) > 4.0
+		print("heavy")
+
+class Animal
+	integer bumps = 0
+
+	functions:
+		public:
+			speak()
+				print("animal sound")
+
+			number weight(integer factor)
+				return 1.5 * factor
+
+			integer bump()
+				bumps = bumps + 1
+				return bumps
+
+class Dog is Animal
+	functions:
+		public:
+			speak()
+				print("woof")
+
+			number weight(integer factor)
+				return 4.25 * factor
+
+			integer bump()
+				print("dog bumped")
+				return 0

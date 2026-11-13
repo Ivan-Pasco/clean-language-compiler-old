@@ -1,0 +1,23 @@
+// Test: bugfixes/overridden_method_module_shapes
+// Semantic: module imported by overridden_method_in_subclass_of_imported_class.cln;
+//   its class is subclassed in the importing module
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   [shape]
+
+start:
+	print(render(Shape()))
+
+class Shape
+	functions:
+		public:
+			string name()
+				return "shape"
+
+			string describe()
+				return "[" + this.name() + "]"
+
+functions:
+	public:
+		string render(Shape s)
+			return s.describe()

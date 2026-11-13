@@ -1,0 +1,25 @@
+// Test: bugfixes/overridden_method_in_subclass_of_imported_class
+// Grammar: import_block, class_declaration ("is" parent), method_call
+// Semantic: 15-classes-and-objects.md "Method Overriding" — a class of an
+//   imported module subclassed here: the module's own code (a function
+//   taking the parent type, a method calling `this.name()`) runs the
+//   override
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   [shape]
+//   [box]
+//   [box]
+
+import:
+	overridden_method_module_shapes
+
+start:
+	Shape s = Box()
+	print(overridden_method_module_shapes.render(s))
+	print(s.describe())
+
+class Box is Shape
+	functions:
+		public:
+			string name()
+				return "box"

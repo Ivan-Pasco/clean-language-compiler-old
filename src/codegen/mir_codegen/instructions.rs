@@ -240,6 +240,14 @@ impl MirCodeGenerator<'_> {
                 self.generate_call_instruction(instruction, function, arguments)?;
             }
 
+            MirOperation::CallVirtual {
+                method,
+                overrides,
+                arguments,
+            } => {
+                self.generate_call_virtual(instruction, *method, overrides, arguments)?;
+            }
+
             MirOperation::CallCapability {
                 receiver,
                 capability_symbol,
@@ -2169,6 +2177,55 @@ impl MirCodeGenerator<'_> {
             }
         }
         None
+    }
+
+    /// Lower a `MirOperation::CallVirtual`: an if/else chain over the
+    /// receiver's object header picks the overriding method of its class;
+    /// every other class runs `method`. Each arm is an ordinary call of its
+    /// method that stores (or drops) the result itself, so the arms leave
+    /// the stack empty.
+    fn generate_call_virtual(
+        &mut self,
+        instruction: &MirInstruction,
+        method: SymbolId,
+        overrides: &[(SymbolId, Vec<u32>)],
+        arguments: &[MirOperand],
+    ) -> Result<(), CompilerError> {
+        let receiver = arguments.first().ok_or_else(|| CompilerError::Codegen {
+            context: Box::new(crate::error::ErrorContext::new(
+                "CallVirtual without a receiver argument".to_string(),
+                None,
+                crate::error::ErrorType::Codegen,
+                Some(instruction.location.clone()),
+            )),
+        })?;
+        for (target, class_ids) in overrides {
+            for (i, class_id) in class_ids.iter().enumerate() {
+                self.load_operand(receiver)?;
+                self.current_instructions
+                    .push(Instruction::I32Load(wasm_encoder::MemArg {
+                        offset: 0,
+                        align: 2,
+                        memory_index: 0,
+                    }));
+                self.current_instructions.push(Instruction::I32Const(
+                    crate::mir::class_header_word(*class_id),
+                ));
+                self.current_instructions.push(Instruction::I32Eq);
+                if i > 0 {
+                    self.current_instructions.push(Instruction::I32Or);
+                }
+            }
+            self.current_instructions
+                .push(Instruction::If(wasm_encoder::BlockType::Empty));
+            self.generate_call_instruction(instruction, &MirOperand::Function(*target), arguments)?;
+            self.current_instructions.push(Instruction::Else);
+        }
+        self.generate_call_instruction(instruction, &MirOperand::Function(method), arguments)?;
+        for _ in overrides {
+            self.current_instructions.push(Instruction::End);
+        }
+        Ok(())
     }
 
     /// Lower a `MirOperation::CallCapability` into a runtime class-id switch

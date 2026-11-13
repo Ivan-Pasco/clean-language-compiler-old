@@ -275,6 +275,18 @@ pub enum MirOperation {
         arguments: Vec<MirOperand>,
     },
 
+    /// Call of a class method that a subclass overrides: the method of the
+    /// receiver's own class runs (15-classes-and-objects.md "Method
+    /// Overriding"). `arguments[0]` is the receiver. Each entry of
+    /// `overrides` names an overriding method and the class-ids of the
+    /// classes whose instances run it; an instance of any other class runs
+    /// `method`, the method bound to the receiver's declared type.
+    CallVirtual {
+        method: SymbolId,
+        overrides: Vec<(SymbolId, Vec<u32>)>,
+        arguments: Vec<MirOperand>,
+    },
+
     /// Dynamic dispatch call on a capability-typed receiver.
     ///
     /// `capability_symbol` is the SymbolId of the capability declaration

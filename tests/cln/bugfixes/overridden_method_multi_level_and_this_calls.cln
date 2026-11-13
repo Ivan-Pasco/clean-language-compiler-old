@@ -1,0 +1,86 @@
+// Test: bugfixes/overridden_method_multi_level_and_this_calls
+// Grammar: class_declaration ("is" parent), method_call, base_call
+// Semantic: 15-classes-and-objects.md "Method Overriding" — a method
+//   overridden at some levels of Grand -> Parent -> Child runs the nearest
+//   override of the object's class; a method calling another method on
+//   `this` (explicit or implicit) reaches the override; a private method is
+//   not overridden by a subclass method of the same name; constructors and
+//   static calls stay bound to their class
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   grand:grand-kind:grand-secret
+//   grand:parent-kind:grand-secret
+//   child:parent-kind:grand-secret
+//   7
+//   7
+//   21
+//   grand-label
+//   made 3
+
+start:
+	list<Grand> all = []
+	all.add(Grand(7))
+	all.add(Parent(7))
+	all.add(Child(7))
+	iterate g in all
+		print(g.describe())
+
+	iterate g in all
+		print(g.value().toString())
+
+	print(Grand.label())
+	Grand made = Child(3)
+	print("made " + made.baseValue().toString())
+
+class Grand
+	integer n
+
+	constructor(integer amount)
+		n = amount
+
+	functions:
+		string secret()
+			return "grand-secret"
+
+		public:
+			string describe()
+				return this.title() + ":" + kind() + ":" + this.secret()
+
+			string title()
+				return "grand"
+
+			string kind()
+				return "grand-kind"
+
+			integer value()
+				return n
+
+			integer baseValue()
+				return n
+
+			string label()
+				return "grand-label"
+
+class Parent is Grand
+	constructor(integer amount)
+		base(amount)
+
+	functions:
+		string secret()
+			return "parent-secret"
+
+		public:
+			string kind()
+				return "parent-kind"
+
+class Child is Parent
+	constructor(integer amount)
+		base(amount)
+
+	functions:
+		public:
+			string title()
+				return "child"
+
+			integer value()
+				return this.baseValue() * 3

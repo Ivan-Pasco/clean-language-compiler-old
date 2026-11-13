@@ -1,0 +1,73 @@
+// Test: bugfixes/overridden_method_runs_through_parent_type
+// Grammar: class_declaration ("is" parent), method_call
+// Semantic: 15-classes-and-objects.md "Method Overriding" — the method of the
+//   object's own class runs, also when the value is typed as its parent
+//   (variable, parameter, list element, field, return value)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   2
+//   2
+//   1
+//   square 5
+//   circle 5
+//   shape 5
+//   2
+//   2
+
+start:
+	Shape s = Sq()
+	print(s.area(3).toString())
+	show(Sq())
+	show(Shape())
+
+	list<Shape> shapes = []
+	shapes.add(Sq())
+	shapes.add(Circle())
+	shapes.add(Shape())
+	iterate shape in shapes
+		print(shape.name() + " " + shape.size().toString())
+
+	Holder h = Holder(Sq())
+	print(h.shape.area(0).toString())
+	print(pick().area(0).toString())
+
+class Shape
+	functions:
+		public:
+			integer area(integer x)
+				return 1
+
+			string name()
+				return "shape"
+
+			integer size()
+				return 5
+
+class Sq is Shape
+	functions:
+		public:
+			integer area(integer x)
+				return 2
+
+			string name()
+				return "square"
+
+class Circle is Shape
+	functions:
+		public:
+			string name()
+				return "circle"
+
+class Holder
+	public:
+		Shape shape
+
+	constructor(Shape s)
+		shape = s
+
+functions:
+	show(Shape x)
+		print(x.area(1).toString())
+
+	Shape pick()
+		return Sq()

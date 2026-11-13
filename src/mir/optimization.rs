@@ -446,6 +446,11 @@ impl DeadCodeEliminationPass {
                     self.mark_operand_live(arg, function);
                 }
             }
+            MirOperation::CallVirtual { arguments, .. } => {
+                for arg in arguments {
+                    self.mark_operand_live(arg, function);
+                }
+            }
             MirOperation::CallCapability {
                 receiver,
                 arguments,
@@ -624,6 +629,7 @@ fn has_side_effects(operation: &MirOperation) -> bool {
         | MirOperation::GlobalStore { .. }
         | MirOperation::Call { .. }
         | MirOperation::CallCapability { .. }
+        | MirOperation::CallVirtual { .. }
         | MirOperation::ErrorCheck { .. }
         | MirOperation::UnaryOp {
             op: MirUnaryOp::Required,

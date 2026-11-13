@@ -2010,11 +2010,16 @@ impl<'a> TypeInference<'a> {
 
         // Convert methods — propagate errors so codegen never sees a missing method body.
         let mut tast_methods = Vec::new();
-        let has_parent = class.parent.is_some();
+        // A class with subclasses passes `this` like its subclasses do: a
+        // call bound to its method may run an override (`CallVirtual`).
+        let in_hierarchy = class.parent.is_some()
+            || self.symbol_table.all_symbols().values().any(|symbol| {
+                matches!(symbol.kind, SymbolKind::Class { parent: Some(p), .. } if p == class.symbol_id)
+            });
         let has_fields = !class.fields.is_empty();
         let has_capabilities = !class.capabilities.is_empty();
         for method in &class.methods {
-            match self.infer_method(method, has_parent, has_fields, has_capabilities) {
+            match self.infer_method(method, in_hierarchy, has_fields, has_capabilities) {
                 Ok(tast_method) => tast_methods.push(tast_method),
                 Err(e) => {
                     tracing::warn!(

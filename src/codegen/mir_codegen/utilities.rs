@@ -1688,6 +1688,20 @@ impl MirCodeGenerator<'_> {
                             }
                             _ => {}
                         },
+                        MirOperation::CallVirtual {
+                            method, overrides, ..
+                        } => {
+                            let callees =
+                                std::iter::once(method).chain(overrides.iter().map(|(m, _)| m));
+                            for callee_sym in callees {
+                                if let Some(name) = mir_program.symbol_name_map.get(callee_sym) {
+                                    insert_name(&mut names, &mut worklist, &mut visited, name);
+                                }
+                                if visited.insert(*callee_sym) {
+                                    worklist.push(*callee_sym);
+                                }
+                            }
+                        }
                         // Detect string equality / inequality comparisons.
                         // These do NOT emit an explicit MIR Call — instead the
                         // codegen injects a `string_compare` call at BinaryOp
@@ -1879,6 +1893,14 @@ impl MirCodeGenerator<'_> {
                     };
                     match &instr.operation {
                         MirOperation::Call { function, .. } => push_operand(function, out),
+                        MirOperation::CallVirtual {
+                            method, overrides, ..
+                        } => {
+                            push_operand(&MirOperand::Function(*method), out);
+                            for (callee, _) in overrides {
+                                push_operand(&MirOperand::Function(*callee), out);
+                            }
+                        }
                         MirOperation::Copy {
                             source: source @ MirOperand::Function(_),
                         } => push_operand(source, out),
