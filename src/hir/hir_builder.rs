@@ -2651,6 +2651,20 @@ impl HirBuilder {
                 arguments,
                 location,
             } => {
+                // `validator.allowedValues` is the rule `oneOf:` builds in a
+                // `validate` block, not a function programs call.
+                if matches!(object.as_ref(), Expression::Variable(ns) if ns == "validator")
+                    && method == "allowedValues"
+                {
+                    return Err(CompilerError::semantic_error_with_code(
+                        "Function 'validator.allowedValues' not found".to_string(),
+                        crate::stdlib::validator::unknown_function_help("validator.allowedValues")
+                            .map(str::to_string),
+                        Some(location.clone()),
+                        "FUNC001",
+                    ));
+                }
+
                 // CPS substitution: `result.json(path)` → `api.json(path)` etc.
                 if let Expression::Variable(var_name) = object.as_ref() {
                     if let Some(ns) = self.api_response_vars.get(var_name.as_str()).cloned() {
@@ -7907,6 +7921,28 @@ impl HirBuilder {
             location: loc.clone(),
         };
 
+        // SEM002: a `messages:` key names a field of the block, or is
+        // `default` (grammar.ebnf §8.9).
+        if let Some(messages) = &schema.messages {
+            for (name, _) in &messages.field_messages {
+                if !schema.fields.iter().any(|field| field.name == *name) {
+                    let fields: Vec<&str> = schema.fields.iter().map(|f| f.name.as_str()).collect();
+                    return Err(CompilerError::semantic_error_with_code(
+                        format!(
+                            "messages: '{}' names no field of validate {}",
+                            name, schema.name
+                        ),
+                        Some(format!(
+                            "A messages entry is a field of the block ({}) or `default`",
+                            fields.join(", ")
+                        )),
+                        Some(loc.clone()),
+                        "SEM002",
+                    ));
+                }
+            }
+        }
+
         for field in &schema.fields {
             stmts.push(rule_call(
                 "validator.field",
@@ -7994,12 +8030,16 @@ impl HirBuilder {
                             "integer",
                             "number",
                             "alphanumeric",
+                            "slug",
+                            "numeric",
+                            "alpha",
                         ];
                         if !VALID_PATTERNS.contains(&pattern.as_str()) {
                             return Err(CompilerError::validation_error(
                                 format!(
-                                    "Unknown pattern name '{}' in validate match constraint. Valid patterns: email, url, uuid, phone, date, integer, number, alphanumeric",
-                                    pattern
+                                    "Unknown pattern name '{}' in validate match constraint. Valid patterns: {}",
+                                    pattern,
+                                    VALID_PATTERNS.join(", ")
                                 ),
                                 loc.clone(),
                             ));

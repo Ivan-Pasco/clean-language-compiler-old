@@ -1,0 +1,19 @@
+// Test: bugfixes/validator_min_value_is_not_a_function
+// Grammar: function_call (validator.minValue)
+// Semantic: FUNC001 — stdlib-reference §15 has no `validator.minValue` /
+//   `validator.maxValue`; numeric bounds are `validator.range(v, lo, hi)`
+//   (developer decision)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   error[FUNC001]
+//   Function 'validator.minValue' not found
+//   Use validator.range(v, lo, hi) for numeric bounds
+//
+// Regression: validator.minValue / validator.maxValue compiled though §15
+// does not have them: an undeclared validator.* call was not checked at all.
+
+start:
+	integer v = validator.field(validator.create(), "age")
+	v = validator.minValue(v, 13)
+	print(validator.isOk(validator.run(v, 0)))

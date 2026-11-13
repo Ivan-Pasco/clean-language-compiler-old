@@ -22,15 +22,12 @@ pub const VALIDATION_RULES_TYPE_ID: u32 = 21;
 ///  32:  type_name_ptr        (4 bytes, 0=none; ptr to type name string)
 ///  36:  trim_flag            (4 bytes, 0=no trim 1=trim)
 ///  40:  allowed_values_ptr   (4 bytes, 0=none, ptr to list<string>)
-///  44:  default_value_ptr    (4 bytes, 0=none)
-///  48:  required_if_field_ptr(4 bytes, 0=none, ptr to field name)
-///  52:  required_if_value_ptr(4 bytes, 0=none, ptr to expected value)
+///  44:  default_value_ptr    (4 bytes, 0=none; boxed any for a missing value)
+///  48:  required_if_field_ptr(4 bytes, 0=none; required when this field is present)
+///  52:  unused
 ///  56:  shape_rules_ptr      (4 bytes, 0=none, ptr to nested ValidationRules)
 ///  60:  each_rules_ptr       (4 bytes, 0=none, ptr to ValidationRules for list items)
-///  64:  min_value            (4 bytes, i32 minimum value)
-///  68:  max_value            (4 bytes, i32 maximum value)
-///  72:  min_value_active     (4 bytes, 0=inactive 1=active)
-///  76:  max_value_active     (4 bytes, 0=inactive 1=active)
+///  64..80: unused
 ///
 /// A field entry holds rules only, never data: the values come from the input
 /// of `validator.run` / `validator.runField`.
@@ -58,7 +55,9 @@ const LIST_DATA_OFFSET: u64 = 16;
 
 /// The pattern names of `validator.match`, in the order of their
 /// `string_matches` pattern ids (`text.matches`, stdlib-reference.md §4).
-const PATTERNS: [(&str, &str); 8] = [
+/// Ids from `FIRST_NATIVE_PATTERN` on (slug, numeric, alpha) are checked by
+/// `__validator_native_pattern` in the module itself.
+const PATTERNS: [(&str, &str); PATTERN_COUNT] = [
     ("email", " must be a valid email address"),
     ("url", " must be a valid URL"),
     ("uuid", " must be a valid UUID"),
@@ -67,13 +66,33 @@ const PATTERNS: [(&str, &str); 8] = [
     ("integer", " must contain only digits"),
     ("number", " must be a number"),
     ("alphanumeric", " must contain only letters and digits"),
+    (
+        "slug",
+        " must contain only lowercase letters, digits, and hyphens",
+    ),
+    ("numeric", " must contain only digits"),
+    ("alpha", " must contain only letters"),
 ];
+
+/// Number of pattern names.
+const PATTERN_COUNT: usize = 11;
+
+/// The id of `slug`, the first pattern `string_matches` does not check.
+const FIRST_NATIVE_PATTERN: i32 = 8;
+
+/// The check context `__validator_check_value` appends to (a `CELL_SIZE`
+/// block): the error list, the label (field name) of each error, and the
+/// JSON-tree object the field being checked belongs to (0 for none).
+const CELL_ERRORS: u64 = 0;
+const CELL_LABELS: u64 = 4;
+const CELL_OBJECT: u64 = 8;
+const CELL_SIZE: i32 = 12;
 
 /// Byte size of the ValidationResult structure (24 bytes):
 ///   0:  is_ok              (4 bytes, 1=success 0=failure)
 ///   4:  value_ptr          (4 bytes, the validated value when ok)
 ///   8:  errors_list_ptr    (4 bytes, list<string>)
-///  12:  field_errors_ptr   (4 bytes, 0=none, field→errors pairs ptr)
+///  12:  labels_list_ptr    (4 bytes, list<string>: the field of each error; 0=none)
 ///  16:  field_name_ptr     (4 bytes, set by runField, 0 by run)
 ///  20:  validator_name_ptr (4 bytes, from createWithName, 0 if unnamed)
 const RESULT_SIZE: i32 = 24;
@@ -100,6 +119,26 @@ pub fn too_many_arguments_help(function: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+/// The rule builders: each writes the current (last) field entry, so a call
+/// on a validator without a field raises an error (`emit_get_last_field_entry`).
+pub const RULE_FUNCTIONS: [&str; 15] = [
+    "validator.required",
+    "validator.optional",
+    "validator.match",
+    "validator.range",
+    "validator.minLength",
+    "validator.maxLength",
+    "validator.message",
+    "validator.custom",
+    "validator.type",
+    "validator.trim",
+    "validator.allowedValues",
+    "validator.default",
+    "validator.requiredIf",
+    "validator.shape",
+    "validator.each",
+];
 
 /// `i32.load` / `i32.store` of a 4-aligned word at `offset`.
 const fn word(offset: u64) -> MemArg {
@@ -129,6 +168,19 @@ fn if_i32() -> Instruction<'static> {
 
 fn if_empty() -> Instruction<'static> {
     Instruction::If(BlockType::Empty)
+}
+
+/// Help for a call to a `validator.` function that is not declared.
+pub fn unknown_function_help(function: &str) -> Option<&'static str> {
+    match function {
+        "validator.minValue" | "validator.maxValue" => Some(
+            "Use validator.range(v, lo, hi) for numeric bounds (`min:` / `max:` in a validate block)",
+        ),
+        "validator.allowedValues" => {
+            Some("The allowed values of a field are the `oneOf:` constraint of a validate block")
+        }
+        _ => None,
+    }
 }
 
 /// Validator stdlib module for Clean Language: the rules a `validate` block
@@ -161,6 +213,7 @@ pub struct ValidatorStrings {
     pub is_invalid: u32,
     pub must_be_list: u32,
     pub no_match: u32,
+    pub no_field: u32,
     pub true_text: u32,
     pub false_text: u32,
     pub type_string: u32,
@@ -168,17 +221,17 @@ pub struct ValidatorStrings {
     pub type_number: u32,
     pub type_boolean: u32,
     /// The names in `PATTERNS`, in order.
-    pub patterns: [u32; 8],
+    pub patterns: [u32; PATTERN_COUNT],
     /// The messages in `PATTERNS`, in order.
-    pub pattern_messages: [u32; 8],
+    pub pattern_messages: [u32; PATTERN_COUNT],
 }
 
 impl ValidatorStrings {
     /// Pool every validator string in `codegen`'s data section.
     pub fn pool(codegen: &mut CodeGenerator) -> Result<Self, CompilerError> {
         let mut s = |text: &str| codegen.get_or_create_string_offset(text);
-        let mut patterns = [0; 8];
-        let mut pattern_messages = [0; 8];
+        let mut patterns = [0; PATTERN_COUNT];
+        let mut pattern_messages = [0; PATTERN_COUNT];
         for (i, (name, message)) in PATTERNS.iter().enumerate() {
             patterns[i] = s(name)?;
             pattern_messages[i] = s(message)?;
@@ -204,6 +257,7 @@ impl ValidatorStrings {
             is_invalid: s(" is invalid")?,
             must_be_list: s(" must be a list")?,
             no_match: s(" does not match the required format")?,
+            no_field: s("a validator rule needs a field: call validator.field(v, name) first")?,
             true_text: s("true")?,
             false_text: s("false")?,
             type_string: s("string")?,
@@ -239,6 +293,13 @@ pub struct ValidatorImports {
     pub int64_to_string: u32,
     /// `float_to_string(f64) -> string`.
     pub float_to_string: u32,
+    /// `__err_raise(message)` (14-error-handling.md).
+    pub err_raise: u32,
+    /// `__pairs_new(capacity)`, `__pairs_get(map, key)`,
+    /// `__pairs_set(map, key, value) -> map`.
+    pub pairs_new: u32,
+    pub pairs_get: u32,
+    pub pairs_set: u32,
     /// `string_matches(ptr, len, pattern_id) -> 1 | 0`, registered when a
     /// `validator.match` rule is reachable.
     pub string_matches: Option<u32>,
@@ -275,6 +336,12 @@ struct Helpers {
     range_message: u32,
     /// `(rules, name) -> index | -1`: the last field rule named `name`.
     field_index: u32,
+    /// `(object, name) -> box | 0`: the value of the entry named `name`.
+    object_value: u32,
+    /// `(box) -> 1 | 0`: a value that is there, not null and not empty text.
+    is_present: u32,
+    /// `(text, id) -> 1 | 0`: the patterns `slug`, `numeric` and `alpha`.
+    native_pattern: u32,
     /// `(rules, object, prefix, cell) -> object`: check every field of
     /// `rules` against a JSON-tree object; returns the object with the
     /// changed (trimmed) values.
@@ -297,8 +364,11 @@ impl Helpers {
             join: first + 7,
             range_message: first + 8,
             field_index: first + 9,
-            check_object: first + 10,
-            check_value: first + 11,
+            object_value: first + 10,
+            is_present: first + 11,
+            native_pattern: first + 12,
+            check_object: first + 13,
+            check_value: first + 14,
         }
     }
 }
@@ -334,11 +404,11 @@ impl ValidatorManager {
             Option<WasmType>,
             Vec<WasmType>,
             Vec<Instruction<'static>>,
-        ); 12] = [
+        ); 15] = [
             (
                 h.add_error,
                 "__validator_add_error",
-                vec![I32, I32],
+                vec![I32, I32, I32],
                 None,
                 vec![],
                 self.generate_add_error(),
@@ -416,6 +486,31 @@ impl ValidatorManager {
                 Some(I32),
                 vec![I32],
                 self.generate_field_index(),
+            ),
+            (
+                h.object_value,
+                "__validator_object_value",
+                vec![I32, I32],
+                Some(I32),
+                vec![I32, I32],
+                self.generate_object_value(),
+            ),
+            (
+                h.is_present,
+                "__validator_is_present",
+                vec![I32],
+                Some(I32),
+                vec![],
+                Self::generate_is_present(),
+            ),
+            (
+                h.native_pattern,
+                "__validator_native_pattern",
+                vec![I32, I32],
+                Some(I32),
+                // 2 len, 3 i, 4 byte, 5 after a hyphen
+                vec![I32, I32, I32, I32],
+                Self::generate_native_pattern(),
             ),
             (
                 h.check_object,
@@ -578,12 +673,13 @@ impl ValidatorManager {
             self.generate_validator_get_first_error(),
         )?;
 
-        // validator.fieldErrors(result_ptr: i32, field_name_ptr: i32) -> list_ptr
-        register_stdlib_function(
+        // validator.fieldErrors(result_ptr) -> pairs<string, list<string>>
+        register_stdlib_function_with_locals(
             codegen,
             "validator.fieldErrors",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32],
             Some(WasmType::I32),
+            &[WasmType::I32; 5], // pairs, labels, i, n, list
             self.generate_validator_field_errors(),
         )?;
 
@@ -725,11 +821,11 @@ impl ValidatorManager {
             self.generate_validator_default(),
         )?;
 
-        // validator.requiredIf(rules_ptr, field_name_ptr, expected_value_ptr) -> rules_ptr
+        // validator.requiredIf(rules_ptr, other_field_ptr) -> rules_ptr
         register_stdlib_function_with_locals(
             codegen,
             "validator.requiredIf",
-            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             &[WasmType::I32], // local: field_entry_ptr
             self.generate_validator_required_if(),
@@ -753,26 +849,6 @@ impl ValidatorManager {
             Some(WasmType::I32),
             &[WasmType::I32], // local: field_entry_ptr
             self.generate_validator_each(),
-        )?;
-
-        // validator.minValue(rules_ptr, min_i32) -> rules_ptr
-        register_stdlib_function_with_locals(
-            codegen,
-            "validator.minValue",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            &[WasmType::I32], // local: field_entry_ptr
-            self.generate_validator_min_value(),
-        )?;
-
-        // validator.maxValue(rules_ptr, max_i32) -> rules_ptr
-        register_stdlib_function_with_locals(
-            codegen,
-            "validator.maxValue",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            &[WasmType::I32], // local: field_entry_ptr
-            self.generate_validator_max_value(),
         )?;
 
         // validator.merge(rules_a_ptr, rules_b_ptr) -> new_rules_ptr
@@ -799,9 +875,26 @@ impl ValidatorManager {
     /// Assumes rules layout:
     ///   offset 0: field_count
     ///   offset 8: (rules_ptr + 8) holds a word whose value is fields_ptr
-    fn emit_get_last_field_entry(rules_local: u32, dest_local: u32) -> Vec<Instruction<'static>> {
+    ///
+    /// A validator without a field has no entry for the rule: that raises
+    /// an error (`onError` catches it) and the rule returns the validator
+    /// unchanged.
+    fn emit_get_last_field_entry(
+        &self,
+        rules_local: u32,
+        dest_local: u32,
+    ) -> Vec<Instruction<'static>> {
         // field_entry_ptr = fields_ptr + (field_count - 1) * FIELD_ENTRY_SIZE
         vec![
+            Instruction::LocalGet(rules_local),
+            load(0),
+            Instruction::I32Eqz,
+            if_empty(),
+            text(self.imports.strings.no_field),
+            Instruction::Call(self.imports.err_raise),
+            Instruction::LocalGet(rules_local),
+            Instruction::Return,
+            Instruction::End,
             // Compute (field_count - 1) * FIELD_ENTRY_SIZE
             Instruction::LocalGet(rules_local),
             Instruction::I32Load(MemArg {
@@ -957,16 +1050,24 @@ impl ValidatorManager {
         ]
     }
 
-    /// A new empty error list, held in a 4-byte cell (the list moves when
-    /// it grows): `cell_local` = the cell.
+    /// A new check context in `cell_local` (`CELL_SIZE` bytes, see
+    /// `CELL_ERRORS`): empty error and label lists (held in the cell: a list
+    /// moves when it grows) and no object.
     fn emit_new_error_cell(&self, cell_local: u32) -> Vec<Instruction<'static>> {
         vec![
-            Instruction::I32Const(4),
+            Instruction::I32Const(CELL_SIZE),
             Instruction::Call(self.imports.malloc),
             Instruction::LocalTee(cell_local),
             Instruction::I32Const(4),
             Instruction::Call(self.imports.list_allocate),
-            store(0),
+            store(CELL_ERRORS),
+            Instruction::LocalGet(cell_local),
+            Instruction::I32Const(4),
+            Instruction::Call(self.imports.list_allocate),
+            store(CELL_LABELS),
+            Instruction::LocalGet(cell_local),
+            Instruction::I32Const(0),
+            store(CELL_OBJECT),
         ]
     }
 
@@ -1064,25 +1165,28 @@ impl ValidatorManager {
             None => v.extend([I::LocalGet(l.name), I::LocalSet(l.label)]),
         }
         v.extend([
+            // the object the field belongs to, for `requiredIf`
+            I::LocalGet(l.cell),
+            I::LocalGet(l.object),
+            store(CELL_OBJECT),
             I::LocalGet(l.entry),
             I::LocalGet(l.value),
             I::LocalGet(l.label),
             I::LocalGet(l.cell),
             I::Call(self.helpers.check_value),
             I::LocalSet(l.checked),
-            // A changed value replaces the entry in a copy of the object.
+            // A changed value (trimmed, or a default for a missing field)
+            // goes into a copy of the object, with room for every field.
             I::LocalGet(l.checked),
             I::LocalGet(l.value),
             I::I32Ne,
-            I::LocalGet(l.entry_index),
-            I::LocalGet(l.object_count),
-            I::I32LtS,
-            I::I32And,
             if_empty(),
             I::LocalGet(l.copy),
             I::I32Eqz,
             if_empty(),
             I::LocalGet(l.object_count),
+            I::LocalGet(l.count),
+            I::I32Add,
             I::I32Const(8),
             I::I32Mul,
             I::I32Const(4),
@@ -1097,7 +1201,15 @@ impl ValidatorManager {
             I::I32Const(4),
             I::I32Add,
             I::Call(self.imports.memcpy),
+            // (no object: the 4 bytes copied are not a count)
+            I::LocalGet(l.copy),
+            I::LocalGet(l.object_count),
+            store(0),
             I::End,
+            I::LocalGet(l.entry_index),
+            I::LocalGet(l.object_count),
+            I::I32LtS,
+            if_empty(),
             I::LocalGet(l.copy),
             I::LocalGet(l.entry_index),
             I::I32Const(8),
@@ -1105,6 +1217,27 @@ impl ValidatorManager {
             I::I32Add,
             I::LocalGet(l.checked),
             store(8),
+            I::Else,
+            // a missing field that took its default: a new entry
+            I::LocalGet(l.copy),
+            I::LocalGet(l.copy),
+            load(0),
+            I::I32Const(8),
+            I::I32Mul,
+            I::I32Add,
+            I::LocalTee(l.entry_index),
+            I::LocalGet(l.name),
+            store(4),
+            I::LocalGet(l.entry_index),
+            I::LocalGet(l.checked),
+            store(8),
+            I::LocalGet(l.copy),
+            I::LocalGet(l.copy),
+            load(0),
+            I::I32Const(1),
+            I::I32Add,
+            store(0),
+            I::End,
             I::End,
             I::LocalGet(l.index),
             I::I32Const(1),
@@ -1134,7 +1267,7 @@ impl ValidatorManager {
             I::Call(self.imports.malloc),
             I::LocalSet(result_local),
             I::LocalGet(cell_local),
-            load(0),
+            load(CELL_ERRORS),
             I::LocalSet(errors_local),
             // is_ok = no errors
             I::LocalGet(result_local),
@@ -1158,8 +1291,10 @@ impl ValidatorManager {
             I::LocalGet(result_local),
             I::LocalGet(errors_local),
             store(8),
+            // the label of each error, for validator.fieldErrors
             I::LocalGet(result_local),
-            I::I32Const(0),
+            I::LocalGet(cell_local),
+            load(CELL_LABELS),
             store(12),
             I::LocalGet(result_local),
             field_name,
@@ -1305,15 +1440,22 @@ impl ValidatorManager {
 
     // ==================== Code Generation: Helpers ====================
 
-    /// `__validator_add_error(cell, message)`.
+    /// `__validator_add_error(cell, label, message)`: the message, and the
+    /// label of the field it is about.
     fn generate_add_error(&self) -> Vec<Instruction<'static>> {
         vec![
             Instruction::LocalGet(0),
             Instruction::LocalGet(0),
-            load(0),
+            load(CELL_ERRORS),
+            Instruction::LocalGet(2),
+            Instruction::Call(self.imports.list_add),
+            store(CELL_ERRORS),
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(0),
+            load(CELL_LABELS),
             Instruction::LocalGet(1),
             Instruction::Call(self.imports.list_add),
-            store(0),
+            store(CELL_LABELS),
         ]
     }
 
@@ -1791,6 +1933,195 @@ impl ValidatorManager {
         ]
     }
 
+    /// `__validator_object_value(object, name) -> box | 0`.
+    ///
+    /// Locals: 2 count, 3 i.
+    fn generate_object_value(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let entry = |offset: u64| {
+            [
+                I::LocalGet(0),
+                I::LocalGet(3),
+                I::I32Const(8),
+                I::I32Mul,
+                I::I32Add,
+                load(offset),
+            ]
+        };
+        let mut v = vec![
+            I::LocalGet(0),
+            I::I32Eqz,
+            if_empty(),
+            I::I32Const(0),
+            I::Return,
+            I::End,
+            I::LocalGet(0),
+            load(0),
+            I::LocalSet(2),
+            I::I32Const(0),
+            I::LocalSet(3),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(3),
+            I::LocalGet(2),
+            I::I32GeS,
+            I::BrIf(1),
+        ];
+        v.extend(entry(4));
+        v.extend([I::LocalGet(1), I::Call(self.imports.str_eq), if_empty()]);
+        v.extend(entry(8));
+        v.extend([
+            I::Return,
+            I::End,
+            I::LocalGet(3),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(3),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::I32Const(0),
+        ]);
+        v
+    }
+
+    /// `__validator_is_present(box) -> 1 | 0`: a value that is there, not
+    /// null and not empty text (what `required` asks for).
+    fn generate_is_present() -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        vec![
+            I::LocalGet(0),
+            I::I32Eqz,
+            if_empty(),
+            I::I32Const(0),
+            I::Return,
+            I::End,
+            I::LocalGet(0),
+            load(0),
+            I::I32Eqz,
+            if_empty(),
+            I::I32Const(0),
+            I::Return,
+            I::End,
+            I::LocalGet(0),
+            load(0),
+            I::I32Const(ANY_TAG_STRING),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(0),
+            load(4),
+            load(0),
+            I::I32Const(0),
+            I::I32Ne,
+            I::Return,
+            I::End,
+            I::I32Const(1),
+        ]
+    }
+
+    /// `__validator_native_pattern(text, id) -> 1 | 0`, for the ids from
+    /// `FIRST_NATIVE_PATTERN`:
+    /// - `slug` (8): one or more parts of lowercase ASCII letters and digits
+    ///   joined by single hyphens (no hyphen first, last or twice in a row);
+    /// - `numeric` (9): one or more ASCII digits;
+    /// - `alpha` (10): one or more ASCII letters.
+    ///
+    /// Locals: 2 len, 3 i, 4 byte, 5 after a hyphen (or at the start).
+    fn generate_native_pattern() -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let byte = MemArg {
+            offset: 4,
+            align: 0,
+            memory_index: 0,
+        };
+        let fail = || [if_empty(), I::I32Const(0), I::Return, I::End];
+        let in_range = |low: u8, count: i32| {
+            [
+                I::I32Const(low as i32),
+                I::I32Sub,
+                I::I32Const(count),
+                I::I32LtU,
+            ]
+        };
+        let mut v = vec![I::LocalGet(0), load(0), I::LocalTee(2), I::I32Eqz];
+        v.extend(fail());
+        v.extend([
+            I::I32Const(0),
+            I::LocalSet(3),
+            I::I32Const(1),
+            I::LocalSet(5),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(3),
+            I::LocalGet(2),
+            I::I32GeS,
+            I::BrIf(1),
+            I::LocalGet(0),
+            I::LocalGet(3),
+            I::I32Add,
+            I::I32Load8U(byte),
+            I::LocalSet(4),
+            I::LocalGet(1),
+            I::I32Const(FIRST_NATIVE_PATTERN),
+            I::I32Eq,
+            if_empty(),
+            // slug
+            I::LocalGet(4),
+            I::I32Const(b'-' as i32),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(5),
+        ]);
+        v.extend(fail());
+        v.extend([I::I32Const(1), I::LocalSet(5), I::Else, I::LocalGet(4)]);
+        v.extend(in_range(b'a', 26));
+        v.push(I::LocalGet(4));
+        v.extend(in_range(b'0', 10));
+        v.extend([I::I32Or, I::I32Eqz]);
+        v.extend(fail());
+        v.extend([
+            I::I32Const(0),
+            I::LocalSet(5),
+            I::End,
+            I::Else,
+            I::LocalGet(1),
+            I::I32Const(FIRST_NATIVE_PATTERN + 1),
+            I::I32Eq,
+            if_i32(),
+            // numeric
+            I::LocalGet(4),
+        ]);
+        v.extend(in_range(b'0', 10));
+        v.extend([
+            I::Else,
+            // alpha: the byte with the lowercase bit set is a-z
+            I::LocalGet(4),
+            I::I32Const(32),
+            I::I32Or,
+        ]);
+        v.extend(in_range(b'a', 26));
+        v.extend([I::End, I::I32Eqz]);
+        v.extend(fail());
+        v.extend([
+            I::End,
+            I::LocalGet(3),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(3),
+            I::Br(0),
+            I::End,
+            I::End,
+            // a slug does not end with a hyphen
+            I::LocalGet(1),
+            I::I32Const(FIRST_NATIVE_PATTERN),
+            I::I32Eq,
+            I::LocalGet(5),
+            I::I32And,
+            I::I32Eqz,
+        ]);
+        v
+    }
+
     /// `__validator_check_object(rules, object, prefix, cell) -> object`:
     /// the field loop of `validator.run` for a nested object (`shape`,
     /// `each`); the errors are named `prefix` + field name.
@@ -1843,7 +2174,7 @@ impl ValidatorManager {
         let add_error = I::Call(self.helpers.add_error);
         // `label` + the message on the stack, appended to the errors.
         let report = |message: Vec<Instruction<'static>>| {
-            let mut v = vec![I::LocalGet(3), I::LocalGet(2)];
+            let mut v = vec![I::LocalGet(3), I::LocalGet(2), I::LocalGet(2)];
             v.extend(message);
             v.extend([
                 I::Call(self.imports.concat),
@@ -1862,9 +2193,28 @@ impl ValidatorManager {
         let mut v = vec![
             // errors before this field
             I::LocalGet(3),
-            load(0),
+            load(CELL_ERRORS),
             load(0),
             I::LocalSet(4),
+            // default: a missing (or null) value takes the field's default
+            I::LocalGet(1),
+            if_i32(),
+            I::LocalGet(1),
+            load(0),
+            I::I32Eqz,
+            I::Else,
+            I::I32Const(1),
+            I::End,
+            I::LocalGet(0),
+            load(44),
+            I::I32Const(0),
+            I::I32Ne,
+            I::I32And,
+            if_empty(),
+            I::LocalGet(0),
+            load(44),
+            I::LocalSet(1),
+            I::End,
             // tag (0 when absent)
             I::LocalGet(1),
             if_i32(),
@@ -1917,6 +2267,19 @@ impl ValidatorManager {
             if_empty(),
             I::LocalGet(0),
             load(4),
+            I::LocalGet(0),
+            load(48),
+            if_i32(),
+            I::LocalGet(3),
+            load(CELL_OBJECT),
+            I::LocalGet(0),
+            load(48),
+            I::Call(self.helpers.object_value),
+            I::Call(self.helpers.is_present),
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            I::I32Or,
             if_empty(),
         ]);
         v.extend(report(vec![text(s.is_required)]));
@@ -2090,11 +2453,20 @@ impl ValidatorManager {
                 I::I32GeS,
                 I::I32And,
                 if_i32(),
+                I::LocalGet(7),
+                I::I32Const(FIRST_NATIVE_PATTERN),
+                I::I32GeS,
+                if_i32(),
+                I::LocalGet(13),
+                I::LocalGet(7),
+                I::Call(self.helpers.native_pattern),
+                I::Else,
                 I::LocalGet(13),
                 I::LocalGet(13),
                 load(0),
                 I::LocalGet(7),
                 I::Call(string_matches),
+                I::End,
                 I::Else,
                 I::I32Const(0),
                 I::End,
@@ -2348,16 +2720,21 @@ impl ValidatorManager {
             I::LocalTee(9),
             if_empty(),
             I::LocalGet(3),
-            load(0),
+            load(CELL_ERRORS),
             load(0),
             I::LocalGet(4),
             I::I32GtS,
             if_empty(),
             I::LocalGet(3),
-            load(0),
+            load(CELL_ERRORS),
             I::LocalGet(4),
             store(0),
             I::LocalGet(3),
+            load(CELL_LABELS),
+            I::LocalGet(4),
+            store(0),
+            I::LocalGet(3),
+            I::LocalGet(2),
             I::LocalGet(9),
             add_error,
             I::End,
@@ -2581,26 +2958,83 @@ impl ValidatorManager {
         ]
     }
 
-    /// `validator.fieldErrors(result_ptr: i32, field_name_ptr: i32) -> list_ptr`
+    /// `validator.fieldErrors(result_ptr) -> pairs<string, list<string>>`
     ///
-    /// Returns the error list for the named field. Reads field_errors_ptr at result
-    /// offset 12. If 0, returns 0 (no per-field errors stored). Per-field error storage
-    /// is populated by validator.run when field-level error tracking is enabled.
+    /// The errors of each field, keyed by the field's label (`"email"`,
+    /// `"address.street"`), from the parallel error and label lists of the
+    /// result; an empty pairs for a result without labels (`validator.ok`,
+    /// `validator.error`).
+    ///
+    /// Locals: 1 pairs, 2 labels, 3 i, 4 n, 5 list.
     fn generate_validator_field_errors(&self) -> Vec<Instruction<'static>> {
-        // Params: 0=result_ptr, 1=field_name_ptr
-        // For this iteration: if field_errors_ptr == 0, return 0.
-        // When field_errors_ptr is non-zero it would be a pairs structure mapping
-        // field names to error lists; that iteration is deferred pending pairs.get
-        // call-index resolution.
-        vec![
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }), // field_errors_ptr
-                // Return the ptr (0 means no field-level errors stored)
-        ]
+        use Instruction as I;
+        let label = [
+            I::LocalGet(2),
+            I::LocalGet(3),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            load(LIST_DATA_OFFSET),
+        ];
+        let mut v = vec![
+            I::I32Const(INITIAL_FIELD_CAPACITY),
+            I::Call(self.imports.pairs_new),
+            I::LocalSet(1),
+            I::LocalGet(0),
+            load(12),
+            I::LocalTee(2),
+            if_empty(),
+            I::LocalGet(2),
+            load(0),
+            I::LocalSet(4),
+            I::I32Const(0),
+            I::LocalSet(3),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(3),
+            I::LocalGet(4),
+            I::I32GeS,
+            I::BrIf(1),
+            I::LocalGet(1),
+        ];
+        v.extend(label.clone());
+        v.extend([
+            I::Call(self.imports.pairs_get),
+            I::LocalTee(5),
+            I::I32Eqz,
+            if_empty(),
+            I::I32Const(4),
+            I::Call(self.imports.list_allocate),
+            I::LocalSet(5),
+            I::End,
+            I::LocalGet(5),
+            I::LocalGet(0),
+            load(8),
+            I::LocalGet(3),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            load(LIST_DATA_OFFSET),
+            I::Call(self.imports.list_add),
+            I::LocalSet(5),
+            I::LocalGet(1),
+        ]);
+        v.extend(label);
+        v.extend([
+            I::LocalGet(5),
+            I::Call(self.imports.pairs_set),
+            I::LocalSet(1),
+            I::LocalGet(3),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(3),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::End,
+            I::LocalGet(1),
+        ]);
+        v
     }
 
     // ==================== Code Generation: Rule Builders ====================
@@ -2692,8 +3126,12 @@ impl ValidatorManager {
     /// and store it into `dest_local`. Uses `rules_local` (0-indexed param/local).
     ///
     /// Requires the calling function to have already set up the rules_local.
-    fn last_field_entry_instrs(rules_local: u32, dest_local: u32) -> Vec<Instruction<'static>> {
-        Self::emit_get_last_field_entry(rules_local, dest_local)
+    fn last_field_entry_instrs(
+        &self,
+        rules_local: u32,
+        dest_local: u32,
+    ) -> Vec<Instruction<'static>> {
+        self.emit_get_last_field_entry(rules_local, dest_local)
     }
 
     /// `validator.required(rules_ptr) -> rules_ptr`
@@ -2702,7 +3140,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr
     /// Extra locals: 1=field_entry_ptr
     fn generate_validator_required(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 1);
+        let mut instrs = self.last_field_entry_instrs(0, 1);
         instrs.extend([
             Instruction::LocalGet(1),
             Instruction::I32Const(1),
@@ -2722,7 +3160,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr
     /// Extra locals: 1=field_entry_ptr
     fn generate_validator_optional(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 1);
+        let mut instrs = self.last_field_entry_instrs(0, 1);
         instrs.extend([
             Instruction::LocalGet(1),
             Instruction::I32Const(0),
@@ -2742,7 +3180,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=pattern_ptr
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_match(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // pattern_ptr
@@ -2781,7 +3219,7 @@ impl ValidatorManager {
             Instruction::LocalGet(2),
             bound(8),
         ];
-        instrs.extend(Self::last_field_entry_instrs(0, 4));
+        instrs.extend(self.last_field_entry_instrs(0, 4));
         instrs.extend([
             Instruction::LocalGet(4),
             Instruction::LocalGet(3),
@@ -2797,7 +3235,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=min
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_min_length(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // min
@@ -2817,7 +3255,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=max
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_max_length(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // max
@@ -2837,7 +3275,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=message_ptr
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_message(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // message_ptr
@@ -2857,7 +3295,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=fn_ptr
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_custom(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // fn_ptr
@@ -2880,7 +3318,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=type_name_ptr
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_type(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // type_name_ptr
@@ -2900,7 +3338,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr
     /// Extra locals: 1=field_entry_ptr
     fn generate_validator_trim(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 1);
+        let mut instrs = self.last_field_entry_instrs(0, 1);
         instrs.extend([
             Instruction::LocalGet(1),
             Instruction::I32Const(1), // trim_flag = 1
@@ -2920,7 +3358,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=values_list_ptr
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_allowed_values(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // values_list_ptr
@@ -2940,7 +3378,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=default_ptr
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_default(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // default_ptr
@@ -2954,30 +3392,20 @@ impl ValidatorManager {
         instrs
     }
 
-    /// `validator.requiredIf(rules_ptr, field_name_ptr, expected_value_ptr) -> rules_ptr`
+    /// `validator.requiredIf(rules_ptr, other_field_ptr) -> rules_ptr`
     ///
-    /// Stores field_name_ptr at offset 48 and expected_value_ptr at offset 52 of
+    /// The current field is required when the field `other_field_ptr` of the
+    /// same object is present and not empty: stores the name at offset 48 of
     /// the last field entry.
     ///
-    /// Params: 0=rules_ptr, 1=field_name_ptr, 2=expected_value_ptr
-    /// Extra locals: 3=field_entry_ptr
+    /// Params: 0=rules_ptr, 1=other_field_ptr
+    /// Extra locals: 2=field_entry_ptr
     fn generate_validator_required_if(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 3);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(1), // field_name_ptr
-            Instruction::I32Store(MemArg {
-                offset: 48,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(2), // expected_value_ptr
-            Instruction::I32Store(MemArg {
-                offset: 52,
-                align: 2,
-                memory_index: 0,
-            }),
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(1),
+            store(48),
             Instruction::LocalGet(0),
         ]);
         instrs
@@ -2989,7 +3417,7 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=shape_rules_ptr
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_shape(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // shape_rules_ptr
@@ -3009,66 +3437,12 @@ impl ValidatorManager {
     /// Params: 0=rules_ptr, 1=each_rules_ptr
     /// Extra locals: 2=field_entry_ptr
     fn generate_validator_each(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 2);
         instrs.extend([
             Instruction::LocalGet(2),
             Instruction::LocalGet(1), // each_rules_ptr
             Instruction::I32Store(MemArg {
                 offset: 60,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(0),
-        ]);
-        instrs
-    }
-
-    /// `validator.minValue(rules_ptr, min_i32) -> rules_ptr`
-    ///
-    /// Stores min_i32 at offset 64 and 1 (active) at offset 72 of last field entry.
-    /// Params: 0=rules_ptr, 1=min_i32
-    /// Extra locals: 2=field_entry_ptr
-    fn generate_validator_min_value(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
-        instrs.extend([
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(1), // min_i32
-            Instruction::I32Store(MemArg {
-                offset: 64,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(2),
-            Instruction::I32Const(1), // min_value_active = 1
-            Instruction::I32Store(MemArg {
-                offset: 72,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(0),
-        ]);
-        instrs
-    }
-
-    /// `validator.maxValue(rules_ptr, max_i32) -> rules_ptr`
-    ///
-    /// Stores max_i32 at offset 68 and 1 (active) at offset 76 of last field entry.
-    /// Params: 0=rules_ptr, 1=max_i32
-    /// Extra locals: 2=field_entry_ptr
-    fn generate_validator_max_value(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = Self::last_field_entry_instrs(0, 2);
-        instrs.extend([
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(1), // max_i32
-            Instruction::I32Store(MemArg {
-                offset: 68,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(2),
-            Instruction::I32Const(1), // max_value_active = 1
-            Instruction::I32Store(MemArg {
-                offset: 76,
                 align: 2,
                 memory_index: 0,
             }),
@@ -3271,6 +3645,10 @@ mod tests {
         int_to_string: 14,
         int64_to_string: 15,
         float_to_string: 16,
+        err_raise: 18,
+        pairs_new: 19,
+        pairs_get: 20,
+        pairs_set: 21,
         string_matches: Some(17),
         custom_check_type: Some(1),
         first_helper: 100,
@@ -3295,14 +3673,19 @@ mod tests {
             is_invalid: 1272,
             must_be_list: 1288,
             no_match: 1308,
+            no_field: 1730,
             true_text: 1348,
             false_text: 1356,
             type_string: 1364,
             type_integer: 1376,
             type_number: 1388,
             type_boolean: 1400,
-            patterns: [1412, 1424, 1432, 1440, 1452, 1460, 1472, 1484],
-            pattern_messages: [1500, 1536, 1560, 1584, 1616, 1656, 1688, 1708],
+            patterns: [
+                1412, 1424, 1432, 1440, 1452, 1460, 1472, 1484, 1800, 1808, 1820,
+            ],
+            pattern_messages: [
+                1500, 1536, 1560, 1584, 1616, 1656, 1688, 1708, 1832, 1890, 1920,
+            ],
         },
     };
 
@@ -3422,46 +3805,6 @@ mod tests {
         assert!(
             has_offset_36,
             "validator.trim must store at field entry offset 36"
-        );
-    }
-
-    #[test]
-    fn test_min_value_stores_at_offset_64_and_72() {
-        let manager = ValidatorManager::new(TEST_IMPORTS);
-        let instrs = manager.generate_validator_min_value();
-        let has_offset_64 = instrs
-            .iter()
-            .any(|i| matches!(i, Instruction::I32Store(MemArg { offset: 64, .. })));
-        let has_offset_72 = instrs
-            .iter()
-            .any(|i| matches!(i, Instruction::I32Store(MemArg { offset: 72, .. })));
-        assert!(
-            has_offset_64,
-            "validator.minValue must store value at offset 64"
-        );
-        assert!(
-            has_offset_72,
-            "validator.minValue must set active flag at offset 72"
-        );
-    }
-
-    #[test]
-    fn test_max_value_stores_at_offset_68_and_76() {
-        let manager = ValidatorManager::new(TEST_IMPORTS);
-        let instrs = manager.generate_validator_max_value();
-        let has_offset_68 = instrs
-            .iter()
-            .any(|i| matches!(i, Instruction::I32Store(MemArg { offset: 68, .. })));
-        let has_offset_76 = instrs
-            .iter()
-            .any(|i| matches!(i, Instruction::I32Store(MemArg { offset: 76, .. })));
-        assert!(
-            has_offset_68,
-            "validator.maxValue must store value at offset 68"
-        );
-        assert!(
-            has_offset_76,
-            "validator.maxValue must set active flag at offset 76"
         );
     }
 

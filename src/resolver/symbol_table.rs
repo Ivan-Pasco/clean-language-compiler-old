@@ -1246,6 +1246,27 @@ impl GlobalSymbolTable {
                 vec![HirType::Integer, HirType::Integer],
                 HirType::Integer,
             ),
+            // A missing field takes `value` before its other rules run.
+            (
+                "validator.default",
+                vec![HirType::Integer, HirType::Any],
+                HirType::Integer,
+            ),
+            // Required when the field `otherField` is present and not empty.
+            (
+                "validator.requiredIf",
+                vec![HirType::Integer, HirType::String],
+                HirType::Integer,
+            ),
+            // The errors of a result per field label.
+            (
+                "validator.fieldErrors",
+                vec![HirType::Integer],
+                HirType::Pairs(
+                    Box::new(HirType::String),
+                    Box::new(HirType::List(Box::new(HirType::String))),
+                ),
+            ),
             // db.* / crypto.{hashPassword,verifyPassword,randomBytes,randomHex,hmac}
             // / env.get / time.now / `now` removed in 0.30.301 — all provided by
             // frame.data, frame.auth, and frame.server plugin.toml `[[functions]]`
@@ -1532,6 +1553,9 @@ impl GlobalSymbolTable {
                     "validator.shape",
                     "validator.each",
                     "validator.merge",
+                    "validator.default",
+                    "validator.requiredIf",
+                    "validator.fieldErrors",
                 ],
             ),
             (

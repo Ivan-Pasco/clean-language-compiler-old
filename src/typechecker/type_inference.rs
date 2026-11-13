@@ -1364,6 +1364,52 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// SEM004: a validator rule (`validator.required`, ...) applies to the
+    /// current field, so a rule on a validator that was just created, with
+    /// no field yet, has nothing to apply to (stdlib-reference §15). Other
+    /// chains are checked when they run: the rule raises an error.
+    fn check_validator_rule_target(
+        &mut self,
+        callee_name: &str,
+        arguments: &[TastExpression],
+        location: &SourceLocation,
+    ) {
+        if !crate::stdlib::validator::RULE_FUNCTIONS.contains(&callee_name) {
+            return;
+        }
+        let Some(rules) = arguments.first() else {
+            return;
+        };
+        let creator = match &rules.kind {
+            TastExpressionKind::FunctionCall { function, .. } => match &function.kind {
+                TastExpressionKind::Variable { name, .. } => Some(name.clone()),
+                _ => None,
+            },
+            TastExpressionKind::StaticMethodCall {
+                class_name,
+                method_name,
+                ..
+            } => Some(format!("{class_name}.{method_name}")),
+            _ => None,
+        };
+        if let Some(creator) = creator
+            .filter(|c| matches!(c.as_str(), "validator.create" | "validator.createWithName"))
+        {
+            self.errors.push(CompilerError::semantic_error_with_code(
+                format!(
+                    "{} applies to the current field, but {}() has no field yet",
+                    callee_name, creator
+                ),
+                Some(format!(
+                    "Start a field first: {}(validator.field({}(), \"name\"), ...)",
+                    callee_name, creator
+                )),
+                Some(location.clone()),
+                "SEM004",
+            ));
+        }
+    }
+
     /// SEM004: sized arguments follow the same widening rules as an
     /// assignment to the declared parameter (see `check_sized_conversion`).
     fn check_sized_arguments(
@@ -5679,6 +5725,7 @@ impl<'a> TypeInference<'a> {
                         .unwrap_or_default();
                     self.check_sized_arguments(function_symbol_id, &name, arguments, location);
                     self.check_validator_input(&name, arguments, location);
+                    self.check_validator_rule_target(&name, arguments, location);
                 }
 
                 Ok((**return_type).clone())
@@ -6568,17 +6615,23 @@ impl<'a> TypeInference<'a> {
                     };
                 }
                 // The `json.` namespace has exactly the functions above
-                // (stdlib-reference.md §8), and `math.` / `list.` the ones
-                // above and in the symbol table. Other built-in namespaces (`http.`,
-                // `input.`, `validator.`) also have functions the code
-                // generator provides by name.
-                if matches!(class_name, "json" | "math" | "list") {
+                // (stdlib-reference.md §8), `math.` / `list.` the ones above
+                // and in the symbol table, and `validator.` the ones in the
+                // symbol table (§15). Other built-in namespaces (`http.`,
+                // `input.`) also have functions the code generator provides
+                // by name.
+                if matches!(class_name, "json" | "math" | "list" | "validator") {
+                    let help = crate::stdlib::validator::unknown_function_help(&full_method_name)
+                        .map(str::to_string)
+                        .unwrap_or_else(|| {
+                            format!(
+                                "See the `{}.` functions in the standard library reference",
+                                class_name
+                            )
+                        });
                     return Err(CompilerError::semantic_error_with_code(
                         format!("Function '{}' not found", full_method_name),
-                        Some(format!(
-                            "See the `{}.` functions in the standard library reference",
-                            class_name
-                        )),
+                        Some(help),
                         Some(location.clone()),
                         "FUNC001",
                     ));

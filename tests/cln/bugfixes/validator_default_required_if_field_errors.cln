@@ -1,0 +1,60 @@
+// Test: bugfixes/validator_default_required_if_field_errors
+// Grammar: function_call (validator.default, validator.requiredIf,
+//   validator.fieldErrors)
+// Semantic: stdlib-reference §15 (developer decision) —
+//   `validator.default(v, value)`: a missing field takes `value` before its
+//   other rules run; `validator.requiredIf(v, otherField)`: the field is
+//   required when `otherField` is present and not empty;
+//   `validator.fieldErrors(r)`: the errors per field as
+//   pairs<string, list<string>>
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   true
+//   {"theme":"light","size":"20"}
+//   true
+//   false
+//   vat is required
+//   {"vat":["vat is required"]}
+//   2
+//   {"email":["email is required"],"address.city":["address.city is required"]}
+//   1
+//   {}
+//
+// Regression: validator.default and validator.requiredIf only stored their
+// argument and were never applied, and validator.fieldErrors returned 0
+// (printing it trapped). None of them were declared, so their calls were not
+// checked.
+
+start:
+	integer prefs = validator.field(validator.create(), "theme")
+	prefs = validator.default(prefs, "light")
+	prefs = validator.minLength(prefs, 4)
+	prefs = validator.field(prefs, "size")
+	prefs = validator.default(prefs, "20")
+	prefs = validator.type(prefs, "integer")
+	pairs<string, any> empty = {}
+	integer r = validator.run(prefs, empty)
+	print(validator.isOk(r))
+	print(json.encode(validator.getValue(r)))
+
+	integer company = validator.field(validator.create(), "vat")
+	company = validator.requiredIf(company, "business")
+	pairs<string, any> person = {"business": ""}
+	print(validator.isOk(validator.run(company, person)))
+	pairs<string, any> firm = {"business": "Acme"}
+	r = validator.run(company, firm)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+	print(json.encode(validator.fieldErrors(r)))
+
+	integer address = validator.required(validator.field(validator.create(), "city"))
+	integer user = validator.required(validator.field(validator.create(), "email"))
+	user = validator.minLength(user, 3)
+	user = validator.shape(validator.field(user, "address"), address)
+	pairs<string, any> noCity = {"address": {"street": "Main"}}
+	r = validator.run(user, noCity)
+	pairs<string, list<string>> perField = validator.fieldErrors(r)
+	print(perField.size())
+	print(json.encode(perField))
+	print(perField.get("email").size())
+	print(json.encode(validator.fieldErrors(validator.ok(1))))

@@ -51,6 +51,8 @@ impl MirBuilder {
                         | crate::stdlib::json_class::ANY_CONVERT
                 ) || name.starts_with("__any_to_instance")
                     || name.starts_with(crate::typechecker::tast::INTEGER_FIT_PREFIX)
+                    // a rule on a validator without a field
+                    || crate::stdlib::validator::RULE_FUNCTIONS.contains(&name.as_str())
             }
             _ => false,
         };

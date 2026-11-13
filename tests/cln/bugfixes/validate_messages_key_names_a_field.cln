@@ -1,0 +1,24 @@
+// Test: bugfixes/validate_messages_key_names_a_field
+// Grammar: validate_messages_block, validate_message_entry
+// Semantic: SEM002 — a `messages:` key is a field of the validate block or
+//   `default` (developer decision)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   error[SEM002]
+//   messages: 'emial' names no field of validate signup
+//
+// Regression: a `messages:` key that named no field was ignored, so the
+// misspelled message silently never appeared.
+
+validate signup:
+	email: string required match: email
+
+	messages:
+		emial: "Please enter a valid email address"
+
+start:
+	pairs<string, any> form = {"email": "ada"}
+	signup.check form:
+		ok: print("valid")
+		error: print("invalid")

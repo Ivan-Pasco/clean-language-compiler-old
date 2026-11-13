@@ -1,0 +1,16 @@
+// Test: bugfixes/validator_rule_needs_a_field
+// Grammar: function_call (validator.required, validator.create)
+// Semantic: SEM004 — stdlib-reference §15: a rule applies to the current
+//   field; a validator just created has none (developer decision)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   error[SEM004]
+//   validator.required applies to the current field, but validator.create() has no field yet
+//
+// Regression: a rule on a validator without a field wrote its rule before
+// the field array, over memory allocated before it.
+
+start:
+	integer v = validator.required(validator.create())
+	print(validator.isOk(validator.run(v, 0)))

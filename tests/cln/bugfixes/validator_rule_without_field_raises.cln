@@ -1,0 +1,20 @@
+// Test: bugfixes/validator_rule_without_field_raises
+// Grammar: function_call (validator.minLength), on_error_expression
+// Semantic: 14-error-handling.md — a rule on a validator without a field
+//   raises an error that onError catches (developer decision)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   caught: a validator rule needs a field: call validator.field(v, name) first
+//   alpha
+//   0
+//
+// Regression: a rule on a validator without a field wrote its rule 80 bytes
+// before the field array, over memory allocated before it.
+
+start:
+	list<string> names = ["alpha", "beta"]
+	integer v = validator.create()
+	integer w = validator.minLength(v, 3) onError:
+		print("caught: " + error)
+	print(names.get(0))
+	print(validator.getErrors(validator.run(v, 0)).size())

@@ -57,6 +57,10 @@ impl super::CodeGenerator {
             int_to_string: index_of(self, "__int_to_string")?,
             int64_to_string: index_of(self, "__int64_to_string")?,
             float_to_string: index_of(self, "float_to_string")?,
+            err_raise: index_of(self, "__err_raise")?,
+            pairs_new: index_of(self, "__pairs_new")?,
+            pairs_get: index_of(self, "__pairs_get")?,
+            pairs_set: index_of(self, "__pairs_set")?,
             // Registered when a `validator.match` rule is reachable.
             string_matches: self.get_function_index("string_matches"),
             custom_check_type,

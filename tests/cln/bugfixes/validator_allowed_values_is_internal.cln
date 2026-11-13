@@ -1,0 +1,19 @@
+// Test: bugfixes/validator_allowed_values_is_internal
+// Grammar: function_call (validator.allowedValues)
+// Semantic: FUNC001 — `validator.allowedValues` is the rule the `oneOf:`
+//   constraint of a validate block builds, not a §15 function (developer
+//   decision)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   error[FUNC001]
+//   Function 'validator.allowedValues' not found
+//   `oneOf:` constraint of a validate block
+//
+// Regression: programs could call validator.allowedValues directly.
+
+start:
+	integer v = validator.field(validator.create(), "role")
+	list<string> roles = ["admin", "editor"]
+	v = validator.allowedValues(v, roles)
+	print(validator.isOk(validator.run(v, 0)))

@@ -1,0 +1,64 @@
+// Test: bugfixes/validator_match_native_patterns
+// Grammar: validate_match, validate_pattern_name ("slug" | "numeric" | "alpha")
+// Semantic: stdlib-validator.md Patterns — `slug`: one or more parts of
+//   lowercase ASCII letters and digits joined by single hyphens; `numeric`:
+//   one or more ASCII digits; `alpha`: one or more ASCII letters (developer
+//   decision)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   true
+//   false
+//   slug must contain only lowercase letters, digits, and hyphens
+//   false
+//   false
+//   true
+//   false
+//   true
+//   false
+//   valid
+//   code must contain only digits
+//   name must contain only letters
+//
+// Regression: grammar.ebnf lists the pattern names slug, numeric and alpha,
+// but a `validate` block rejected them as unknown and `validator.match`
+// failed every value for them.
+
+validate item:
+	code: string match: numeric
+	name: string match: alpha
+
+start:
+	integer slug = validator.match(validator.field(validator.create(), "slug"), "slug")
+	pairs<string, any> good = {"slug": "my-post-2"}
+	pairs<string, any> doubled = {"slug": "my--post"}
+	pairs<string, any> edge = {"slug": "-post"}
+	pairs<string, any> upper = {"slug": "My-post"}
+	print(validator.isOk(validator.run(slug, good)))
+	integer r = validator.run(slug, doubled)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+	print(validator.isOk(validator.run(slug, edge)))
+	print(validator.isOk(validator.run(slug, upper)))
+
+	integer digits = validator.match(validator.field(validator.create(), "n"), "numeric")
+	pairs<string, any> number = {"n": "0042"}
+	pairs<string, any> signed = {"n": "-42"}
+	print(validator.isOk(validator.run(digits, number)))
+	print(validator.isOk(validator.run(digits, signed)))
+
+	integer letters = validator.match(validator.field(validator.create(), "a"), "alpha")
+	pairs<string, any> word = {"a": "Ada"}
+	pairs<string, any> spaced = {"a": "Ada L"}
+	print(validator.isOk(validator.run(letters, word)))
+	print(validator.isOk(validator.run(letters, spaced)))
+
+	pairs<string, any> fine = {"code": "123", "name": "Bolt"}
+	item.check fine:
+		ok: print("valid")
+		error: print("invalid")
+	pairs<string, any> bad = {"code": "12a", "name": "B0lt"}
+	item.check bad:
+		ok: print("valid")
+		error:
+			iterate message in errors
+				print(message)
