@@ -10,6 +10,7 @@ use super::{FrameworkBlock, PluginError, PluginRegistry};
 use crate::ast::{Class, ExternalFunction, Function, Program, StateBlock, Statement};
 use crate::error::CompilerError;
 use crate::plugins::enforcement::validate_plugin_permissions;
+use std::collections::HashMap;
 
 /// Merge `incoming` into `target` using the contract described on
 /// `PluginExpansion::state`: declarations from `incoming` are appended after
@@ -537,6 +538,14 @@ enum StartPlacement {
 }
 
 /// AST expander that transforms framework blocks into Clean Language code
+/// The plugin and block a plugin-emitted function came from.
+#[derive(Debug, Clone)]
+struct FunctionOrigin {
+    plugin_name: String,
+    block_name: String,
+    block_location: Option<crate::ast::SourceLocation>,
+}
+
 pub struct PluginExpander<'a> {
     registry: &'a PluginRegistry,
     /// Track statistics for reporting
@@ -546,6 +555,8 @@ pub struct PluginExpander<'a> {
     pending_start: Option<Function>,
     /// Pending functions to add to the program
     pending_functions: Vec<Function>,
+    /// For each pending function name, the plugin and block that emitted it.
+    pending_function_origins: HashMap<String, FunctionOrigin>,
     /// Pending class definitions from plugin expansion (e.g., ORM models)
     pending_classes: Vec<crate::ast::Class>,
     /// Pending top-level `can` capability declarations from plugin expansion
@@ -588,6 +599,7 @@ impl<'a> PluginExpander<'a> {
             statements_generated: 0,
             pending_start: None,
             pending_functions: Vec::new(),
+            pending_function_origins: HashMap::new(),
             pending_classes: Vec::new(),
             pending_capabilities: Vec::new(),
             pending_externals: Vec::new(),
@@ -878,6 +890,29 @@ impl<'a> PluginExpander<'a> {
                 None => program.start_function = Some(start_fn),
             }
         }
+
+        // A function a block emitted must not take the name of one the user
+        // wrote: only one of them would get the export (SEM003).
+        for function in &self.pending_functions {
+            let Some(origin) = self.pending_function_origins.get(&function.name) else {
+                continue;
+            };
+            let user_location = program
+                .functions
+                .iter()
+                .filter(|f| f.name == function.name)
+                .find_map(|f| f.location.clone().filter(is_user_file_location));
+            if let Some(user_location) = user_location {
+                return Err(PluginError::DuplicateFunction {
+                    name: function.name.clone(),
+                    plugin_name: origin.plugin_name.clone(),
+                    block_name: origin.block_name.clone(),
+                    block_location: origin.block_location.clone(),
+                    user_location,
+                });
+            }
+        }
+        self.pending_function_origins.clear();
 
         // Plugin-emitted functions (endpoint handlers, helpers) can contain
         // framework blocks and ORM queries of their own — an `html:` page
@@ -1266,12 +1301,7 @@ impl<'a> PluginExpander<'a> {
             .get_handler(&block.name)
             .map(|h| h.name().to_string());
         tracing::trace!(block_name = %block.name, "Expanded framework block");
-        Ok(self.absorb_expansion(
-            expansion,
-            plugin_name.as_deref(),
-            placement,
-            Some(&block.content),
-        ))
+        Ok(self.absorb_expansion(expansion, plugin_name.as_deref(), placement, Some(&block)))
     }
 
     /// The bare query form `<Model>.<verb>` with no body (frame-data.ebnf
@@ -1372,7 +1402,7 @@ impl<'a> PluginExpander<'a> {
             expansion,
             plugin_name.as_deref(),
             StartPlacement::Inline,
-            Some(&block.content),
+            Some(&block),
         );
         if is_user_file_location(statement_location) {
             for stmt in expanded.iter_mut() {
@@ -1412,10 +1442,22 @@ impl<'a> PluginExpander<'a> {
         mut expansion: super::PluginExpansion,
         plugin_name: Option<&str>,
         placement: StartPlacement,
-        user_source: Option<&str>,
+        block: Option<&FrameworkBlock>,
     ) -> Vec<Statement> {
+        let user_source = block.map(|b| b.content.as_str());
         if let Some(plugin_name) = plugin_name {
             stamp_plugin_origin_expansion(&mut expansion, plugin_name);
+        }
+        if let (Some(plugin_name), Some(block)) = (plugin_name, block) {
+            for function in &expansion.functions {
+                self.pending_function_origins
+                    .entry(function.name.clone())
+                    .or_insert_with(|| FunctionOrigin {
+                        plugin_name: plugin_name.to_string(),
+                        block_name: block.name.clone(),
+                        block_location: block.location.clone(),
+                    });
+            }
         }
 
         // Everything the plugin emitted — inline statements, the start
@@ -2663,5 +2705,77 @@ mod tests {
         emit_event_handler_shims(&mut program).unwrap();
         assert_eq!(program.functions.len(), 1);
         assert!(program.functions[0].location.is_none());
+    }
+
+    fn app_location(line: usize) -> Option<crate::ast::SourceLocation> {
+        Some(crate::ast::SourceLocation {
+            file: "app.cln".to_string(),
+            line,
+            column: 1,
+            byte_start: None,
+            byte_end: None,
+        })
+    }
+
+    /// A user function with the name of a function a block's plugin emits
+    /// (a frame.ui `events:` handler export): only one of them would get
+    /// the export, so it is SEM003 naming both origins.
+    #[test]
+    fn user_function_sharing_a_plugin_emitted_function_name_is_rejected() {
+        let registry = PluginRegistry::builder()
+            .add(HelperEmittingPlugin)
+            .build()
+            .unwrap();
+        let mut program = make_test_program(vec![Statement::FrameworkBlock {
+            name: "with_helper".to_string(),
+            content: String::new(),
+            attributes: vec![],
+            location: app_location(3),
+            body_location: None,
+        }]);
+        program.functions.push(Function::new(
+            "__helper_inline".to_string(),
+            Vec::new(),
+            Type::Void,
+            Vec::new(),
+            app_location(12),
+        ));
+
+        let err = PluginExpander::new(&registry)
+            .expand_program(program)
+            .expect_err("a user function must not share a plugin-emitted function's name");
+        let message = err.to_string();
+        assert!(
+            matches!(err, PluginError::DuplicateFunction { .. }),
+            "{}",
+            message
+        );
+        assert!(message.contains("app.cln:12"), "{}", message);
+        assert!(message.contains("test.helper"), "{}", message);
+        assert!(message.contains("'with_helper:'"), "{}", message);
+        assert!(message.contains("app.cln:3"), "{}", message);
+    }
+
+    /// A plugin-emitted function next to user functions with other names
+    /// merges as before.
+    #[test]
+    fn plugin_emitted_function_with_a_new_name_merges() {
+        let registry = PluginRegistry::builder()
+            .add(HelperEmittingPlugin)
+            .build()
+            .unwrap();
+        let mut program = make_test_program(vec![nested_block("with_helper")]);
+        program.functions.push(Function::new(
+            "mine".to_string(),
+            Vec::new(),
+            Type::Void,
+            Vec::new(),
+            app_location(12),
+        ));
+        let result = PluginExpander::new(&registry)
+            .expand_program(program)
+            .unwrap();
+        assert!(result.functions.iter().any(|f| f.name == "__helper_inline"));
+        assert!(result.functions.iter().any(|f| f.name == "mine"));
     }
 }

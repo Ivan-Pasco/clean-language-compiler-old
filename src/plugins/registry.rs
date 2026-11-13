@@ -41,6 +41,15 @@ pub enum PluginError {
         existing_plugin: String,
         new_plugin: String,
     },
+    /// A function a plugin emitted for a block has the name of a top-level
+    /// function of the user's file (SEM003).
+    DuplicateFunction {
+        name: String,
+        plugin_name: String,
+        block_name: String,
+        block_location: Option<SourceLocation>,
+        user_location: SourceLocation,
+    },
     /// Parse error in DSL content
     ParseError {
         message: String,
@@ -100,6 +109,23 @@ impl fmt::Display for PluginError {
                     "Registration conflict for '{}:': already handled by '{}', cannot register '{}'",
                     block_name, existing_plugin, new_plugin
                 )
+            }
+            PluginError::DuplicateFunction {
+                name,
+                plugin_name,
+                block_name,
+                block_location,
+                user_location,
+            } => {
+                write!(
+                    f,
+                    "Function '{}' is already defined at {}; plugin '{}' also emits a function '{}' for the '{}:' block",
+                    name, user_location, plugin_name, name, block_name
+                )?;
+                if let Some(loc) = block_location {
+                    write!(f, " at {}", loc)?;
+                }
+                Ok(())
             }
             PluginError::ParseError {
                 message,

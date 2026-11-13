@@ -1558,6 +1558,22 @@ impl MultiFileCompiler {
                 expander.expand_program_without_preambles(parsed_ast)
             };
             let expanded = expand_result.map_err(|e| {
+                if let crate::plugins::PluginError::DuplicateFunction {
+                    ref name,
+                    ref user_location,
+                    ..
+                } = e
+                {
+                    return CompilerError::semantic_error_with_code(
+                        e.to_string(),
+                        Some(format!(
+                            "Rename your function '{}': the plugin's function keeps its name because the plugin's generated code calls it",
+                            name
+                        )),
+                        Some(user_location.clone()),
+                        "SEM003",
+                    );
+                }
                 CompilerError::syntax_error(
                     e.to_string(),
                     Some("Plugin expansion failed".to_string()),
