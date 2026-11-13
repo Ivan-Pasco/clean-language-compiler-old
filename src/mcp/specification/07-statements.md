@@ -84,29 +84,34 @@ Every type in Clean Language has a built-in `toString()` method with sensible de
 - **Floats**: `3.14` → `"3.14"`
 - **Booleans**: `true` → `"true"`, `false` → `"false"`
 - **Strings**: `"hello"` → `"hello"` (no change)
-- **Lists**: `[1, 2, 3]` → `"[1, 2, 3]"`
-- **Objects**: `MyClass` instance → `"MyClass"` (default) or custom representation
+- **Lists, matrices and pairs**: written as `json.encode` writes them, compact: `[1, 2, 3]` → `"[1,2,3]"`, `{"a": 1}` → `"{\"a\":1}"`, strings quoted, `number` values keep `.0` (`[1.0,2.5]`), nested collections recurse
+- **Objects**: `MyClass` instance → `"MyClass"` (default) or custom representation; inside a collection each instance is written as its `toString()` text (`["Box","named"]`)
+
+The same text is produced by `print(x)`, `printl(x)`, string interpolation `"{x}"` and `x.toString()`.
 
 **Custom Classes:**
 ```clean
+start:
+    Person user = Person("Alice", 30)
+    print(user)             // Prints: Alice (30 years old)
+
 class Person
     string name
     integer age
-    
+
+    constructor(string name, integer age)
+
     // Optional: Override default toString() for custom output
     functions:
-        string toString()
-            return name + " (" + age.toString() + " years old)"
-
-// Usage
-Person user = Person("Alice", 30)
-print(user)             // Prints: Alice (30 years old)
+        public:
+            string toString()
+                return name + " (" + age.toString() + " years old)"
 
 // Without custom toString(), would print: Person
 ```
 
 **Default Class Behavior:**
-- Classes without custom `toString()` method print their class name
+- Classes without custom `toString()` method print the name of the object's own class — also through a parent-typed variable or list (a `Dog` held as `Animal` prints `Dog`)
 - You can override `toString()` in any class for custom string representation
 - The custom `toString()` method is automatically used by print functions
 

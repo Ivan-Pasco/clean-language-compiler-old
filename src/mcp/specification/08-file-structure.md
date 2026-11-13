@@ -8,10 +8,13 @@ A Clean Language file (`.cln`) is organized into top-level sections. Each sectio
 | Order | Section | Purpose |
 |-------|---------|---------|
 | 1 | `import:` | Bring in code from other modules |
-| 2 | `start:` | Where your program begins running |
-| 3 | `state:` | Variables that persist and can be watched |
-| 4 | `class` | Define your own types |
-| 5 | `functions:` | Reusable helper functions |
+| 2 | `plugins:` | Enable framework plugins |
+| 3 | `start:` | Where your program begins running |
+| 4 | `state:` | Variables that persist and can be watched |
+| 5 | `class` / `can` | Define your own types and capabilities |
+| 6 | `functions:` | Reusable helper functions |
+
+`import:` comes before every other core section. Auxiliary sections (`tests:`, `external:`, `watch:`, `screen:` and framework blocks) may appear anywhere.
 
 ### Why Order Matters
 
@@ -20,9 +23,9 @@ Clean Language enforces section order to keep code consistent and readable. When
 If sections are out of order, the compiler tells you exactly what's wrong:
 
 ```
-Error: 'state:' must appear after 'start:' block
-Error: 'import:' must be the first section in the file
-Error: 'functions:' must appear after class declarations
+error[SYN007]: 'import:' section is out of order — it must appear before 'plugins:'
+error[SYN007]: 'start:' section is out of order — it must appear before 'functions:'
+error[SYN007]: 'state:' section is out of order — it must appear before 'class / can'
 ```
 
 ### A Complete Example
@@ -65,6 +68,12 @@ print("hello")
 start:
     integer x = 5
     print("hello")
+```
+
+Type blocks such as `integer:` or `string:` are statements too. They belong inside `start:`, `state:` or a function body; at the top level they are an error (SYN002):
+
+```
+error[SYN002]: A type block like `integer:` must be inside `start:`, `state:` or a function body
 ```
 
 ---

@@ -111,7 +111,7 @@ The string module provides powerful text manipulation capabilities. Whether you'
 | `text.startsWith(prefix)` | boolean | True if text begins with prefix |
 | `text.endsWith(suffix)` | boolean | True if text ends with suffix |
 | `text.replace(old, new)` | string | Replace all occurrences of old with new |
-| `text.split(delimiter)` | list\<string\> | Split into a list on the delimiter |
+| `text.split(delimiter)` | list\<string\> | Split into a list on the delimiter; `split("")` gives one element per character (byte), and `"".split("")` gives an empty list |
 | `text.charAt(index)` | string | Character at position (0-based) |
 | `text.charCodeAt(index)` | integer | Numeric code of character at position |
 | `text.isEmpty()` | boolean | True if length is zero |
@@ -205,6 +205,8 @@ The list module provides powerful data collection capabilities. Whether you're m
 | `items.forEach(fn)` | void | Execute fn for each element |
 
 **Namespace-style calls (utility functions on the `list` module):**
+
+The `list.` namespace has only these four functions; every other list operation is a method on the list value (`items.add(x)`, `items.length()`, ...).
 
 | Call | Returns | Description |
 |------|---------|-------------|

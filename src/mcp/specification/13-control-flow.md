@@ -39,6 +39,8 @@ iterate char in "hello"
     print(char)
 ```
 
+Iterating a string (or an `any` holding a string) walks the text byte by byte; each step binds a one-character `string`. This is the same unit `.length()` and `.charAt(i)` use, so the loop runs `text.length()` times and step `i` binds `text.charAt(i)`. An empty string runs the body zero times.
+
 #### Range-based Loops
 
 ```clean

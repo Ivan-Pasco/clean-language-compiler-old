@@ -67,7 +67,7 @@ project:
 plugins:
     frame.server       // Enables endpoints: blocks
     frame.ui        // Enables component: blocks
-    frame.data      // Enables schema: blocks
+    frame.data      // Enables data models and migrate: blocks
 ```
 
 The compiler reads this configuration and loads the specified plugins before compilation.
@@ -169,7 +169,7 @@ Attributes are passed to the plugin and can affect code generation.
 | Category | Example Blocks | Purpose |
 |----------|---------------|---------|
 | **Web** | `endpoints:`, `routes:` | HTTP API definition |
-| **Data** | `schema:`, `model:` | Database models |
+| **Data** | `data`, `migrate:` | Database models and migrations |
 | **UI** | `component:`, `view:` | UI components |
 | **Config** | `config:`, `settings:` | Configuration DSLs |
 

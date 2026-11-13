@@ -16,16 +16,17 @@ Every `.cln` file is implicitly a module. The module name is derived from the fi
 // This file defines the "utils" module
 
 functions:
-    integer add(integer a, integer b)
-        return a + b
+    public:
+        integer add(integer a, integer b)
+            return a + b
 
-    integer multiply(integer a, integer b)
-        return a * b
+        integer multiply(integer a, integer b)
+            return a * b
 ```
 
 ### Importing Modules
 
-Use the `import:` block to import other modules. All public functions and classes from the imported module become available.
+Use the `import:` block to import other modules. The imported module's classes and its public functions and state variables become available (see [Visibility Model](#visibility-model)).
 
 ```clean
 // file: main.cln
@@ -110,12 +111,13 @@ start:
 import "../../lib/utils.cln"  // Resolves to ./lib/utils.cln (relative to app/data/)
 
 functions:
-    integer double(integer x)
-        return x * 2
+    public:
+        integer double(integer x)
+            return x * 2
 
-    integer squareDouble(integer x)
-        integer doubled = double(x)
-        return square(doubled)  // From utils.cln
+        integer squareDouble(integer x)
+            integer doubled = double(x)
+            return square(doubled)  // From utils.cln (public there)
 ```
 
 **Chained Imports:**
@@ -225,36 +227,31 @@ start:
 
 ### Visibility Model
 
-**Public by default** - functions and classes are exported unless marked private:
+**Private by default.** Everything a file declares is private to that file. The only visibility construct is a `public:` sub-section; there is no `private:` keyword. A member becomes visible to other files only when it is declared under `public:`:
 
-```clean
-// All public by default
-functions:
-    calculateTotal()
-        // implementation
+| Where | Made visible by |
+|-------|-----------------|
+| Module functions | the `public:` sub-section of `functions:` |
+| Module state variables | the `public:` sub-section of `state:` |
+| Class fields | the class's `public:` field sub-section |
+| Class methods | the `public:` sub-section of the class's `functions:` block |
 
-    formatCurrency()
-        // implementation
-
-// Mark functions as private
-private:
-    internalHelper
-    secretKey
-```
-
-Private functions cannot be accessed from other modules:
+Using a private member from another file is error **SEM005**:
 
 ```clean
 // file: mymodule.cln
-functions:
-    integer publicFunc()
-        return helperFunc() * 2
+state:
+    integer calls = 0          // private
+    public:
+        integer limit = 10     // visible to importers
 
-    integer helperFunc()
+functions:
+    integer helperFunc()       // private
         return 42
 
-private:
-    helperFunc  // Not accessible from outside
+    public:
+        integer publicFunc()
+            return helperFunc() * 2
 
 // file: main.cln
 import:
@@ -262,8 +259,13 @@ import:
 
 start:
     integer x = publicFunc()   // OK
-    integer y = helperFunc()   // ERROR: helperFunc is private
+    print(limit)               // OK
+    integer y = helperFunc()   // ERROR SEM005: 'helperFunc' is private and cannot be accessed from outside 'mymodule'
 ```
+
+**Plugin-generated code.** Code that a plugin generates into a module (for example functions expanded from a framework block) may call that module's private functions.
+
+**Classes.** Private class members are not inherited: a subclass that reads, writes or calls its parent's private field or method gets SEM005, and so does `ClassName.method()` on a method that is not under `functions: public:` when written outside the class. See [Classes and Objects](./15-classes-and-objects.md).
 
 ### Example: Multi-File Project
 
@@ -272,14 +274,15 @@ Here's a complete example of a multi-file Clean Language project:
 ```clean
 // file: utils.cln
 functions:
-    integer add(integer a, integer b)
-        return a + b
+    public:
+        integer add(integer a, integer b)
+            return a + b
 
-    integer multiply(integer a, integer b)
-        return a * b
+        integer multiply(integer a, integer b)
+            return a * b
 
-    integer double_value(integer n)
-        return n * 2
+        integer double_value(integer n)
+            return n * 2
 ```
 
 ```clean
@@ -288,11 +291,12 @@ import:
     utils
 
 functions:
-    integer square(integer n)
-        return multiply(n, n)
+    public:
+        integer square(integer n)
+            return multiply(n, n)
 
-    integer quadruple(integer n)
-        return double_value(double_value(n))
+        integer quadruple(integer n)
+            return double_value(double_value(n))
 ```
 
 ```clean

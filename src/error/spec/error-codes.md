@@ -46,12 +46,12 @@ Emitted during parsing. No semantic information is available at this stage — t
 | Code | Name | Short Description | Severity | Defined In |
 |------|------|-------------------|----------|------------|
 | SYN001 | `InvalidToken` | Character is not valid in any lexical context | Error | semantic-rules.md §SYN001 |
-| SYN002 | `UnexpectedToken` | Token appears where the grammar does not allow it | Error | semantic-rules.md §SYN002 |
+| SYN002 | `UnexpectedToken` | Token appears where the grammar does not allow it (includes a type/apply block at file top level) | Error | semantic-rules.md §SYN002 |
 | SYN003 | `InvalidIndentation` | Spaces used instead of tabs, or inconsistent nesting level | Error | semantic-rules.md §SYN003 |
 | SYN004 | `UnterminatedConstruct` | String literal, comment, or block not closed before end of file | Error | semantic-rules.md §SYN004 |
 | SYN005 | `MalformedConstruct` | Partial syntax structure is missing required elements | Error | semantic-rules.md §SYN005 |
 | SYN006 | `IndentationError` | Tab/space mixing detected, or indentation level is wrong for the block | Error | semantic-rules.md §SYN006 |
-| SYN007 | `SectionOutOfOrder` | Core top-level sections appear out of the required order: `import → start → state → class → functions` | Error | semantic-rules.md §SYN007 |
+| SYN007 | `SectionOutOfOrder` | Core top-level sections appear out of the required order: `import → plugins → start → state → class/can → functions` (`import:` before every other core section) | Error | semantic-rules.md §SYN007 |
 | SYN008 | `InvalidPrintBlock` | `print:` block contains no expressions, or a non-expression item | Error | semantic-rules.md §SYN008 |
 | SYN100 | `MissingSpecPath` | `spec` AI-metadata statement is missing its string-literal path | Error | semantic-rules.md §SYN100 |
 | SYN101 | `MissingIntentDescription` | `intent` AI-metadata statement is missing its string-literal description | Error | semantic-rules.md §SYN101 |
@@ -202,7 +202,7 @@ Not emitted by the compiler. Raised during WASM execution by the host runtime.
 |------|------|-------------------|----------|------------|
 | RUN001 | `MemoryViolation` | WASM execution accessed memory outside allocated bounds | Runtime | semantic-rules.md §RUN001 |
 | RUN002 | `StackError` | WASM stack overflow or underflow during execution | Runtime | semantic-rules.md §RUN002 |
-| RUN003 | `ArithmeticError` | Division by zero or other invalid arithmetic at runtime | Runtime | semantic-rules.md §RUN003 |
+| RUN003 | `ArithmeticError` | Integer `/` or `%` by zero ("division by zero"), integer overflow ("integer overflow") or a value that does not fit its integer type ("<v> does not fit in <type>") at runtime — all catchable; number arithmetic follows IEEE (inf/NaN) | Runtime | semantic-rules.md §RUN003 |
 | RUN004 | `ReferenceError` | None or invalid reference accessed at runtime (raised by `expr!` on none) | Runtime | semantic-rules.md §RUN004 |
 | RUN005 | `AssertionFailure` | A `require` statement evaluated to false at runtime | Runtime | semantic-rules.md §RUN005 |
 

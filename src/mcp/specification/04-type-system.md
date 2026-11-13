@@ -46,6 +46,41 @@ integer:32u largeUnsigned = 4294967295  // 0 to 4,294,967,295
 integer:64u hugeUnsigned = 18446744073709551615  // 0 to 18,446,744,073,709,551,615
 ```
 
+An unsigned type `integer:Nu` holds `0` to `2^N − 1` and uses unsigned arithmetic and comparison. Integer literals up to `18446744073709551615` are allowed when the target is `integer:64u`.
+
+An `integer:64u` value above `9223372036854775807` is exact in variables, arithmetic, `print` and `toString()`. Inside an `any` — including `json.encode`, the text of a collection that holds it, and `json.decode` — it becomes an approximate number, because `any` stores integers as signed 64-bit:
+
+```clean
+integer:64u big = 9223372036854775808
+print(big + 1)                       // 9223372036854775809
+any boxed = big
+print(json.encode(boxed))            // 9.223372036854776e+18
+```
+
+#### Values Must Fit
+
+A value stored into an integer type must fit in it. This applies everywhere a value lands in a typed place: declaration, assignment, argument, return value, class field, list or pairs element, and conversion (`.toInteger()`, an `integer:64` into a plain `integer`, an `any` converted to an integer).
+
+- A **constant** that does not fit is a compile-time error: `integer:8 a = 300` → `300 does not fit in integer:8 (-128 to 127)`.
+- A **run-time value** that does not fit raises a catchable error `"<value> does not fit in <type>"`:
+
+```clean
+integer big = 300
+integer:8 small = big onError -1          // -1
+integer:64 wide = 5000000000
+integer narrow = wide onError:
+    print("caught: " + error)             // caught: 5000000000 does not fit in integer
+```
+
+#### Integer Overflow
+
+Integer arithmetic never wraps. On `integer` (32-bit), `integer:64`, `integer:32u` and `integer:64u`, a `+`, `-`, `*` or unary `-` whose result is outside the type (for the unsigned types, also below `0`) — and `MIN / -1` — raises the catchable error `"integer overflow"`. Arithmetic on the 8- and 16-bit types is computed in 32 bits, and storing a result outside the type raises `"<value> does not fit in <type>"` (`-2 does not fit in integer:8u`). A constant expression that overflows is a compile-time error (`integer a = 2147483647 + 1` → `integer overflow: this constant expression is outside integer (-2147483648 to 2147483647)`). `number` arithmetic does not raise: it follows IEEE 754 (infinity, NaN).
+
+```clean
+integer max = 2147483647
+integer next = max + 1 onError 0          // 0
+```
+
 #### Number Precision Modifiers
 
 ```clean
@@ -396,6 +431,17 @@ number numFloat = num.toNumber()      // ✅ Works: converts 42 to 42.0
 integer piInt = 3.14.toInteger()      // ✅ Works: converts 3.14 to 3 (truncated)
 boolean flag = 0.toBoolean()          // ✅ Works: converts 0 to false
 boolean nonZero = 5.toBoolean()       // ✅ Works: converts 5 to true
+```
+
+**Converting text to a boolean:** `text.toBoolean()` accepts only `"true"`, `"false"`, `"1"` and `"0"`; any other text raises a catchable error (`'yes' is not a valid boolean`).
+
+**Converting text:** `text.toInteger()` accepts an optional sign followed by digits; `text.toNumber()` also accepts a fraction and an exponent (`"1.5"`, `".5"`, `"-1e3"`, `"2.5E-2"`). No whitespace is allowed — call `.trim()` first. Text that is not a valid number, or is out of range (`integer`: −2147483648 to 2147483647; `number`: finite values), raises an error that `onError` catches (see [Error Handling](./14-error-handling.md)):
+
+```clean
+integer n = "42".toInteger()                  // 42
+integer bad = "12abc".toInteger() onError 0   // 0
+integer padded = " 7 ".trim().toInteger()     // 7
+number x = "-1e3".toNumber()                  // -1000
 ```
 
 ---

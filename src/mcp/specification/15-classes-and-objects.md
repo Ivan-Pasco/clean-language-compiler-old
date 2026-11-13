@@ -55,28 +55,31 @@ Clean Language supports single inheritance using the `is` keyword. Child classes
 
 ```clean
 class Shape
-    string color
-    
+    public:
+        string color
+
     constructor(string colorParam)
         color = colorParam          // Implicit context - no 'this' needed
-    
+
     functions:
-        string getColor()
-            return color            // Direct field access
+        public:
+            string getColor()
+                return color        // Direct field access
 
 class Circle is Shape
     number radius
-    
+
     constructor(string colorParam, number radiusParam)
         base(colorParam)            // Call parent constructor with 'base'
         radius = radiusParam        // Implicit context
-    
+
     functions:
-        number area()
-            return 3.14159 * radius * radius
-        
-        string getInfo()
-            return color + " circle"    // Access inherited field directly
+        public:
+            number area()
+                return 3.14159 * radius * radius
+
+            string getInfo()
+                return color + " circle"    // Access inherited public field directly
 ```
 
 #### Inheritance Features
@@ -88,6 +91,92 @@ class Circle is Shape
 - **Method Inheritance**: Child classes inherit all public methods from parent classes
 - **Field Inheritance**: Child classes inherit all public fields from parent classes
 - **Method Overriding**: Child classes can override parent methods by defining methods with the same name
+- **Private members are not inherited**: a child class that reads, writes or calls its parent's private field or method gets SEM005 (`Private members are not inherited: \`Kid\` cannot use \`Base\`'s private field \`secret\``)
+
+#### Method Overriding
+
+When a child class defines a method with the same name as a parent method, the object's own class decides which method runs. This holds however the value is typed — a variable, parameter, list element, field or return value typed as the parent still runs the child's method:
+
+```clean
+start:
+    Shape s = Circle("blue", 1.0)
+    print(s.describe())          // circle
+    show(Shape("green"))         // shape
+
+class Shape
+    public:
+        string color
+
+    constructor(string colorParam)
+        color = colorParam
+
+    functions:
+        public:
+            string describe()
+                return "shape"
+
+class Circle is Shape
+    number radius
+
+    constructor(string colorParam, number radiusParam)
+        base(colorParam)
+        radius = radiusParam
+
+    functions:
+        public:
+            string describe()
+                return "circle"
+
+functions:
+    show(Shape x)
+        print(x.describe())      // runs the method of x's own class
+```
+
+Private methods are not overridden. A parent's call to its own private method always runs the parent's version, even when the object is a child that declares a method with the same name.
+
+**Override rules (SEM006):**
+- An override takes the same parameter types and returns the same type as the parent method (`Method 'area' of class 'Square' overrides 'Shape.area' with a different signature`).
+- An override of a public method must itself be under `public:` (`Method 'area' of class 'Square' overrides the public method 'Shape.area' but is private`).
+
+#### Calling the Parent's Method with `base`
+
+Inside a child method, `base.method(args)` runs the implementation of the nearest ancestor that defines `method`, on the same object. It is never dispatched to an override, so the parent's code runs even when the object belongs to a deeper subclass:
+
+```clean
+start:
+    Shape s = Circle("red", 2.0)
+    print(s.describe())          // [shape]
+
+class Shape
+    public:
+        string color
+
+    constructor(string colorParam)
+        color = colorParam
+
+    functions:
+        public:
+            string describe()
+                return "shape"
+
+class Circle is Shape
+    number radius
+
+    constructor(string colorParam, number radiusParam)
+        base(colorParam)
+        radius = radiusParam
+
+    functions:
+        public:
+            string describe()
+                return "[" + base.describe() + "]"
+```
+
+`base.method()` naming a method no ancestor defines is SEM002 (`No parent class of 'Circle' defines a method 'missing'`); naming a private method of the ancestor is SEM005.
+
+#### Default `toString()`
+
+Every class has a `toString()`. Unless the class declares or inherits its own, it returns the name of the object's own class — also through a parent-typed variable or list: a `Dog` held in a `list<Animal>` prints `Dog`. `print`, `printl` and `"{x}"` use it.
 
 #### Implicit Context Rules
 
@@ -115,8 +204,8 @@ can Draw:
     draw()
 
 can Describe:
-    describe() -> string
-    tag() -> string
+    string describe()
+    string tag()
         return "[" + this.describe() + "]"   // default body
 ```
 
@@ -135,7 +224,7 @@ class Circle is Shape can Draw, Describe
         public:
             draw()
                 print("circle")
-            describe() -> string
+            string describe()
                 return "circle"
             // tag() not written — Circle inherits Describe's default
 ```
@@ -162,13 +251,14 @@ functions:
 
 At the call site of a capability-typed value, method dispatch is **dynamic**: the actual class of the value at runtime determines which implementation runs. This lets one list hold several different classes that share the same capability.
 
-Implementation: each class instance carries a 4-byte class-id header. When you call a method on a capability-typed value, the compiler emits a runtime switch on that class-id that routes to the correct concrete method.
+Implementation: each class instance carries a 4-byte class-id header. When you call a method on a capability-typed value, the compiler emits a runtime switch on that class-id that routes to the correct concrete method. The same header drives method overriding: a call to an overridden method through a parent-typed value switches on the class-id to run the object's own class's method.
 
 #### Interaction with inheritance
 
 - A class inherits every capability its parent has. If `Shape can Draw`, then `Circle is Shape` also `can Draw` — no need to redeclare.
 - A child class may claim additional capabilities beyond its parent's.
 - A capability method implemented on the parent satisfies the capability for the child, unless the child overrides it.
+- A method that fulfils a capability must be declared under `functions: public:`. A private implementation is SEM011 (`Method 'area' on class 'Square' fulfils capability 'Shape' but is private`), even when every call goes through the capability type.
 
 #### What capabilities are not
 
@@ -201,21 +291,23 @@ You can call class methods directly on the class name if they don't use instance
 ```clean
 class MathUtils
     functions:
-        number add(number a, number b)
-            return a + b
-        
-        number max(number a, number b)
-            return if a > b then a else b
+        public:
+            number add(number a, number b)
+                return a + b
+
+            number max(number a, number b)
+                return if a > b then a else b
 
 class DatabaseService
     functions:
-        boolean connect(string url)
-            // implementation that doesn't use instance fields
-            return true
-        
-        User findUser(integer id)
-            // implementation that doesn't use instance fields
-            return User.loadFromDatabase(id)
+        public:
+            boolean connect(string url)
+                // implementation that doesn't use instance fields
+                return true
+
+            User findUser(integer id)
+                // implementation that doesn't use instance fields
+                return User.loadFromDatabase(id)
 
 // Static method calls - ClassName.method()
 start:
@@ -229,6 +321,7 @@ start:
 - Use `ClassName.method()` syntax for static calls
 - Only allowed if the method doesn't access instance fields (`field`)
 - All methods must be in `functions:` blocks
+- From outside the class, `ClassName.method()` reaches only methods under `functions: public:`; calling a private one is SEM005 (`'square' is private and cannot be accessed from outside 'Calc'`)
 - Method calls require parentheses: `MathUtils.add()` not `MathUtils.add`
 - Ideal for helpers, services, utilities, and database access functions
 
@@ -241,13 +334,14 @@ class User
     constructor(string name, integer age)
     
     functions:
-        // Instance method - accesses fields
-        string getInfo()
-            return "User: {name}, Age: {age}"
-        
-        // Static method - no field access
-        boolean isValidAge(integer years)
-            return years >= 0 and years <= 150
+        public:
+            // Instance method - accesses fields
+            string getInfo()
+                return "User: {name}, Age: {age}"
+
+            // Static method - no field access
+            boolean isValidAge(integer years)
+                return years >= 0 and years <= 150
 
 // Usage
 start:
