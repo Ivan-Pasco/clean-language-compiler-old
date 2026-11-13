@@ -1,4 +1,7 @@
 // Test: bugfixes/events_block_plugin_shape
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
+// Fixed in: compiler 0.33.186 (header added with the change; the pin runs
+//   in check_regressions from this version on)
 // Grammar: foundation/spec/plugins/frame-ui.ebnf §events_section
 // Semantic: Mirrors the AST shape that frame.ui's `expand_component` emits
 //           after `normalize_handlers` becomes a pass-through (the v2.12.4
@@ -49,4 +52,4 @@ class MyToolbar
 			_slot_content = content
 
 		string renderSSR()
-			return this.render()
+			return render()

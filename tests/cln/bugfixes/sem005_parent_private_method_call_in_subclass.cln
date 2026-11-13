@@ -1,15 +1,16 @@
 // Test: bugfixes/sem005_parent_private_method_call_in_subclass
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 // Grammar: class_declaration, public_functions_section (grammar.ebnf §6.2a)
 // Semantic: SEM005 — private methods are not inherited: a subclass may not call its
-//   parent's private method, plainly or through `this`
+//   parent's private method from any of its methods
 // Fixed in: compiler 0.33.184
 // Expected output:
 // Expected error:
 //   SEM005
 //   'hidden' is private and cannot be accessed from outside 'Base'
 //   Private members are not inherited: `Kid` cannot use `Base`'s private method `hidden`
-//   :35:
-//   :37:
+//   :36:
+//   :38:
 
 start:
 	Kid k = Kid()
@@ -34,4 +35,4 @@ class Kid is Base
 			integer twice()
 				return hidden() * 2
 			integer thrice()
-				return this.hidden() * 3
+				return hidden() * 3

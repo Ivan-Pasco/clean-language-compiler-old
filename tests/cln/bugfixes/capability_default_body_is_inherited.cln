@@ -1,4 +1,5 @@
 // Test: bugfixes/capability_default_body_is_inherited
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 // Grammar: can_declaration, can_body_item, can_default_body, class_declaration
 // Semantic: a capability method with a body is a default: a class that
 //   claims the capability inherits the body unless it overrides it
@@ -39,7 +40,7 @@ can Draw:
 can Describe:
 	string describe()
 	string tag()
-		return "[" + this.describe() + "]"   // default body
+		return "[" + describe() + "]"   // default body
 
 class Shape
 	functions:

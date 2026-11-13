@@ -1,4 +1,5 @@
 // Test: bugfixes/overridden_method_multi_level_and_this_calls
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 // Grammar: class_declaration ("is" parent), method_call, base_call
 // Semantic: 15-classes-and-objects.md "Method Overriding" — a method
 //   overridden at some levels of Grand -> Parent -> Child runs the nearest
@@ -44,7 +45,7 @@ class Grand
 
 		public:
 			string describe()
-				return this.title() + ":" + kind() + ":" + this.secret()
+				return title() + ":" + kind() + ":" + secret()
 
 			string title()
 				return "grand"
@@ -83,4 +84,4 @@ class Child is Parent
 				return "child"
 
 			integer value()
-				return this.baseValue() * 3
+				return baseValue() * 3

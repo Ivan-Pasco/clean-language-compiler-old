@@ -104,10 +104,6 @@ impl NameResolver {
     fn resolve_program(&mut self, mut hir: HirProgram) -> Result<ResolvedHirProgram, ()> {
         // A class claiming a capability gets the capability's default bodies
         // it does not override as methods of its own.
-        if let Err(error) = crate::hir::capability_defaults::check_defaults(&hir.capabilities) {
-            self.errors.push(error);
-            return Err(());
-        }
         crate::hir::capability_defaults::inherit_defaults(&mut hir.classes, &hir.capabilities);
 
         // First pass: Register all top-level symbols (includes builtins)
@@ -129,6 +125,15 @@ impl NameResolver {
         }
         if !pending_helper_aliases.is_empty() {
             self.register_language_helper_aliases(&pending_helper_aliases);
+        }
+
+        // Default bodies are checked once every top-level name is known.
+        let is_top_level = |name: &str| self.symbol_table.lookup_symbol(name).is_some();
+        if let Err(error) =
+            crate::hir::capability_defaults::check_defaults(&hir.capabilities, &is_top_level)
+        {
+            self.errors.push(error);
+            return Err(());
         }
 
         // Second pass: Resolve all symbol references
@@ -1655,23 +1660,6 @@ impl NameResolver {
             });
         }
 
-        // Resolve constructor (symbol was already created in global scope)
-        let resolved_constructor = if let Some(constructor) = &class.constructor {
-            // Use explicit constructor
-            Some(self.resolve_constructor(constructor, class_symbol_id, constructor_symbol_id)?)
-        } else {
-            // NOTE: Generate default constructor with empty body
-            Some(ResolvedHirConstructor {
-                symbol_id: constructor_symbol_id,
-                parameters: vec![],
-                body: ResolvedHirBlock {
-                    statements: vec![], // Empty body for default constructor
-                    location: class.location.clone(),
-                },
-                location: class.location.clone(),
-            })
-        };
-
         // Resolve methods — two-pass to allow mutual method references.
         // Pass 1: register all method symbols in class_scope so that any method
         //         body can call any other method (including private ones) by name.
@@ -1707,6 +1695,25 @@ impl NameResolver {
                 *methods = method_symbol_ids.clone();
             }
         }
+
+        // Resolve the constructor once the methods are registered, so a bare
+        // call in its body names the class's own method (symbol was already
+        // created in global scope).
+        let resolved_constructor = if let Some(constructor) = &class.constructor {
+            // Use explicit constructor
+            Some(self.resolve_constructor(constructor, class_symbol_id, constructor_symbol_id)?)
+        } else {
+            // NOTE: Generate default constructor with empty body
+            Some(ResolvedHirConstructor {
+                symbol_id: constructor_symbol_id,
+                parameters: vec![],
+                body: ResolvedHirBlock {
+                    statements: vec![], // Empty body for default constructor
+                    location: class.location.clone(),
+                },
+                location: class.location.clone(),
+            })
+        };
 
         // Pass 2: resolve method bodies (all symbols are visible in class_scope).
         for (method, &method_symbol_id) in class.methods.iter().zip(method_symbol_ids.iter()) {
@@ -2776,9 +2783,15 @@ impl NameResolver {
                     None
                 })
                 .or_else(|| {
-                    // Fallback: look it up by name in case it isn't yet reachable via scope.
+                    // An inherited method, or one whose name a top-level
+                    // function shares: the class's own method comes first.
                     self.symbol_table
                         .lookup_class_member(current_class_id, function)
+                        .filter(|id| {
+                            self.symbol_table
+                                .get_symbol(*id)
+                                .is_some_and(|s| matches!(s.kind, SymbolKind::Method { .. }))
+                        })
                 });
 
             if let Some(method_symbol_id) = method_symbol_id_opt {

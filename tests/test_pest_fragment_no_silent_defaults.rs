@@ -48,7 +48,8 @@ fn invalid_precision_width_is_an_error() {
 
 #[test]
 fn untyped_constructor_parameter_is_an_error() {
-    let src = "class Person\n\tstring name\n\n\tconstructor(name)\n\t\tthis.name = name\n";
+    // Changed in 0.33.186: this. is not part of Clean (developer decision)
+    let src = "class Person\n\tstring name\n\n\tconstructor(name)\n\t\tprint(name)\n";
     assert!(
         CleanParser::parse_program(src).is_err(),
         "an untyped constructor parameter must not default to string"

@@ -1,4 +1,5 @@
 // Test: bugfixes/method_lookup_inherited_members
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 // Grammar: method_call (grammar.ebnf), class inheritance with `is`
 // Semantic: FUNC001, SEM005
 // Unknown methods on a class receiver are now a FUNC001 error. This locks in
@@ -32,7 +33,7 @@ class Base
 			string greet()
 				return "hello from base"
 			string reveal()
-				return this.secret()
+				return secret()
 
 class Derived is Base
 	constructor()

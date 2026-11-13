@@ -1,13 +1,15 @@
 // Test: bugfixes/sem014_capability_default_uses_unknown_member
+// Changed in 0.33.186: this. is not part of Clean (developer decision); the
+//   default body names the member by its bare name
 // Grammar: can_declaration, can_default_body
-// Semantic: SEM014 — a default body may use `this` only to call methods of
-//   its own capability; `this.color` is not part of Describe (the
-//   semantic-rules.md §SEM014 example)
+// Semantic: SEM014 — a default body may name members of the claiming class
+//   only to call methods of its own capability; `color` is not part of
+//   Describe (the semantic-rules.md §SEM014 example)
 // Fixed in: compiler 0.33.184
 // Expected output:
 // Expected error:
 //   SEM014
-//   The default body of 'Describe.tag' uses 'this.color', but 'color' is not a method of capability 'Describe'
+//   The default body of 'Describe.tag' uses 'color', but 'color' is not a method of capability 'Describe'
 //
 // Regression: the example compiled with no error.
 
@@ -17,4 +19,4 @@ start:
 can Describe:
 	string describe()
 	string tag()
-		return this.color            // ERROR: color is not part of Describe
+		return color                 // ERROR: color is not part of Describe

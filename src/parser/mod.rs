@@ -25,6 +25,13 @@ pub use parser_impl::ErrorRecoveringParser;
 // Re-export location types
 pub use crate::ast::SourceLocation;
 
+/// SYN002 for any `this` in source text (grammar.ebnf: reserved and unused).
+/// Both parsers report it; the compiler's own receivers are not source text.
+pub const THIS_NOT_USED_MESSAGE: &str =
+    "`this` is not used in Clean: refer to the field or method by its name (`count`, `reset()`)";
+pub const THIS_NOT_USED_HELP: &str =
+    "Inside a class, write `count` instead of `this.count` and `reset()` instead of `this.reset()`";
+
 pub fn get_location(pair: &pest::iterators::Pair<Rule>) -> SourceLocation {
     let span = pair.as_span();
     let start = span.start_pos().line_col();

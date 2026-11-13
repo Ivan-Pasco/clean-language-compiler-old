@@ -493,6 +493,64 @@ mod tests {
         }
     }
 
+    /// `this` is reserved and unused (grammar.ebnf): plugin-emitted text that
+    /// uses it is rejected with the SYN002 that names the bare-name form, by
+    /// the pest grammar the fragment parser falls back to as well as by the
+    /// token parser.
+    #[test]
+    fn plugin_fragment_using_this_is_rejected() {
+        for fragment in [
+            "return this.count\n",
+            "this.count = 1\n",
+            "this.reset()\n",
+            "print(this)\n",
+            "integer n = this.count + 1\n",
+        ] {
+            let wrapped = format!("start:\n\t{}", fragment);
+            let pest_error = ErrorRecoveringParser::new(&wrapped, "<plugin-fragment>")
+                .parse_program()
+                .expect_err("the pest grammar must reject `this`");
+            assert_eq!(
+                pest_error.context().and_then(|c| c.error_code.as_deref()),
+                Some("SYN002"),
+                "{}: {}",
+                fragment,
+                pest_error
+            );
+            assert!(
+                pest_error
+                    .to_string()
+                    .contains(crate::parser::THIS_NOT_USED_MESSAGE),
+                "{}: {}",
+                fragment,
+                pest_error
+            );
+            assert!(
+                parse_with_token_parser(&wrapped).is_none(),
+                "the token parser must reject `{}`",
+                fragment
+            );
+            match CleanParser::parse_single_statement(fragment) {
+                SingleStatementParse::ParseError { message, .. } => assert!(
+                    message.contains(crate::parser::THIS_NOT_USED_MESSAGE),
+                    "{}: {}",
+                    fragment,
+                    message
+                ),
+                _ => panic!("`{}` must not parse as a statement", fragment),
+            }
+        }
+        // A name that starts with `this` is an ordinary name.
+        assert!(matches!(
+            CleanParser::parse_single_statement("integer thisCount = 1\n"),
+            SingleStatementParse::Statement(_)
+        ));
+        assert!(matches!(
+            CleanParser::parse_single_expression("this.count"),
+            SingleExpressionParse::ParseError { .. }
+        ));
+    }
+
     /// The pest grammar (fragment fallback and diagnostics) accepts any
     /// keyword after `.` (grammar.ebnf `member_name`) but still rejects a
     /// keyword as a plain identifier.
@@ -589,13 +647,13 @@ mod tests {
     }
 
     /// Regression (issue #41): a fragment whose `else if` arm ends with a
-    /// nested `if` — frame.ui's generated setBound. `this.field = value` sends
-    /// the fragment to the pest grammar, whose `else` matched at any depth,
-    /// so the nested `if` took the following `else if` and that arm never
-    /// ran.
+    /// nested `if` — frame.ui's generated setBound. The nested `if` took the
+    /// following `else if` and that arm never ran. The pest side is covered
+    /// by `pest_else_belongs_to_the_if_at_its_indentation`.
     #[test]
     fn fragment_else_if_after_nested_if_stays_in_the_outer_chain() {
-        let fragment = "if __field == \"agree\"\n\tif __value != \"\"\n\t\tthis.agree = __value.toBoolean()\nelse if __field == \"size\"\n\tif __value != \"\"\n\t\tthis.size = __value.toInteger()\nelse if __field == \"bio\"\n\tthis.bio = __value\n";
+        // Changed in 0.33.186: this. is not part of Clean (developer decision)
+        let fragment = "if __field == \"agree\"\n\tif __value != \"\"\n\t\tagree = __value.toBoolean()\nelse if __field == \"size\"\n\tif __value != \"\"\n\t\tsize = __value.toInteger()\nelse if __field == \"bio\"\n\tbio = __value\n";
         match CleanParser::parse_single_statement(fragment) {
             SingleStatementParse::Statement(stmt) => assert_three_arm_chain(&stmt),
             _ => panic!("fragment must parse as a statement"),

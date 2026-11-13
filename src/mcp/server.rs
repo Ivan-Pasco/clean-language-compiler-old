@@ -2228,7 +2228,7 @@ can Draw:
 can Describe:
 	string describe()
 	string tag()
-		return "[" + this.describe() + "]"   // default body — classes that don't override inherit this
+		return "[" + describe() + "]"   // default body — classes that don't override inherit this
 
 class Circle is Shape can Draw, Describe
 	public:

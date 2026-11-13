@@ -1,7 +1,10 @@
 // Test: bugfixes/codegen_this_method_call_receiver_push
-// Grammar: method_call inside a class method where the receiver is `this`
-//   (grammar.ebnf §5 method_call, plus the `This` node produced by the
-//   resolver for the `this` keyword).
+// Changed in 0.33.186: this. is not part of Clean (developer decision); the
+//   sibling method is now called by its bare name, which the resolver turns
+//   into the same method call on the current object, so the receiver push
+//   is still what this pin checks.
+// Grammar: function_call inside a class method naming a sibling method
+//   (grammar.ebnf §5), resolved to a method call on the current object.
 // Regression: dashboard fp 4376cf13-518a-4e71-877e-2f98c4dfa710.
 //   Reported against compiler 0.31.6. Any class method whose body contained
 //   `this.<siblingMethod>()` produced WASM that called the sibling method
@@ -38,4 +41,4 @@ class Widget
 			string render()
 				return "hello"
 			string renderSSR()
-				return this.render()
+				return render()

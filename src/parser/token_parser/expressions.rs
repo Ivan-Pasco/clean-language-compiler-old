@@ -595,10 +595,12 @@ impl TokenParser {
                 // Keep the token text so `Test` stays `Test`, not `test`.
                 Ok(Expression::Variable(token.text))
             }
-            TokenKind::This => {
-                self.bump();
-                Ok(Expression::Variable("this".to_string()))
-            }
+            // `this` is reserved and unused (grammar.ebnf): members are named
+            // directly.
+            TokenKind::This => Err(self.unsupported_syntax_error(
+                crate::parser::THIS_NOT_USED_MESSAGE.to_string(),
+                crate::parser::THIS_NOT_USED_HELP,
+            )),
             TokenKind::LeftParen => {
                 self.bump();
                 self.paren_depth += 1; // Track that we're inside parentheses

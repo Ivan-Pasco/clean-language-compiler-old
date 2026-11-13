@@ -7,11 +7,15 @@ use crate::ast::SourceLocation;
 use crate::error::CompilerError;
 use crate::hir::*;
 
-/// SEM014: a capability's default body may use `this` only to call the
-/// capability's own methods; any other `this.name` (a field, or a method
-/// the capability does not declare) is not guaranteed to exist on every
-/// class that claims it.
-pub fn check_defaults(capabilities: &[HirCapability]) -> Result<(), CompilerError> {
+/// SEM014: a capability's default body may name members of the claiming
+/// class only to call the capability's own methods. Any other bare name
+/// that is not a parameter, a local or a top-level name (`is_top_level`)
+/// would be a field or method of the claiming class, which is not
+/// guaranteed to exist on every class that claims the capability.
+pub fn check_defaults(
+    capabilities: &[HirCapability],
+    is_top_level: &dyn Fn(&str) -> bool,
+) -> Result<(), CompilerError> {
     for cap in capabilities {
         let declared: std::collections::HashSet<&str> =
             cap.methods.iter().map(|m| m.name.as_str()).collect();
@@ -19,15 +23,17 @@ pub fn check_defaults(capabilities: &[HirCapability]) -> Result<(), CompilerErro
             let Some(body) = &method.default_body else {
                 continue;
             };
+            let mut locals: std::collections::HashSet<String> =
+                method.parameters.iter().map(|p| p.name.clone()).collect();
+            collect_locals(body, &mut locals);
             let mut used = Vec::new();
-            collect_this_members_in_block(body, &mut used);
-            if let Some((name, location)) = used
-                .into_iter()
-                .find(|(name, _)| !declared.contains(name.as_str()))
-            {
+            collect_bare_names_in_block(body, &mut used);
+            if let Some((name, location)) = used.into_iter().find(|(name, _)| {
+                !declared.contains(name.as_str()) && !locals.contains(name) && !is_top_level(name)
+            }) {
                 return Err(CompilerError::semantic_error_with_code(
                     format!(
-                        "The default body of '{}.{}' uses 'this.{name}', but '{name}' is not \
+                        "The default body of '{}.{}' uses '{name}', but '{name}' is not \
                          a method of capability '{}'",
                         cap.name, method.name, cap.name
                     ),
@@ -44,36 +50,60 @@ pub fn check_defaults(capabilities: &[HirCapability]) -> Result<(), CompilerErro
     Ok(())
 }
 
-/// Every `this.name` member (field read or write, method call) in
-/// `block`, with where it appears.
-fn collect_this_members_in_block(block: &HirBlock, out: &mut Vec<(String, SourceLocation)>) {
+/// Every name `block` declares (variables, loop variables, deferred values).
+fn collect_locals(block: &HirBlock, out: &mut std::collections::HashSet<String>) {
+    for statement in &block.statements {
+        match statement {
+            HirStatement::VariableDeclaration { name, .. } => {
+                out.insert(name.clone());
+            }
+            HirStatement::LaterAssignment { variable, .. } => {
+                out.insert(variable.clone());
+            }
+            HirStatement::For { variable, body, .. } => {
+                out.insert(variable.clone());
+                collect_locals(body, out);
+            }
+            HirStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_locals(then_branch, out);
+                if let Some(else_branch) = else_branch {
+                    collect_locals(else_branch, out);
+                }
+            }
+            HirStatement::While { body, .. } => collect_locals(body, out),
+            _ => {}
+        }
+    }
+}
+
+/// Every bare name (variable read or write, call of an unqualified
+/// function) in `block`, with where it appears.
+fn collect_bare_names_in_block(block: &HirBlock, out: &mut Vec<(String, SourceLocation)>) {
     for statement in &block.statements {
         match statement {
             HirStatement::VariableDeclaration { initializer, .. } => {
                 if let Some(init) = initializer {
-                    collect_this_members(init, out);
+                    collect_bare_names(init, out);
                 }
             }
-            HirStatement::Assignment { target, value, .. } => {
+            HirStatement::Assignment {
+                target,
+                value,
+                location,
+            } => {
                 match target {
-                    HirLValue::Variable { .. } => {}
-                    HirLValue::FieldAccess {
-                        object,
-                        field,
-                        location,
-                    } => {
-                        if matches!(&**object, HirExpression::Variable { name, .. } if name == "this")
-                        {
-                            out.push((field.clone(), location.clone()));
-                        }
-                        collect_this_members(object, out);
-                    }
+                    HirLValue::Variable { name, .. } => out.push((name.clone(), location.clone())),
+                    HirLValue::FieldAccess { object, .. } => collect_bare_names(object, out),
                     HirLValue::Index { array, index, .. } => {
-                        collect_this_members(array, out);
-                        collect_this_members(index, out);
+                        collect_bare_names(array, out);
+                        collect_bare_names(index, out);
                     }
                 }
-                collect_this_members(value, out);
+                collect_bare_names(value, out);
             }
             HirStatement::Expression { expression, .. }
             | HirStatement::Print { expression, .. }
@@ -86,10 +116,10 @@ fn collect_this_members_in_block(block: &HirBlock, out: &mut Vec<(String, Source
             | HirStatement::Ensure {
                 condition: expression,
                 ..
-            } => collect_this_members(expression, out),
+            } => collect_bare_names(expression, out),
             HirStatement::Return { value, .. } => {
                 if let Some(value) = value {
-                    collect_this_members(value, out);
+                    collect_bare_names(value, out);
                 }
             }
             HirStatement::If {
@@ -98,87 +128,84 @@ fn collect_this_members_in_block(block: &HirBlock, out: &mut Vec<(String, Source
                 else_branch,
                 ..
             } => {
-                collect_this_members(condition, out);
-                collect_this_members_in_block(then_branch, out);
+                collect_bare_names(condition, out);
+                collect_bare_names_in_block(then_branch, out);
                 if let Some(else_branch) = else_branch {
-                    collect_this_members_in_block(else_branch, out);
+                    collect_bare_names_in_block(else_branch, out);
                 }
             }
             HirStatement::For { iterable, body, .. } => {
-                collect_this_members(iterable, out);
-                collect_this_members_in_block(body, out);
+                collect_bare_names(iterable, out);
+                collect_bare_names_in_block(body, out);
             }
             HirStatement::While {
                 condition, body, ..
             } => {
-                collect_this_members(condition, out);
-                collect_this_members_in_block(body, out);
+                collect_bare_names(condition, out);
+                collect_bare_names_in_block(body, out);
             }
             HirStatement::Break { .. } | HirStatement::Continue { .. } => {}
         }
     }
 }
 
-fn collect_this_members(expr: &HirExpression, out: &mut Vec<(String, SourceLocation)>) {
-    let is_this =
-        |e: &HirExpression| matches!(e, HirExpression::Variable { name, .. } if name == "this");
+fn collect_bare_names(expr: &HirExpression, out: &mut Vec<(String, SourceLocation)>) {
     match expr {
-        HirExpression::Literal { .. } | HirExpression::Variable { .. } => {}
-        HirExpression::MethodCall {
-            receiver,
-            method,
+        HirExpression::Literal { .. } => {}
+        HirExpression::Variable { name, location } => out.push((name.clone(), location.clone())),
+        HirExpression::Call {
+            function,
             arguments,
             location,
         } => {
-            if is_this(receiver) {
-                out.push((method.clone(), location.clone()));
+            if !function.contains('.') {
+                out.push((function.clone(), location.clone()));
             }
-            collect_this_members(receiver, out);
             for arg in arguments {
-                collect_this_members(arg, out);
+                collect_bare_names(arg, out);
             }
         }
-        HirExpression::FieldAccess {
-            object,
-            field,
-            location,
+        HirExpression::MethodCall {
+            receiver,
+            arguments,
+            ..
         } => {
-            if is_this(object) {
-                out.push((field.clone(), location.clone()));
+            collect_bare_names(receiver, out);
+            for arg in arguments {
+                collect_bare_names(arg, out);
             }
-            collect_this_members(object, out);
         }
+        HirExpression::FieldAccess { object, .. } => collect_bare_names(object, out),
         HirExpression::BinaryOp { left, right, .. } => {
-            collect_this_members(left, out);
-            collect_this_members(right, out);
+            collect_bare_names(left, out);
+            collect_bare_names(right, out);
         }
-        HirExpression::UnaryOp { operand, .. } => collect_this_members(operand, out),
-        HirExpression::Call { arguments, .. }
-        | HirExpression::Constructor { arguments, .. }
+        HirExpression::UnaryOp { operand, .. } => collect_bare_names(operand, out),
+        HirExpression::Constructor { arguments, .. }
         | HirExpression::NamespaceCall { arguments, .. }
         | HirExpression::StaticMethodCall { arguments, .. }
         | HirExpression::BaseCall { arguments, .. } => {
             for arg in arguments {
-                collect_this_members(arg, out);
+                collect_bare_names(arg, out);
             }
         }
         HirExpression::Index { array, index, .. } => {
-            collect_this_members(array, out);
-            collect_this_members(index, out);
+            collect_bare_names(array, out);
+            collect_bare_names(index, out);
         }
         HirExpression::Array { elements, .. } => {
             for element in elements {
-                collect_this_members(element, out);
+                collect_bare_names(element, out);
             }
         }
-        HirExpression::Cast { expression, .. } => collect_this_members(expression, out),
+        HirExpression::Cast { expression, .. } => collect_bare_names(expression, out),
         HirExpression::OnError {
             expression,
             fallback,
             ..
         } => {
-            collect_this_members(expression, out);
-            collect_this_members(fallback, out);
+            collect_bare_names(expression, out);
+            collect_bare_names(fallback, out);
         }
         HirExpression::Conditional {
             condition,
@@ -186,22 +213,22 @@ fn collect_this_members(expr: &HirExpression, out: &mut Vec<(String, SourceLocat
             else_expr,
             ..
         } => {
-            collect_this_members(condition, out);
-            collect_this_members(then_expr, out);
-            collect_this_members(else_expr, out);
+            collect_bare_names(condition, out);
+            collect_bare_names(then_expr, out);
+            collect_bare_names(else_expr, out);
         }
         HirExpression::Range {
             start, end, step, ..
         } => {
-            collect_this_members(start, out);
-            collect_this_members(end, out);
+            collect_bare_names(start, out);
+            collect_bare_names(end, out);
             if let Some(step) = step {
-                collect_this_members(step, out);
+                collect_bare_names(step, out);
             }
         }
         HirExpression::ObjectLiteral { fields, .. } => {
             for (_, value) in fields {
-                collect_this_members(value, out);
+                collect_bare_names(value, out);
             }
         }
     }

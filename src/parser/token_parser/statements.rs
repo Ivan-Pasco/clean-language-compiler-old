@@ -153,6 +153,10 @@ impl TokenParser {
                 let first_name = self.current().text.clone();
                 self.parse_identifier_statement(first_name)
             }
+            TokenKind::This => Err(self.unsupported_syntax_error(
+                crate::parser::THIS_NOT_USED_MESSAGE.to_string(),
+                crate::parser::THIS_NOT_USED_HELP,
+            )),
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(

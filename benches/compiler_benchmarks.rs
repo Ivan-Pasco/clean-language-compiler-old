@@ -41,20 +41,19 @@ start()
 	println(fact)
 "#;
 
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 const CLASS_PROGRAM: &str = r#"
 class Point
 	number x
 	number y
 
 	constructor(number x, number y)
-		this.x = x
-		this.y = y
 
 	number distance()
-		return sqrt(this.x * this.x + this.y * this.y)
+		return sqrt(x * x + y * y)
 
 	Point add(Point other)
-		return Point(this.x + other.x, this.y + other.y)
+		return Point(x + other.x, y + other.y)
 
 start()
 	Point p1 = Point(3.0, 4.0)
@@ -64,24 +63,24 @@ start()
 	println(dist)
 "#;
 
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 const COMPLEX_PROGRAM: &str = r#"
 class Vector
 	list<number> elements
 
 	constructor(list<number> elements)
-		this.elements = elements
 
 	integer length()
-		return this.elements.length()
+		return elements.length()
 
 	number sum()
 		number total = 0.0
-		for element in this.elements
+		for element in elements
 			total = total + element
 		return total
 
 	number average()
-		return this.sum() / this.length()
+		return sum() / length()
 
 functions:
 	list<integer> range(integer start, integer end)

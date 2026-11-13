@@ -1,0 +1,74 @@
+// Test: bugfixes/bare_call_in_method_names_own_method_before_top_level_function
+// Grammar: function_call inside a class method, constructor and capability
+//   default body (grammar.ebnf §5)
+// Semantic: 15-classes-and-objects.md Implicit Context — inside a class a
+//   bare name is the object's own member (its class's, an inherited public
+//   one or a capability's) before a top-level function of the same name;
+//   only a local or a parameter comes first
+// Fixed in: compiler 0.33.186
+// Expected output:
+//   method
+//   method
+//   parent
+//   [widget]
+//   method
+//   top name
+//   top
+//   parent top
+//
+// Regression: a bare `render()` in a method was checked against the
+// top-level `render(string name)`: FUNC002 "Function 'render' expects 1
+// argument(s) but 0 were provided".
+
+start:
+	Widget w = Widget()
+	print(w.page())
+	print(w.label)
+	print(w.inherited())
+	print(w.tag())
+	print(w.viaLocal())
+	print(render("name"))
+	print(describe())
+	print(origin("top"))
+
+can Describe:
+	string describe()
+	string tag()
+		return "[" + describe() + "]"
+
+class Panel
+	functions:
+		public:
+			string origin()
+				return "parent"
+
+class Widget is Panel can Describe
+	public:
+		string label
+
+	constructor()
+		label = render()
+
+	functions:
+		public:
+			string render()
+				return "method"
+			string page()
+				return render()
+			string inherited()
+				return origin()
+			string describe()
+				return "widget"
+			string viaLocal()
+				string text = render()
+				return text
+
+functions:
+	string render(string name)
+		return "top " + name
+
+	string describe()
+		return "top"
+
+	string origin(string name)
+		return "parent " + name

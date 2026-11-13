@@ -1,0 +1,47 @@
+// Test: bugfixes/bare_name_in_method_names_own_field_before_state
+// Grammar: identifier and assignment inside a class method and constructor
+// Semantic: 15-classes-and-objects.md Implicit Context — inside a class a
+//   bare name is the object's own field (also an inherited one) before a
+//   top-level `state:` variable of the same name, for reads and writes
+// Fixed in: compiler 0.33.186
+// Expected output:
+//   7
+//   8
+//   9
+//   5
+//
+// Pins the member-first lookup that replaces `this.count` now that `this`
+// is not part of Clean.
+
+start:
+	Counter c = Counter()
+	print(c.read())
+	c.bump()
+	print(c.read())
+	Child k = Child()
+	print(k.next())
+	print(count)
+
+state:
+	integer count = 5
+
+class Counter
+	public:
+		integer count
+
+	constructor()
+		count = 7
+
+	functions:
+		public:
+			integer read()
+				return count
+			bump()
+				count = count + 1
+
+class Child is Counter
+	functions:
+		public:
+			integer next()
+				count = 9
+				return count

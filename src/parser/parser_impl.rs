@@ -41,11 +41,56 @@ impl ErrorRecoveringParser {
 
     /// Parse the whole source as a program.
     pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
-        let pairs = <CleanParser as Parser<Rule>>::parse(Rule::program, self.source.trim())
-            .map_err(|e| ErrorUtils::from_pest_error(e, &self.source, &self.file_path))?;
+        let source = self.source.trim();
+        let pairs = <CleanParser as Parser<Rule>>::parse(Rule::program, source).map_err(|e| {
+            this_keyword_error(&e, source, &self.file_path)
+                .unwrap_or_else(|| ErrorUtils::from_pest_error(e, &self.source, &self.file_path))
+        })?;
 
         parse_program_ast(pairs)
     }
+}
+
+/// `this` is a reserved word the grammar never accepts (grammar.ebnf), so a
+/// parse that stops on it gets the SYN002 that names the bare-name form
+/// instead of a generic "unexpected token".
+fn this_keyword_error(
+    error: &pest::error::Error<Rule>,
+    source: &str,
+    file_path: &str,
+) -> Option<CompilerError> {
+    let pos = match error.location {
+        pest::error::InputLocation::Pos(pos) => pos,
+        pest::error::InputLocation::Span((start, _)) => start,
+    };
+    let is_name_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    let rest = source.get(pos..)?;
+    let at_word = rest.starts_with("this") && !rest[4..].starts_with(is_name_char);
+    let after_name = source[..pos]
+        .chars()
+        .next_back()
+        .is_some_and(|c| is_name_char(c) || c == '.');
+    if !at_word || after_name {
+        return None;
+    }
+    let (line, column) = pest::Position::new(source, pos)?.line_col();
+    Some(CompilerError::Syntax {
+        context: Box::new(
+            crate::error::ErrorContext::new(
+                super::THIS_NOT_USED_MESSAGE.to_string(),
+                Some(super::THIS_NOT_USED_HELP.to_string()),
+                crate::error::ErrorType::Syntax,
+                Some(crate::ast::SourceLocation {
+                    line,
+                    column,
+                    file: file_path.to_string(),
+                    byte_start: Some(pos),
+                    byte_end: Some(pos + 4),
+                }),
+            )
+            .with_error_code("SYN002"),
+        ),
+    })
 }
 
 pub fn parse_program_ast(pairs: pest::iterators::Pairs<Rule>) -> Result<Program, CompilerError> {

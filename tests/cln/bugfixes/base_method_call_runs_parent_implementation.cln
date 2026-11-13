@@ -1,4 +1,5 @@
 // Test: bugfixes/base_method_call_runs_parent_implementation
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 // Grammar: method_call with receiver "base" (`base.name(args)`), base_call
 // Semantic: 15-classes-and-objects.md "Method Overriding" — `base.method()`
 //   inside a subclass runs the implementation of the nearest ancestor that
@@ -26,7 +27,7 @@ class Grand
 				return "grand"
 
 			string describe()
-				return "grand(" + this.name() + ")"
+				return "grand(" + name() + ")"
 
 			integer score(integer x)
 				return x

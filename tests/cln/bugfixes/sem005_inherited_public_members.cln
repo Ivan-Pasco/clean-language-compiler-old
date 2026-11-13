@@ -1,4 +1,5 @@
 // Test: bugfixes/sem005_inherited_public_members
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 // Grammar: class_declaration, public_functions_section (grammar.ebnf §6.2a)
 // Semantic: SEM005 — public fields and methods are inherited; a class uses its own
 //   private members, also through `this` and `Class.method()`
@@ -36,7 +37,7 @@ class Kid is Base
 				open = open + 1
 				return shown() * 2 - 2
 			integer viaThis()
-				return this.shown() * 3 - 3
+				return shown() * 3 - 3
 
 class Calc
 	functions:

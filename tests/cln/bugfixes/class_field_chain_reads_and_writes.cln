@@ -1,4 +1,5 @@
 // Test: bugfixes/class_field_chain_reads_and_writes
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 // Grammar: property_access, method_call, assignment (field target), class_type
 // Semantic: a chain of class-typed fields reads, writes and calls methods on the innermost instance at any depth
 // Fixed in: compiler 0.33.178
@@ -94,7 +95,7 @@ class Request
 	functions:
 		public:
 			string who()
-				return auth.userId + " " + this.auth.userId
+				return auth.userId + " " + auth.userId
 
 class Holder
 	public:

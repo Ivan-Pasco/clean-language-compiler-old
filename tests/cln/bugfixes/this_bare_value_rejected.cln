@@ -1,0 +1,26 @@
+// Test: bugfixes/this_bare_value_rejected
+// Grammar: grammar.ebnf §keywords — `this` is reserved and unused, also as a
+//   value on its own
+// Semantic: SYN002 (developer decision: `this` is not part of Clean)
+// Fixed in: compiler 0.33.186
+// Expected output:
+// Expected error:
+//   SYN002
+//   `this` is not used in Clean: refer to the field or method by its name (`count`, `reset()`)
+//   :25:
+//
+// Regression: a bare `this` compiled as the current object.
+
+start:
+	Counter c = Counter()
+	print(c.same())
+
+class Counter
+	integer count
+
+	functions:
+		public:
+			string same()
+				Counter other = Counter()
+				Counter me = this
+				return (me == other).toString()

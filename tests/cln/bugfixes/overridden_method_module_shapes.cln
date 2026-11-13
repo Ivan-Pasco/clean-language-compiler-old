@@ -1,4 +1,5 @@
 // Test: bugfixes/overridden_method_module_shapes
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
 // Semantic: module imported by overridden_method_in_subclass_of_imported_class.cln;
 //   its class is subclassed in the importing module
 // Fixed in: compiler 0.33.184
@@ -15,7 +16,7 @@ class Shape
 				return "shape"
 
 			string describe()
-				return "[" + this.name() + "]"
+				return "[" + name() + "]"
 
 functions:
 	public:

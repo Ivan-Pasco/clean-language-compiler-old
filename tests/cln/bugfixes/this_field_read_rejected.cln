@@ -1,0 +1,24 @@
+// Test: bugfixes/this_field_read_rejected
+// Grammar: grammar.ebnf §keywords — `this` is reserved and unused; a field
+//   is read by its bare name
+// Semantic: SYN002 (developer decision: `this.` is not part of Clean)
+// Fixed in: compiler 0.33.186
+// Expected output:
+// Expected error:
+//   SYN002
+//   `this` is not used in Clean: refer to the field or method by its name (`count`, `reset()`)
+//   :24:
+//
+// Regression: `this.count` compiled as a read of the field.
+
+start:
+	Counter c = Counter()
+	print(c.get())
+
+class Counter
+	integer count
+
+	functions:
+		public:
+			integer get()
+				return this.count

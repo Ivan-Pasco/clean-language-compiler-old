@@ -29,6 +29,10 @@ pub struct ValidationContext {
     /// See Clean Language Specification §Capabilities.
     pub capabilities: HashSet<String>,
 
+    /// Method names of each capability, so a class's own methods include the
+    /// ones its capabilities give it.
+    pub capability_methods: HashMap<String, Vec<String>>,
+
     /// Variables in the current scope stack
     pub variables: Vec<HashMap<String, HirType>>,
 
@@ -92,6 +96,7 @@ impl ValidationContext {
             functions: HashMap::new(),
             classes: HashMap::new(),
             capabilities: HashSet::new(),
+            capability_methods: HashMap::new(),
             variables: vec![HashMap::new()], // Global scope
             current_class: None,
             current_return_type: None,
@@ -348,6 +353,10 @@ impl HirValidator {
         // teaches the HIR validator that `Draw` is a real type.
         for cap in &hir.capabilities {
             context.capabilities.insert(cap.name.clone());
+            context.capability_methods.insert(
+                cap.name.clone(),
+                cap.methods.iter().map(|m| m.name.clone()).collect(),
+            );
         }
 
         // Collect top-level state variables into global scope so expressions
@@ -1319,7 +1328,18 @@ impl HirValidator {
                 // The resolver and type-checker catch undefined function calls with full
                 // context.  Emitting FUNC001 here would produce false positives for every
                 // builtin (print, math.*, string.*, input, etc.) and class constructor call.
-                if let Some(func_def) = context.functions.get(function).cloned() {
+                // Inside a class a bare call names the class's own method
+                // before a top-level function of the same name.
+                let is_own_method = context
+                    .current_class
+                    .as_deref()
+                    .is_some_and(|cn| Self::class_has_method_in_hierarchy(context, cn, function));
+                if let Some(func_def) = context
+                    .functions
+                    .get(function)
+                    .filter(|_| !is_own_method)
+                    .cloned()
+                {
                     // FUNC002: argument count must be within [required, max] where required
                     // is the number of parameters without defaults and max is all parameters.
                     let required = func_def
@@ -1650,6 +1670,33 @@ impl HirValidator {
 
     /// Walk the class inheritance chain to check whether `field_name` is declared
     /// in `class_name` or any of its ancestors. Guards against inheritance cycles.
+    /// Whether `class_name`, a parent of it, or a capability one of them
+    /// claims declares a method `method_name`.
+    fn class_has_method_in_hierarchy(
+        context: &ValidationContext,
+        class_name: &str,
+        method_name: &str,
+    ) -> bool {
+        let mut current = Some(class_name);
+        let mut visited = HashSet::new();
+        while let Some(name) = current.filter(|name| visited.insert(*name)) {
+            let Some(class_def) = context.classes.get(name) else {
+                break;
+            };
+            let from_capability = class_def.capabilities.iter().any(|cap| {
+                context
+                    .capability_methods
+                    .get(cap)
+                    .is_some_and(|methods| methods.iter().any(|m| m == method_name))
+            });
+            if from_capability || class_def.methods.iter().any(|m| m.name == method_name) {
+                return true;
+            }
+            current = class_def.parent.as_deref();
+        }
+        false
+    }
+
     fn class_has_field_in_hierarchy(
         classes: &HashMap<String, HirClass>,
         class_name: &str,

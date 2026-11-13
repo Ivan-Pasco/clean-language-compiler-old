@@ -1,5 +1,6 @@
-// Spec Section: 10.4 - Implicit Context / this keyword
-// Tests: explicit `this` keyword for field access and method calls within class methods
+// Spec Section: 10.4 - Implicit Context
+// Changed in 0.33.186: this. is not part of Clean (developer decision)
+// Tests: fields and methods of the same object named by their bare names within class methods
 
 start:
 	MyComponent comp = MyComponent()
@@ -15,11 +16,11 @@ class MyComponent
 
 	functions:
 		string getName()
-			return this.name
+			return name
 
 		public:
 			string render()
-				string result = "<" + this.tag + ">"
-				result = result + this.getName()
-				result = result + "</" + this.tag + ">"
+				string result = "<" + tag + ">"
+				result = result + getName()
+				result = result + "</" + tag + ">"
 				return result
