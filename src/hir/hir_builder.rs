@@ -769,6 +769,32 @@ impl HirBuilder {
                     // `plugins:`. Give a targeted hint instead of the generic message
                     // so `target:\n\tframe.server` (PLUGIN-DISCOVERY-TARGET-BLOCK,
                     // fp 590e61575e58) points the author at the real declaration form.
+                    //
+                    // A type-named apply block (`integer:` with `x = 5`) declares
+                    // variables, which only exist inside a body (05-apply-blocks.md).
+                    if matches!(
+                        name.as_str(),
+                        "integer"
+                            | "number"
+                            | "string"
+                            | "boolean"
+                            | "any"
+                            | "list"
+                            | "matrix"
+                            | "pairs"
+                    ) {
+                        return Err(CompilerError::syntax_error_with_code(
+                            format!(
+                                "A type block like `{name}:` must be inside `start:`, \
+                                 `state:` or a function body"
+                            ),
+                            Some(format!(
+                                "Move the `{name}:` block into the body that uses the values."
+                            )),
+                            location.clone(),
+                            "SYN002",
+                        ));
+                    }
                     let looks_like_plugins_alias = matches!(
                         name.as_str(),
                         "target" | "targets" | "plugin" | "uses" | "requires"

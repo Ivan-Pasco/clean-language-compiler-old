@@ -1,0 +1,19 @@
+// Test: bugfixes/syn002_top_level_type_block_rejected
+// Grammar: program_item (a type apply block is a statement)
+// Semantic: SYN002 — a type-named apply block (`string:` declaring
+//   variables) at file top level is rejected with a message saying where
+//   it belongs
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SYN002
+//   A type block like `string:` must be inside `start:`, `state:` or a function body
+//
+// Regression: the block was reported as "No plugin loaded handles block
+// 'string:'", which pointed at the plugin system instead of the code.
+
+string:
+	greeting = "hi"
+
+start:
+	print("test")
