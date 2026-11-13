@@ -49,6 +49,8 @@ pub const JSON_TAG_OBJECT: i32 = 6;
 pub const JSON_TO_CLN_LIST: &str = "__json_to_cln_list";
 /// The error `__json_to_cln_list` raises for a value that is not an array.
 const NOT_A_LIST_MESSAGE: &str = "value is not a list";
+/// The helper giving the `list<any>` an `iterate` over an `any` walks.
+pub const ANY_ITERABLE: &str = "__any_iterable";
 /// The helper computing `.length()` of an `any`.
 pub const ANY_LENGTH: &str = "__any_length";
 /// The error `__any_length` raises for a value that has no length.
@@ -269,6 +271,38 @@ impl JsonClass {
                 list_allocate_index,
                 err_raise_index,
                 not_a_list_message,
+            ),
+        )?;
+
+        // __any_iterable(any_ptr: i32) -> i32
+        // What `iterate x in value` walks when `value` is an `any`: a string
+        // gives the list of its one-character strings (boxed), as `iterate`
+        // over a string walks `.charAt(i)`; anything else is the
+        // `list<any>` of `__json_to_cln_list` (which raises for a value that
+        // is not a list).
+        let json_to_cln_list_index = codegen
+            .get_function_index(JSON_TO_CLN_LIST)
+            .expect("__json_to_cln_list is registered above");
+        let char_at_index = codegen
+            .get_function_index("string.charAt")
+            .expect("string.charAt must be registered before the JSON helpers");
+        register_stdlib_function_with_locals(
+            codegen,
+            ANY_ITERABLE,
+            &[WasmType::I32],    // any_ptr
+            Some(WasmType::I32), // returns list_ptr
+            &[
+                WasmType::I32, // 1: str_ptr
+                WasmType::I32, // 2: count
+                WasmType::I32, // 3: list_ptr
+                WasmType::I32, // 4: i
+                WasmType::I32, // 5: box_ptr
+            ],
+            Self::generate_any_iterable_instructions(
+                json_to_cln_list_index,
+                char_at_index,
+                list_allocate_index,
+                malloc_index,
             ),
         )?;
 
@@ -1315,6 +1349,92 @@ impl JsonClass {
             Instruction::I32Mul,
             Instruction::I32Add,
             Instruction::I32Load(word(4)),
+            Instruction::I32Store(word(16)),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(4),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(3),
+        ]
+    }
+
+    /// Generate WASM body for `__any_iterable(any_ptr: i32) -> i32`.
+    ///
+    /// Locals: 0 any_ptr (param), 1 str_ptr, 2 count, 3 list_ptr, 4 i,
+    /// 5 box_ptr.
+    fn generate_any_iterable_instructions(
+        json_to_cln_list_idx: u32,
+        char_at_idx: u32,
+        list_allocate_idx: u32,
+        malloc_idx: u32,
+    ) -> Vec<Instruction<'static>> {
+        use wasm_encoder::BlockType;
+        let word = |offset: u64| MemArg {
+            offset,
+            align: 2,
+            memory_index: 0,
+        };
+        vec![
+            // Not a string: the `list<any>` of a JSON array (or its error).
+            Instruction::LocalGet(0),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(0),
+            Instruction::Call(json_to_cln_list_idx),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(0)),
+            Instruction::I32Const(JSON_TAG_STRING),
+            Instruction::I32Ne,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(0),
+            Instruction::Call(json_to_cln_list_idx),
+            Instruction::Return,
+            Instruction::End,
+            // str = any_ptr[4]; count = str.length
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(4)),
+            Instruction::LocalTee(1),
+            Instruction::I32Load(word(0)),
+            Instruction::LocalSet(2),
+            // list = list.allocate(count); list.size = count
+            Instruction::LocalGet(2),
+            Instruction::Call(list_allocate_idx),
+            Instruction::LocalTee(3),
+            Instruction::LocalGet(2),
+            Instruction::I32Store(word(0)),
+            // for i in 0..count: list[16 + i*4] = box(string, charAt(str, i))
+            Instruction::I32Const(0),
+            Instruction::LocalSet(4),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+            Instruction::I32Const(12),
+            Instruction::Call(malloc_idx),
+            Instruction::LocalTee(5),
+            Instruction::I32Const(JSON_TAG_STRING),
+            Instruction::I32Store(word(0)),
+            Instruction::LocalGet(5),
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(4),
+            Instruction::Call(char_at_idx),
+            Instruction::I32Store(word(4)),
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0),
+            Instruction::I32Store(word(8)),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(4),
+            Instruction::I32Const(4),
+            Instruction::I32Mul,
+            Instruction::I32Add,
+            Instruction::LocalGet(5),
             Instruction::I32Store(word(16)),
             Instruction::LocalGet(4),
             Instruction::I32Const(1),

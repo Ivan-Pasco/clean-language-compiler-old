@@ -1436,7 +1436,8 @@ impl MirBuilder {
                 }
 
                 // Build the iterable expression (e.g., array, range). An
-                // `any` is walked as the `list<any>` a JSON array is.
+                // `any` holding a string walks its characters, one holding a
+                // JSON array its elements (`__any_iterable`).
                 let iterable_value = self.build_expression(context, iterable)?;
                 let iterable_is_any = matches!(iterable.expr_type, ConcreteType::Any);
                 // A string is walked byte by byte, like `.length()` and
@@ -1444,10 +1445,13 @@ impl MirBuilder {
                 // list's, and each step binds `string.charAt(text, i)`.
                 let iterable_is_string = matches!(iterable.expr_type, ConcreteType::String);
                 let iterable_value = if iterable_is_any {
-                    self.emit_unbox_any(
+                    let list_type = self
+                        .convert_concrete_type(&ConcreteType::Array(Box::new(ConcreteType::Any)));
+                    self.emit_named_call(
                         context,
-                        iterable_value,
-                        &ConcreteType::Array(Box::new(ConcreteType::Any)),
+                        crate::stdlib::json_class::ANY_ITERABLE,
+                        vec![MirOperand::Value(iterable_value)],
+                        list_type,
                         location,
                     )
                 } else {

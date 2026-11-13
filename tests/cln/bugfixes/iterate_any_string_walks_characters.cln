@@ -1,0 +1,63 @@
+// Test: bugfixes/iterate_any_string_walks_characters
+// Grammar: iterate_statement
+// Semantic: SEM004 — `iterate x in value` where the `any` value holds a
+//   string walks its characters (one-character strings, the bytes
+//   `.length()` and `.charAt(i)` count), like `iterate ch in "text"`; an
+//   `any` holding a JSON array walks its elements
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   a
+//   b
+//   c
+//   count 3
+//   joined: x-y-
+//   zero
+//   1
+//   2
+//   bytes 6
+//   number: not iterable
+//
+// Regression: an `any` was always walked as a JSON array, so an `any`
+// holding a string raised "value is not a list".
+
+start:
+	any word = "abc"
+	integer count = 0
+	iterate ch in word
+		print(ch)
+		count = count + 1
+	print("count " + count.toString())
+
+	any pair = "xy"
+	string joined = ""
+	iterate c in pair
+		joined = joined + c.toString() + "-"
+	print("joined: " + joined)
+
+	any empty = ""
+	integer none_seen = 0
+	iterate e in empty
+		none_seen = none_seen + 1
+	if none_seen == 0
+		print("zero")
+
+	any numbers = json.textToData("[1, 2]")
+	iterate n in numbers
+		print(n)
+
+	any accented = "héllo"
+	integer bytes = 0
+	iterate k in accented
+		bytes = bytes + 1
+	print("bytes " + bytes.toString())
+
+	string walked = walkNumber() onError "not iterable"
+	print("number: " + walked)
+
+functions:
+	string walkNumber()
+		any n = 5
+		string seen = ""
+		iterate x in n
+			seen = seen + "?"
+		return seen
