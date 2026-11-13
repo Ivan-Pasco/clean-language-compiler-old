@@ -1,0 +1,48 @@
+// Test: bugfixes/state_type_block_declares_state
+// Grammar: state_block, type_apply_block
+// Semantic: a type block inside `state:` declares one state variable per
+//   line, all of the block's type (specification 1.0 §08: type blocks belong
+//   inside `start:`, `state:` or a function body); also inside `public:`
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   9
+//   x
+//   2
+//   7
+//   true
+//   1.5
+//   14
+//   6
+//
+// Regression: `state:` / `integer:` / `n = 4` failed with SYN001 "Expected
+// variable name in state declaration".
+
+start:
+	print(n + m)
+	print(s)
+	print(names.length())
+	print(small)
+	print(ready)
+	print(ratio)
+	n = n + 10
+	print(n)
+	bump()
+	print(m)
+
+state:
+	integer:
+		n = 4
+		m = 5
+	string s = "x"
+	list<string>:
+		names = ["a", "b"]
+	integer:8:
+		small = 7
+	public:
+		boolean:
+			ready = true
+		number ratio = 1.5
+
+functions:
+	void bump()
+		m = m + 1

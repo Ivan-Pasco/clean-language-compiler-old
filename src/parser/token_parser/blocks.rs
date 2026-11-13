@@ -43,6 +43,24 @@ impl TokenParser {
         self.expect(&TokenKind::Colon)?;
         self.skip_whitespace();
 
+        let assignments = self.parse_type_block_assignments()?;
+
+        tracing::debug!(
+            type_ = ?type_,
+            assignments_count = assignments.len(),
+            "Parser created TypeApplyBlock statement"
+        );
+
+        Ok(Statement::TypeApplyBlock {
+            type_,
+            assignments,
+            location: Some(location),
+        })
+    }
+
+    /// The indented `name = value` lines of a type block, from the newline
+    /// after its `TYPE:` header.
+    fn parse_type_block_assignments(&mut self) -> Result<Vec<VariableAssignment>, CompilerError> {
         // Skip newline after colon
         self.eat(&TokenKind::Newline);
         self.skip_whitespace();
@@ -144,17 +162,7 @@ impl TokenParser {
             }
         }
 
-        tracing::debug!(
-            type_ = ?type_,
-            assignments_count = assignments.len(),
-            "Parser created TypeApplyBlock statement"
-        );
-
-        Ok(Statement::TypeApplyBlock {
-            type_,
-            assignments,
-            location: Some(location),
-        })
+        Ok(assignments)
     }
 
     /// Parse a constant apply block: constant:\n\tTYPE NAME = value\n\tTYPE NAME2 = value2
@@ -1922,6 +1930,10 @@ impl TokenParser {
             // sub-section (parse_public_state_section).
             match self.current_kind() {
                 TokenKind::Identifier(_) => {
+                    if let Some(decls) = self.try_parse_state_type_block(true)? {
+                        declarations.extend(decls);
+                        continue;
+                    }
                     let decl = self.parse_one_state_declaration(true, block_level, "state")?;
                     declarations.push(decl);
 
@@ -2057,6 +2069,69 @@ impl TokenParser {
         })
     }
 
+    /// A type block inside `state:` (`integer:` with indented `count = 0`
+    /// lines) declares one state variable per line, all of the block's type
+    /// (specification 1.0 §08: type blocks belong inside `start:`, `state:`
+    /// or a function body). `None`, with nothing consumed, when the cursor
+    /// is not at a `TYPE:` header.
+    fn try_parse_state_type_block(
+        &mut self,
+        is_private: bool,
+    ) -> Result<Option<Vec<crate::ast::StateDeclaration>>, CompilerError> {
+        let start = self.cursor;
+        let location = self.current().location.clone();
+        let type_ = match self.parse_type() {
+            Ok(type_) => type_,
+            Err(_) => {
+                // Not a type: the declaration parser reports the error.
+                self.cursor = start;
+                return Ok(None);
+            }
+        };
+        let header_ends = self.check(&TokenKind::Colon)
+            && matches!(
+                self.look_ahead(1).kind,
+                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::Eof
+            );
+        if !header_ends {
+            self.cursor = start;
+            return Ok(None);
+        }
+        self.bump(); // ':'
+        let assignments = self.parse_type_block_assignments()?;
+        if assignments.is_empty() {
+            return Err(CompilerError::parse_error(
+                "Expected `name = value` lines in the type block".to_string(),
+                Some(location),
+                Some(
+                    "Indent one `name = value` line per state variable below the type".to_string(),
+                ),
+            ));
+        }
+        assignments
+            .into_iter()
+            .map(|assignment| match assignment.initializer {
+                Some(initializer) => Ok(crate::ast::StateDeclaration {
+                    name: assignment.name,
+                    type_: type_.clone(),
+                    initializer,
+                    guard: None,
+                    is_private,
+                    location: Some(location.clone()),
+                }),
+                None => Err(CompilerError::parse_error(
+                    format!(
+                        "Expected `= value` after state variable '{}'",
+                        assignment.name
+                    ),
+                    Some(location.clone()),
+                    None,
+                )),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some)
+    }
+
     /// Parse an inline `public:` sub-section inside a `state:` block.
     ///
     /// Called when `TokenKind::Public` is encountered while parsing state declarations.
@@ -2138,6 +2213,10 @@ impl TokenParser {
             // Parse a state declaration: type name = value [guard]
             match self.current_kind() {
                 TokenKind::Identifier(_) => {
+                    if let Some(decls) = self.try_parse_state_type_block(false)? {
+                        public_decls.extend(decls);
+                        continue;
+                    }
                     let decl = self.parse_one_state_declaration(
                         false,
                         parent_block_level + 1,
