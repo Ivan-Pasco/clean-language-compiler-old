@@ -2,6 +2,10 @@
 // Grammar: list_type, list_element, list_literal
 // Semantic: SEM001 — list element type must match declared type parameter
 // Expected output: (see inline comments per test)
+//
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
 
 start:
 	// Test 1: Empty integer list
@@ -10,27 +14,27 @@ start:
 
 	// Test 2: Integer list with values
 	list<integer> numbers = [1, 2, 3, 4, 5]
-	integer len = list.length(numbers)
+	integer len = numbers.length()
 	print("Integer list length: " + len.toString())
 
 	// Test 3: String list
 	list<string> names = ["Alice", "Bob", "Charlie"]
-	integer nameCount = list.length(names)
+	integer nameCount = names.length()
 	print("String list length: " + nameCount.toString())
 
 	// Test 4: Boolean list
 	list<boolean> flags = [true, false, true, true]
-	integer flagCount = list.length(flags)
+	integer flagCount = flags.length()
 	print("Boolean list length: " + flagCount.toString())
 
 	// Test 5: Number list
 	list<number> decimals = [1.1, 2.2, 3.3]
-	integer decCount = list.length(decimals)
+	integer decCount = decimals.length()
 	print("Number list length: " + decCount.toString())
 
 	// Test 6: Single element list
 	list<integer> single = [42]
-	integer singleLen = list.length(single)
+	integer singleLen = single.length()
 	print("Single element length: " + singleLen.toString())
 
 	// Test 7: Access list elements

@@ -1,3 +1,7 @@
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
+
 start:
 
 	print("Lowercase Namespace Calls QA Test")
@@ -50,7 +54,7 @@ functions:
 
 		// Test list namespace methods
 		list<integer> numbers = [1, 2, 3, 4, 5]
-		integer myListLength = list.size(numbers)
+		integer myListLength = numbers.length()
 		print("list.size([1,2,3,4,5]): ")
 		print(myListLength.toString())
 
@@ -59,7 +63,7 @@ functions:
 		print("list.get(numbers, 0): ")
 		print(firstItem.toString())
 
-		boolean hasItem = list.contains(numbers, 3)
+		boolean hasItem = numbers.contains(3)
 		print("list.contains(numbers, 3): ")
 		print(hasItem.toString())
 

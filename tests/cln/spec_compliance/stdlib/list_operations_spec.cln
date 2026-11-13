@@ -1,16 +1,21 @@
 // Spec Section: 14.3 - List Operations
 // Tests: List manipulation functions (add, remove, contains, first, last)
+//
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
 
 start:
 	// Test 1: list.add - adding elements
 	list<integer> nums = [1, 2, 3]
-	list<integer> nums2 = list.add(nums, 4)
-	integer addedLen = list.length(nums2)
+	nums.add(4)
+	list<integer> nums2 = nums
+	integer addedLen = nums2.length()
 	print("After add length: " + addedLen.toString())
 
 	// Test 2: list.size - getting list size
 	list<string> words = ["hello", "world"]
-	integer wordCount = list.size(words)
+	integer wordCount = words.length()
 	print("Word count: " + wordCount.toString())
 
 	// Test 3: list.get with different indices
@@ -25,30 +30,30 @@ start:
 
 	// Test 4: list.set - modifying elements
 	list<integer> data = [1, 2, 3]
-	list.set(data, 1, 99)
+	data.set(1, 99)
 	// Fixed: was list.get(l, i), spec defines l.get(i)
 	integer modified = data.get(1)
 	print("Modified element: " + modified.toString())
 
 	// Test 5: list.first and list.last
 	list<string> names = ["Alice", "Bob", "Charlie"]
-	string firstName = list.first(names)
-	string lastName = list.last(names)
+	string firstName = names.first()
+	string lastName = names.last()
 	print("First name: " + firstName)
 	print("Last name: " + lastName)
 
 	// Test 6: list.contains - searching
 	list<integer> scores = [85, 92, 78, 96]
-	boolean hasScore = list.contains(scores, 92)
-	boolean noScore = list.contains(scores, 100)
+	boolean hasScore = scores.contains(92)
+	boolean noScore = scores.contains(100)
 	print("Has 92: " + hasScore.toString())
 	print("Has 100: " + noScore.toString())
 
 	// Test 7: list.isEmpty
 	list<integer> empty = []
 	list<integer> notEmpty = [1]
-	boolean isEmpty1 = list.isEmpty(empty)
-	boolean isEmpty2 = list.isEmpty(notEmpty)
+	boolean isEmpty1 = empty.isEmpty()
+	boolean isEmpty2 = notEmpty.isEmpty()
 	print("Empty list isEmpty: " + isEmpty1.toString())
 	print("Non-empty isEmpty: " + isEmpty2.toString())
 

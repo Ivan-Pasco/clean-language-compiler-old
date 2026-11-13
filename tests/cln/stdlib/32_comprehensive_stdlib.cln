@@ -1,6 +1,10 @@
 // Fixed: a `functions:` / `class` declaration was glued to the end of the
 // previous statement line; grammar.ebnf requires each top-level item on its
 // own line (rejected since compiler 0.33.160, #19).
+//
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
 start:
 	print("Comprehensive Standard Library Test")
 	print("====================================")
@@ -93,14 +97,14 @@ functions:
 		print("numbers[2] = " + numberElement.toString())
 		print("words[1] = " + words[1])
 		// List utility functions (lowercase namespace)
-		list.add(numbers, 6)
+		numbers.add(6)
 		print("After list.add(6): length = " + numbers.length().toString())
-		integer removed = list.remove(numbers, numbers.length() - 1)
+		integer removed = numbers.remove(numbers.length() - 1)
 		print("Removed element: " + removed.toString())
 		print("After list.remove: length = " + numbers.length().toString())
 		// List searching with utility functions
-		print("list.contains(numbers, 3) = " + list.contains(numbers, 3).toString())
-		print("list.contains(words, \"grape\") = " + list.contains(words, "grape").toString())
+		print("list.contains(numbers, 3) = " + numbers.contains(3).toString())
+		print("list.contains(words, \"grape\") = " + words.contains("grape").toString())
 		// List iteration
 		print("Numbers iteration:")
 		iterate num in numbers

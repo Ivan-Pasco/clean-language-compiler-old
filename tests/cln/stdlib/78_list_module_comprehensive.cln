@@ -1,10 +1,14 @@
 // Test 78: Comprehensive List Module Operations
 // Tests all list functions: basic operations, modifications, transformations, functional programming
+//
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
 
 start:
 	// Basic list operations
 	list<integer> numbers = [1, 2, 3, 4, 5]
-	integer size = list.size(numbers)
+	integer size = numbers.length()
 	// Fixed: was list.get(l, i), spec defines l.get(i)
 	integer first = numbers.get(0)
 	integer last = numbers.get(4)
@@ -13,43 +17,45 @@ start:
 	print("First: " + first.toString())
 	print("Last: " + last.toString())
 	// List modification
-	list<integer> modified = list.add(numbers, 6)
-	list<integer> inserted = list.insert(modified, 2, 99)
-	integer removed = list.remove(inserted, 2)
-	print("After add 6: length = " + list.size(modified).toString())
-	print("After insert 99 at index 2: length = " + list.size(inserted).toString())
+	numbers.add(6)
+	list<integer> modified = numbers
+	modified.insert(2, 99)
+	list<integer> inserted = modified
+	integer removed = inserted.remove(2)
+	print("After add 6: length = " + modified.length().toString())
+	print("After insert 99 at index 2: length = " + inserted.length().toString())
 	print("Removed value: " + removed.toString())
 	// Search operations
 	list<string> fruits = ["apple", "banana", "apple", "orange"]
-	boolean hasApple = list.contains(fruits, "apple")
-	integer appleIndex = list.indexOf(fruits, "apple")
-	integer lastAppleIndex = list.lastIndexOf(fruits, "apple")
+	boolean hasApple = fruits.contains("apple")
+	integer appleIndex = fruits.indexOf("apple")
+	integer lastAppleIndex = fruits.lastIndexOf("apple")
 	print("Contains apple: " + hasApple.toString())
 	print("First apple index: " + appleIndex.toString())
 	print("Last apple index: " + lastAppleIndex.toString())
 	// List transformation
 	list<integer> data = [5, 2, 8, 1, 9, 3]
-	list<integer> sorted = list.sort(data)
-	list<integer> reversed = list.reverse(data)
-	list<integer> section = list.slice(data, 1, 4)
+	list<integer> sorted = data.sort()
+	list<integer> reversed = data.reverse()
+	list<integer> section = data.slice(1, 4)
 	print("Original: [5, 2, 8, 1, 9, 3]")
-	print("Sorted length: " + list.size(sorted).toString())
-	print("Reversed length: " + list.size(reversed).toString())
-	print("Section (1-4) length: " + list.size(section).toString())
+	print("Sorted length: " + sorted.length().toString())
+	print("Reversed length: " + reversed.length().toString())
+	print("Section (1-4) length: " + section.length().toString())
 	// List concatenation
 	list<string> list1 = ["a", "b"]
 	list<string> list2 = ["c", "d"]
 	list<string> combined = list.concat(list1, list2)
-	print("Combined length: " + list.size(combined).toString())
+	print("Combined length: " + combined.length().toString())
 	// Utility operations
 	list<integer> empty = [0]  // Initialize with dummy value
-	boolean isEmpty = list.isEmpty(empty)
-	boolean isNotEmpty = list.isNotEmpty(numbers)
+	boolean isEmpty = empty.isEmpty()
+	boolean isNotEmpty = numbers.isNotEmpty()
 	print("Empty list is empty: " + isEmpty.toString())
 	print("Numbers list is not empty: " + isNotEmpty.toString())
 	// First and last element access
-	string firstFruit = list.first(fruits)
-	string lastFruit = list.last(fruits)
+	string firstFruit = fruits.first()
+	string lastFruit = fruits.last()
 	print("First fruit: " + firstFruit)
 	print("Last fruit: " + lastFruit)
 	// String joining
@@ -59,5 +65,5 @@ start:
 	// List creation helpers
 	list<string> filled = list.fill(3, "hello")
 	list<integer> range = list.range(1, 5)
-	print("Filled list length: " + list.size(filled).toString())
-	print("Range list length: " + list.size(range).toString())
+	print("Filled list length: " + filled.length().toString())
+	print("Range list length: " + range.length().toString())

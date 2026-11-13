@@ -1,0 +1,18 @@
+// Test: bugfixes/list_namespace_internal_helper_not_callable
+// Grammar: namespace_function_call
+// Semantic: FUNC001 — the compiler's own list helpers (`list.allocate`,
+//   `list.removeAt`, ...) are not part of the `list.` namespace
+//   (stdlib-reference.md §5) and cannot be called from a program
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   FUNC001
+//   Function 'list.allocate' not found
+//   The `list.` namespace has only `list.concat`, `list.range`, `list.fill` and `list.join`
+//
+// Regression: `list.allocate(n)` compiled and returned a raw list pointer
+// typed as `integer` (developer decision 0.33.184).
+
+start:
+	integer raw = list.allocate(4)
+	print(raw)

@@ -1,5 +1,9 @@
 // Spec Section: 14.3 - List Module
 // Tests: List operations and methods
+//
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
 
 start:
 	// Test 1: List literal creation
@@ -7,7 +11,7 @@ start:
 	print("Test 1: List created")
 
 	// Test 2: list.length
-	integer len = list.length(numbers)
+	integer len = numbers.length()
 	print("List length: " + len.toString())
 
 	// Test 3: list.get to access elements
@@ -19,27 +23,27 @@ start:
 
 	// Test 4: String list
 	list<string> names = ["Alice", "Bob", "Charlie"]
-	integer nameCount = list.length(names)
+	integer nameCount = names.length()
 	print("Names count: " + nameCount.toString())
 
 	// Test 5: Boolean list
 	list<boolean> flags = [true, false, true]
-	integer flagCount = list.length(flags)
+	integer flagCount = flags.length()
 	print("Flags count: " + flagCount.toString())
 
 	// Test 6: Number list
 	list<number> decimals = [1.1, 2.2, 3.3]
-	integer decCount = list.length(decimals)
+	integer decCount = decimals.length()
 	print("Decimals count: " + decCount.toString())
 
 	// Test 7: Empty list
 	list<integer> empty = []
-	integer emptyLen = list.length(empty)
+	integer emptyLen = empty.length()
 	print("Empty list length: " + emptyLen.toString())
 
 	// Test 8: Single element list
 	list<integer> single = [42]
-	integer singleLen = list.length(single)
+	integer singleLen = single.length()
 	print("Single element length: " + singleLen.toString())
 
 	print("List functions test completed")

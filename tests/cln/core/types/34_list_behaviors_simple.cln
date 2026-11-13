@@ -1,3 +1,7 @@
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
+
 start:
 	print("List Behavior Simple Test")
 	testListBehaviors()
@@ -8,12 +12,12 @@ functions:
 		print("Testing list behaviors")
 		list<integer> myList = [1, 2, 3]
 
-		integer size = list.size(myList)
+		integer size = myList.length()
 		print("List size: " + size.toString())
 
-		boolean empty = list.isEmpty(myList)
+		boolean empty = myList.isEmpty()
 		print("Is empty: " + empty.toString())
 
-		boolean notEmpty = list.isNotEmpty(myList)
+		boolean notEmpty = myList.isNotEmpty()
 		print("Is not empty: " + notEmpty.toString())
 

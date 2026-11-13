@@ -7568,7 +7568,7 @@ impl HirBuilder {
                 arguments,
                 ..
             } => {
-                // A namespace call like `list.push(names, x)` stores `x`
+                // A namespace call like `pairs.set(m, k, x)` stores `x`
                 // into `names` — same lifetime hazard as the MethodCall
                 // arm above. Constructor args are similarly stored in
                 // the new instance's fields (below).
@@ -7656,9 +7656,9 @@ impl HirBuilder {
     ///
     /// Coverage rationale: the exported functions list of every
     /// compiled module includes storing operations on the two mutable
-    /// collection types — `list.*` (push/add/insert/set/unshift/fill)
-    /// and `pairs.set`. All snake_case aliases (`list_push` etc.) go
-    /// through the `Call` arm and are handled by
+    /// collection types — the list methods push/add/insert/set/unshift/fill
+    /// and `pairs.set`. The namespace forms (`list.fill`, `pairs.set`) are
+    /// handled by `namespace_call_stores_argument` and
     /// `function_name_stores_argument`.
     fn method_stores_argument(method: &str) -> bool {
         matches!(
@@ -7669,33 +7669,18 @@ impl HirBuilder {
 
     /// NamespaceCall equivalent of `method_stores_argument`.
     ///
-    /// Called for expressions like `list.push(names, value)` /
+    /// Called for expressions like `list.fill(size, value)` /
     /// `pairs.set(m, k, v)` where the receiver is the first positional
     /// argument. Return true when any positional argument gets stored
     /// into the receiver.
     fn namespace_call_stores_argument(namespace: &str, function: &str) -> bool {
-        matches!(
-            (namespace, function),
-            (
-                "list",
-                "push" | "add" | "insert" | "set" | "unshift" | "fill"
-            ) | ("pairs", "set")
-        )
+        matches!((namespace, function), ("list", "fill") | ("pairs", "set"))
     }
 
     /// `Call` equivalent of `method_stores_argument`: the dotted
-    /// (`list.push`) surface form of the storing operations.
+    /// (`list.fill`) surface form of the storing operations.
     fn function_name_stores_argument(function: &str) -> bool {
-        matches!(
-            function,
-            "list.push"
-                | "list.add"
-                | "list.insert"
-                | "list.set"
-                | "list.unshift"
-                | "list.fill"
-                | "pairs.set"
-        )
+        matches!(function, "list.fill" | "pairs.set")
     }
 
     /// Is this expression a (possibly chained) `BinaryOp::Add` /

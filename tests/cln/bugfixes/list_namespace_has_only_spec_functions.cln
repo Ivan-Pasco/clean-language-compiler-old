@@ -1,0 +1,20 @@
+// Test: bugfixes/list_namespace_has_only_spec_functions
+// Grammar: namespace_function_call
+// Semantic: FUNC001 — the `list.` namespace has only `list.concat`,
+//   `list.range`, `list.fill` and `list.join` (stdlib-reference.md §5);
+//   every other list operation is a method, and the error names it
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   FUNC001
+//   Function 'list.add' not found
+//   Call it as a method on the list: `items.add(...)` instead of `list.add(items, ...)`
+//
+// Regression: `list.add(l, x)`, `list.size(l)`, `list.get(l, i)` and the
+// other method names compiled as namespace functions that the spec does
+// not define (developer decision 0.33.184).
+
+start:
+	list<integer> numbers = [1, 2]
+	list.add(numbers, 3)
+	print(numbers.length())

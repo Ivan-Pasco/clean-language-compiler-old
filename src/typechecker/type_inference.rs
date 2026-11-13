@@ -3748,6 +3748,11 @@ impl<'a> TypeInference<'a> {
 
         let is_builtin =
             function_symbol_id.0 == 0 || self.symbol_table.is_builtin(*function_symbol_id);
+        if let Some(list_fn) = function.strip_prefix("list.").filter(|_| is_builtin) {
+            if !matches!(list_fn, "concat" | "range" | "fill" | "join") {
+                return Err(Self::list_namespace_error(list_fn, location));
+            }
+        }
         if let Some(list_fn) = function
             .strip_prefix("list.")
             .or_else(|| function.strip_prefix("list_"))
@@ -5487,59 +5492,7 @@ impl<'a> TypeInference<'a> {
             if let Some(symbol) = self.symbol_table.get_symbol(function_symbol_id) {
                 matches!(
                     symbol.name.as_str(),
-                    "list_fill"
-                        | "list.fill"
-                        | "list_add"
-                        | "list.add"
-                        | "list_push"
-                        | "list.push"
-                        | "list_insert"
-                        | "list.insert"
-                        | "list_contains"
-                        | "list.contains"
-                        | "list_indexOf"
-                        | "list.indexOf"
-                        | "list_index_of"
-                        | "list_lastIndexOf"
-                        | "list.lastIndexOf"
-                        | "list_size"
-                        | "list.size"
-                        | "list_length"
-                        | "list.length"
-                        | "list_isEmpty"
-                        | "list.isEmpty"
-                        | "list_isNotEmpty"
-                        | "list.isNotEmpty"
-                        | "list_get"
-                        | "list.get"
-                        | "list_set"
-                        | "list.set"
-                        | "list_remove"
-                        | "list.remove"
-                        | "list_pop"
-                        | "list.pop"
-                        | "list_removeLast"
-                        | "list.removeLast"
-                        | "list_peek"
-                        | "list.peek"
-                        | "list_first"
-                        | "list.first"
-                        | "list_last"
-                        | "list.last"
-                        | "list_sort"
-                        | "list.sort"
-                        | "list_reverse"
-                        | "list.reverse"
-                        | "list_slice"
-                        | "list.slice"
-                        | "list_concat"
-                        | "list.concat"
-                        | "list_join"
-                        | "list.join"
-                        | "list_clear"
-                        | "list.clear"
-                        | "list_range"
-                        | "list.range" // creates lists, doesn't take list argument
+                    "list.fill" | "list.concat" | "list.join" | "list.range"
                 )
             } else {
                 false
@@ -5773,30 +5726,7 @@ impl<'a> TypeInference<'a> {
     /// `list.` namespace functions whose result type depends on their list
     /// argument (see the `("list", _)` arms of `infer_static_method_return_type`).
     fn is_typed_list_namespace_function(name: &str) -> bool {
-        matches!(
-            name,
-            "indexOf"
-                | "lastIndexOf"
-                | "contains"
-                | "isEmpty"
-                | "isNotEmpty"
-                | "remove"
-                | "get"
-                | "pop"
-                | "removeLast"
-                | "peek"
-                | "first"
-                | "last"
-                | "add"
-                | "push"
-                | "sort"
-                | "reverse"
-                | "insert"
-                | "slice"
-                | "concat"
-                | "fill"
-                | "range"
-        )
+        matches!(name, "concat" | "fill" | "range")
     }
 
     /// Get the builtin type name for method lookups (e.g., "string", "integer", "list")
@@ -6045,6 +5975,37 @@ impl<'a> TypeInference<'a> {
             let arg_location = Self::argument_location(arg, location);
             self.require_assignable(arg, param, &arg_location);
         }
+    }
+
+    /// FUNC001: the `list.` namespace has only the functions of
+    /// stdlib-reference.md §5 (`list.concat`, `list.range`, `list.fill`,
+    /// `list.join`); every other list operation is a method on the list
+    /// (`items.add(x)`), which the help names.
+    fn list_namespace_error(function: &str, location: &SourceLocation) -> CompilerError {
+        let method = match function {
+            "size" => Some("length"),
+            "push" => Some("add"),
+            "pop" => Some("removeLast"),
+            "length" | "add" | "remove" | "removeLast" | "peek" | "insert" | "get" | "set"
+            | "contains" | "indexOf" | "lastIndexOf" | "isEmpty" | "isNotEmpty" | "first"
+            | "last" | "reverse" | "sort" | "slice" => Some(function),
+            _ => None,
+        };
+        let help = match method {
+            Some(method) => format!(
+                "Call it as a method on the list: `items.{method}(...)` instead of \
+                 `list.{function}(items, ...)`"
+            ),
+            None => "The `list.` namespace has only `list.concat`, `list.range`, `list.fill` \
+                     and `list.join`; other list operations are methods (`items.add(x)`)"
+                .to_string(),
+        };
+        CompilerError::semantic_error_with_code(
+            format!("Function 'list.{}' not found", function),
+            Some(help),
+            Some(location.clone()),
+            "FUNC001",
+        )
     }
 
     /// SEM001: `list.f(items, args…)` is the namespace form of
@@ -6336,102 +6297,7 @@ impl<'a> TypeInference<'a> {
                 Ok(ConcreteType::String)
             }
 
-            // list static methods - NOTE: Add return types for list namespace functions
-            // These were returning Unknown, causing MIR to treat them as void
-            // Generic functions return types based on first argument (the list)
-            ("list", "add") | ("list", "push") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                // Returns list<T> - same type as first argument
-                // list.add(list<T>, T) -> list<T>
-                if !arguments.is_empty() {
-                    Ok(arguments[0].expr_type.clone())
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "pop") | ("list", "shift") | ("list", "removeLast") | ("list", "peek") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                // Returns T - the element type of the list
-                // list.pop(list<T>) -> T, list.removeLast(list<T>) -> T
-                if !arguments.is_empty() {
-                    match &arguments[0].expr_type {
-                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
-                        _ => Ok(ConcreteType::Unknown),
-                    }
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "unshift") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                // Returns list<T> - same type as first argument
-                // list.unshift(list<T>, T) -> list<T>
-                if !arguments.is_empty() {
-                    Ok(arguments[0].expr_type.clone())
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "insert") => {
-                validate_arg_count(3, arg_count, &full_method_name)?;
-                // Returns list<T> - same type as first argument
-                // list.insert(list<T>, integer, T) -> list<T>
-                if !arguments.is_empty() {
-                    Ok(arguments[0].expr_type.clone())
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "remove") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                // Returns T - the element type of the list
-                // list.remove(list<T>, integer) -> T
-                if !arguments.is_empty() {
-                    match &arguments[0].expr_type {
-                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
-                        _ => Ok(ConcreteType::Unknown),
-                    }
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "size") | ("list", "length") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                Ok(ConcreteType::Integer)
-            }
-            ("list", "get") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                // Returns T - the element type of the list
-                // list.get(list<T>, integer) -> T
-                if !arguments.is_empty() {
-                    match &arguments[0].expr_type {
-                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
-                        _ => Ok(ConcreteType::Unknown),
-                    }
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "set") => {
-                validate_arg_count(3, arg_count, &full_method_name)?;
-                // Returns list<T> - same type as first argument
-                // list.set(list<T>, integer, T) -> list<T>
-                if !arguments.is_empty() {
-                    Ok(arguments[0].expr_type.clone())
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "clear") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                // Returns list<T> - same type as first argument
-                // list.clear(list<T>) -> list<T>
-                if !arguments.is_empty() {
-                    Ok(arguments[0].expr_type.clone())
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
+            // The `list.` namespace functions (stdlib-reference.md §5).
             ("list", "fill") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
                 // Returns list<T> - creates a new list
@@ -6450,96 +6316,10 @@ impl<'a> TypeInference<'a> {
                 // list.range(integer, integer) -> list<integer>
                 Ok(ConcreteType::Array(Box::new(ConcreteType::Integer)))
             }
-            ("list", "indexOf") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                // Returns integer - index of element or -1 if not found
-                // list.indexOf(list<T>, T) -> integer
-                Ok(ConcreteType::Integer)
-            }
-            ("list", "lastIndexOf") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                // Returns integer - last index of element or -1 if not found
-                // list.lastIndexOf(list<T>, T) -> integer
-                Ok(ConcreteType::Integer)
-            }
-            ("list", "contains") => {
-                validate_arg_count(2, arg_count, &full_method_name)?;
-                // Returns boolean - whether the list contains the element
-                // list.contains(list<T>, T) -> boolean
-                Ok(ConcreteType::Boolean)
-            }
-            ("list", "isEmpty") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                // Returns boolean - whether the list is empty
-                // list.isEmpty(list<T>) -> boolean
-                Ok(ConcreteType::Boolean)
-            }
-            ("list", "isNotEmpty") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                // Returns boolean - whether the list is not empty
-                // list.isNotEmpty(list<T>) -> boolean
-                Ok(ConcreteType::Boolean)
-            }
-            ("list", "first") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                // Returns T - the first element of the list
-                // list.first(list<T>) -> T
-                if !arguments.is_empty() {
-                    match &arguments[0].expr_type {
-                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
-                        _ => Ok(ConcreteType::Unknown),
-                    }
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "last") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                // Returns T - the last element of the list
-                // list.last(list<T>) -> T
-                if !arguments.is_empty() {
-                    match &arguments[0].expr_type {
-                        ConcreteType::Array(element_type) => Ok((**element_type).clone()),
-                        _ => Ok(ConcreteType::Unknown),
-                    }
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "slice") => {
-                validate_arg_count(3, arg_count, &full_method_name)?;
-                // Returns list<T> - a new list containing the sliced elements
-                // list.slice(list<T>, integer, integer) -> list<T>
-                if !arguments.is_empty() {
-                    Ok(arguments[0].expr_type.clone())
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
             ("list", "concat") => {
                 validate_arg_count(2, arg_count, &full_method_name)?;
                 // Returns list<T> - a new list containing elements from both lists
                 // list.concat(list<T>, list<T>) -> list<T>
-                if !arguments.is_empty() {
-                    Ok(arguments[0].expr_type.clone())
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "reverse") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                // Returns list<T> - a new list with elements in reverse order
-                // list.reverse(list<T>) -> list<T>
-                if !arguments.is_empty() {
-                    Ok(arguments[0].expr_type.clone())
-                } else {
-                    Ok(ConcreteType::Unknown)
-                }
-            }
-            ("list", "sort") => {
-                validate_arg_count(1, arg_count, &full_method_name)?;
-                // Returns list<T> - a new sorted list
-                // list.sort(list<T>) -> list<T>
                 if !arguments.is_empty() {
                     Ok(arguments[0].expr_type.clone())
                 } else {
@@ -6681,25 +6461,10 @@ impl<'a> TypeInference<'a> {
                 }
                 // The `json.` namespace has exactly the functions above
                 // (stdlib-reference.md §8), and `math.` / `list.` the ones
-                // above and in the symbol table. `list.allocate` and the
-                // element-width list helpers are lowered by the code
-                // generator by name. Other built-in namespaces (`http.`,
+                // above and in the symbol table. Other built-in namespaces (`http.`,
                 // `input.`, `validator.`) also have functions the code
                 // generator provides by name.
-                let codegen_list_function = class_name == "list"
-                    && matches!(
-                        method_name,
-                        "allocate"
-                            | "removeAt"
-                            | "add_i64"
-                            | "add_f64"
-                            | "push_f64"
-                            | "getType"
-                            | "setType"
-                    );
-                if matches!(class_name, "json" | "math")
-                    || (class_name == "list" && !codegen_list_function)
-                {
+                if matches!(class_name, "json" | "math" | "list") {
                     return Err(CompilerError::semantic_error_with_code(
                         format!("Function '{}' not found", full_method_name),
                         Some(format!(

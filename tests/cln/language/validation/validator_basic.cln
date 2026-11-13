@@ -15,8 +15,11 @@ start:
 		print("ERROR: validator.ok failed") +
 
 	// Test 3: Create validation result with error
-	integer errors = list.allocate(1)
-	integer errorResult = validator.error(errors)
+	// Changed in 0.33.184: was `validator.error(list.allocate(1))`; the
+	// compiler's `list.allocate` helper is not callable from a program and
+	// `validator.error` takes a validator (stdlib-reference.md §15)
+	// (developer decision)
+	integer errorResult = validator.error(rules)
 	boolean hasError = validator.isError(errorResult)
 	if hasError
 		print("validator.isError works correctly") +

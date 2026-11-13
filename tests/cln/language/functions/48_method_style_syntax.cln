@@ -1,5 +1,9 @@
 // Comprehensive QA Test for Method-Style Syntax
 // Tests all enhanced method-style calls supported by the parser
+//
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
 
 start:
 	// Test utility methods on values
@@ -56,8 +60,8 @@ start:
 
 	// Test empty/not empty with basic logic
 	list<integer> numbers = [1, 2, 3]
-	boolean isEmpty = list.size(numbers) == 0
-	boolean notEmpty = list.size(numbers) > 0
+	boolean isEmpty = numbers.length() == 0
+	boolean notEmpty = numbers.length() > 0
 	print("Numbers empty: ")
 	print(isEmpty.toString())
 	print("Numbers not empty: ")

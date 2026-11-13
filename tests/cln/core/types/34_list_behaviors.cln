@@ -1,3 +1,7 @@
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
+
 start:
 	print("Clean Language List Behavior Test")
 	print("==================================")
@@ -29,10 +33,10 @@ functions:
 		string sizeText = queueSize.toString()
 		print("Queue size: " + sizeText)
 
-		string first = list.remove(taskQueue, 0)  // Queue removes from front (FIFO)
+		string first = taskQueue.remove(0)  // Queue removes from front (FIFO)
 		print("Removed: " + first)
 
-		string second = list.remove(taskQueue, 0)  // Next item moves to front
+		string second = taskQueue.remove(0)  // Next item moves to front
 		print("Removed: " + second)
 
 		string next = taskQueue.peek()
@@ -51,11 +55,11 @@ functions:
 		print("Stack size: " + undoStack.length().toString())
 
 		integer lastIndex = undoStack.length() - 1
-		string last = list.remove(undoStack, lastIndex)  // Stack removes from end (LIFO)
+		string last = undoStack.remove(lastIndex)  // Stack removes from end (LIFO)
 		print("Undone: " + last)
 
 		integer newLastIndex = undoStack.length() - 1
-		string secondLast = list.remove(undoStack, newLastIndex)
+		string secondLast = undoStack.remove(newLastIndex)
 		print("Undone: " + secondLast)
 
 		string top = undoStack.peek()
@@ -94,7 +98,7 @@ functions:
 		uniqueQueue.add("Third")
 
 		print("Unique queue size: " + uniqueQueue.length().toString())
-		string removed = list.remove(uniqueQueue, 0)  // Queue behavior, remove from front
+		string removed = uniqueQueue.remove(0)  // Queue behavior, remove from front
 		print("Removed from unique queue: " + removed)
 
 	void testUtilityMethods()

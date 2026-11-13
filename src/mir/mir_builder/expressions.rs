@@ -873,11 +873,10 @@ impl MirBuilder {
                     }
                 };
 
-                // `list.<method>(items, args...)` is the namespace form of
-                // `items.<method>(args...)`. Lower it through the method-call
-                // path so both forms share element-typed dispatch (`number`
-                // lists use 8-byte slots) and the receiver write-back of
-                // operations that can move the list (`add`, `push`, `insert`).
+                // `list.concat(a, b)` is the namespace form of `a.concat(b)`:
+                // lower it through the method-call path so both forms share
+                // the element-typed dispatch (`number` lists use 8-byte
+                // slots).
                 if let Some(method) = function_name_opt
                     .as_deref()
                     .and_then(|name| name.strip_prefix("list."))
@@ -1359,32 +1358,10 @@ impl MirBuilder {
                 }
                 .filter(|_| all_integer_arguments);
 
-                // NOTE: Infer return type for namespace functions like list.get
-                // When called with Any type argument, the return should also be Any
                 let inferred_type = if integer_math_variant.is_some() {
                     ConcreteType::Integer
                 } else if let Some(ref func_name) = function_name_opt {
-                    if func_name == "list.get" || func_name == "list_get" {
-                        // Check if first argument is Any type
-                        if !arguments.is_empty()
-                            && matches!(arguments[0].expr_type, ConcreteType::Any)
-                        {
-                            // list.get on Any returns Any
-                            ConcreteType::Any
-                        } else if !arguments.is_empty() {
-                            // For Array<T>, extract element type
-                            if let ConcreteType::Array(element_type) = &arguments[0].expr_type {
-                                element_type.as_ref().clone()
-                            } else {
-                                expression.expr_type.clone()
-                            }
-                        } else {
-                            expression.expr_type.clone()
-                        }
-                    } else if func_name == "list.size" || func_name == "list.length" {
-                        // list.size always returns Integer
-                        ConcreteType::Integer
-                    } else if func_name.starts_with("math.") {
+                    if func_name.starts_with("math.") {
                         // NOTE: All math namespace functions return Number (f64)
                         ConcreteType::Number
                     } else if func_name.ends_with(".toNumber") {
@@ -1427,12 +1404,9 @@ impl MirBuilder {
 
                 // Check for known void functions by name
                 // These are builtin/stdlib functions that return nothing (modify in-place or have side effects only)
-                // NOTE: list.push is NOT void - it returns the list for chaining
                 let is_known_void_function = matches!(
                     function_name_opt.as_deref(),
-                    Some("list.set")
-                        | Some("list.clear")
-                        | Some("print")
+                    Some("print")
                         | Some("printl")
                         | Some("println")
                         | Some("mem_release")

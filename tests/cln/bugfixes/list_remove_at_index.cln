@@ -22,10 +22,14 @@
 //   10
 //   20,30
 //   0
+//
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
 
 start:
 	list<string> s = ["x", "y", "z"]
-	string r = list.remove(s, 2)
+	string r = s.remove(2)
 	print("r=" + r)
 	print(list.join(s, ","))
 	list<integer> n = [5, 6, 7]
@@ -36,18 +40,18 @@ start:
 	string first = letters.remove(0)
 	print("first=" + first)
 	print(list.join(letters, ","))
-	string mid = list.remove(letters, 1)
+	string mid = letters.remove(1)
 	print("mid=" + mid)
 	print(list.join(letters, ","))
 	list<number> nums = [1.5, 2.5, 3.5]
 	number removed = nums.remove(1)
 	print(removed.toString())
 	print(nums.first().toString() + "," + nums.last().toString())
-	number lastNum = list.remove(nums, 1)
+	number lastNum = nums.remove(1)
 	print("last=" + lastNum.toString())
 	print(nums.first().toString() + " " + nums.length().toString())
 	list<integer> one = [10, 20, 30]
-	print(list.remove(one, 0).toString())
+	print(one.remove(0).toString())
 	print(one.get(0).toString() + "," + one.get(1).toString())
 	integer gone = one.remove(1)
 	gone = one.remove(0)

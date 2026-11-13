@@ -1,23 +1,27 @@
 // Test: bugfixes/list_namespace_functions_check_element_type
-// Grammar: namespace_call
-// Semantic: SEM001 — `list.f(items, ...)` is the namespace form of
-//   `items.f(...)`; its values must have the list's element type
+// Grammar: method_call
+// Semantic: SEM001 — the values given to `items.add(...)`, `.set`, `.insert`
+//   and `.contains` must have the list's element type
 // Fixed in: compiler 0.33.183
 // Expected output:
 // Expected error:
-//   list_namespace_functions_check_element_type.cln:20
-//   list_namespace_functions_check_element_type.cln:21
-//   list_namespace_functions_check_element_type.cln:22
-//   list_namespace_functions_check_element_type.cln:19
+//   list_namespace_functions_check_element_type.cln:24
+//   list_namespace_functions_check_element_type.cln:25
+//   list_namespace_functions_check_element_type.cln:26
+//   list_namespace_functions_check_element_type.cln:23
 //   A value of type string cannot be used as integer
 //
 // Regression: `list.add(numbers, "zz")` stored a string pointer in a list of
 // integers (`l[2]` printed an address).
+//
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
 
 start:
 	list<integer> l = [1, 2]
-	list.add(l, "zz")
-	list.set(l, 0, "zz")
-	list.insert(l, 0, "zz")
-	boolean b = list.contains(l, "zz")
+	l.add("zz")
+	l.set(0, "zz")
+	l.insert(0, "zz")
+	boolean b = l.contains("zz")
 	print(b.toString())

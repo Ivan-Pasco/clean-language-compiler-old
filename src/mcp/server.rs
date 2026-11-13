@@ -1941,11 +1941,11 @@ Clean Language applications should use Clean Language for ALL layers. Do NOT use
 - ONLY as a last resort when no Clean Language plugin covers the specific browser API needed
 
 ### Naming Convention — IMPORTANT
-Clean Language uses **dot notation** for all function calls: `string.length()`, `math.abs()`, `list.add()`.
+Clean Language uses **dot notation** for all function calls: `text.length()`, `math.abs(x)`, `items.add(x)`.
 NEVER use underscore-style names like `_ui_update_element` or `string_compare` in Clean Language code.
 Underscore names are internal host bridge identifiers — they are NOT part of the Clean Language API.
 Always use the dot-notation form shown in the plugin documentation and this reference.
-Use `list.length()` (not `list.size()`) to get the number of elements in a list.
+Use `items.length()` (not `items.size()`) to get the number of elements in a list. List operations are methods (`items.add(x)`, `items.get(i)`); the `list.` namespace has only `list.concat`, `list.range`, `list.fill` and `list.join`.
 
 Call `get_stack_recommendation` with a project type for a tailored plugin list and file structure.
 

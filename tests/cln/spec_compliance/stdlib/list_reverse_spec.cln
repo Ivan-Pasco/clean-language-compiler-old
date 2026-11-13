@@ -1,17 +1,21 @@
 // Spec Section: 7 - Standard Library
 // Tests: list.reverse() - reverse list order
+//
+// Changed in 0.33.184: `list.<method>(items, ...)` namespace calls are now the
+// method form `items.<method>(...)`; the `list.` namespace has only concat,
+// range, fill and join (developer decision)
 
 start:
 	// Test 1: Reverse numbers
 	list<integer> numbers = [1, 2, 3, 4, 5]
-	list<integer> reversed = list.reverse(numbers)
+	list<integer> reversed = numbers.reverse()
 	print("Reversed numbers: ")
 	iterate num in reversed
 		print(num.toString() + " ")
 
 	// Test 2: Reverse strings
 	list<string> words = ["first", "second", "third"]
-	list<string> revWords = list.reverse(words)
+	list<string> revWords = words.reverse()
 	print("Reversed words: ")
 	iterate word in revWords
 		print(word + " ")
