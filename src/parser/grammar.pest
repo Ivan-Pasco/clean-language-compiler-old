@@ -174,8 +174,8 @@ indented_block = { simple_indented_block | function_nested_block }
 // Each indentation level must use exactly ONE tab character
 simple_indented_block = {
     NEWLINE ~ (empty_line)* ~
-    INDENT ~ statement ~
-    (NEWLINE ~ (empty_line)* ~ INDENT ~ statement)*
+    PUSH(INDENT) ~ statement ~ DROP ~
+    (NEWLINE ~ (empty_line)* ~ PUSH(INDENT) ~ statement ~ DROP)*
 }
 
 // Removed indented_statement rule - was allowing INDENT+ which mixed indentation levels
@@ -540,7 +540,10 @@ error_stmt = { "error" ~ "(" ~ expression ~ ")" }
 
 // Control flow with indentation
 if_stmt = { "if" ~ WHITESPACE* ~ expression ~ indented_block ~ else_block? }
-else_block = { NEWLINE ~ (empty_line)* ~ INDENT* ~ "else" ~ (WHITESPACE* ~ "if" ~ WHITESPACE* ~ expression ~ indented_block ~ else_block? | indented_block) }
+// `else` sits at the indentation of its `if` line, which every rule that
+// starts a statement line pushes (`PEEK ~ !INDENT`). Matching any depth let
+// an `if` that ends an outer arm take the next `else if` of the outer chain.
+else_block = { NEWLINE ~ (empty_line)* ~ PEEK ~ !INDENT ~ "else" ~ (WHITESPACE* ~ "if" ~ WHITESPACE* ~ expression ~ indented_block ~ else_block? | indented_block) }
 
 // Iteration
 iterate_stmt = { "iterate" ~ WHITESPACE* ~ identifier ~ WHITESPACE* ~ "in" ~ WHITESPACE* ~ expression ~ indented_block }
@@ -652,7 +655,7 @@ function_body_statements = {
 }
 
 // Function body statements must be indented relative to the function declaration
-function_body_statement = { INDENT+ ~ statement }
+function_body_statement = { PUSH(INDENT+) ~ statement ~ DROP }
 
 
 // Tests block
@@ -745,8 +748,8 @@ computed_declaration = {
 }
 computed_body = {
     NEWLINE ~ (empty_line)* ~
-    INDENT+ ~ statement ~
-    (NEWLINE ~ (empty_line)* ~ INDENT+ ~ statement)*
+    PUSH(INDENT+) ~ statement ~ DROP ~
+    (NEWLINE ~ (empty_line)* ~ PUSH(INDENT+) ~ statement ~ DROP)*
 }
 
 // Watch block - react to state changes
@@ -791,7 +794,7 @@ always_block_stmt = { INDENT ~ INDENT ~ expression }
 always_block = { "always" ~ ":" ~ NEWLINE ~ always_block_stmt ~ (NEWLINE ~ always_block_stmt)* }
 
 // build_block - class construction/configuration block (spec grammar.ebnf §build_block)
-build_block_stmt = { INDENT ~ INDENT ~ statement }
+build_block_stmt = { PUSH(INDENT ~ INDENT) ~ statement ~ DROP }
 build_block = { "build" ~ ":" ~ NEWLINE ~ build_block_stmt ~ (NEWLINE ~ build_block_stmt)* }
 
 // Class definition with "is" inheritance
@@ -809,7 +812,7 @@ class_decl = {
 }
 
 constructor = { "constructor" ~ "(" ~ constructor_parameter_list? ~ ")" ~ constructor_block? }
-constructor_block = { NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ statement ~ (NEWLINE ~ (empty_line)* ~ INDENT ~ INDENT+ ~ statement)* }
+constructor_block = { NEWLINE ~ (empty_line)* ~ PUSH(INDENT ~ INDENT+) ~ statement ~ DROP ~ (NEWLINE ~ (empty_line)* ~ PUSH(INDENT ~ INDENT+) ~ statement ~ DROP)* }
 constructor_parameter_list = { constructor_parameter ~ ("," ~ " "* ~ constructor_parameter)* }
 constructor_parameter = { type_? ~ WHITESPACE* ~ parameter_name }
 

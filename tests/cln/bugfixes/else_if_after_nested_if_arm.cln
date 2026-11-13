@@ -1,0 +1,44 @@
+// Test: bugfixes/else_if_after_nested_if_arm
+// Grammar: if_statement, else_if_clause (grammar.ebnf)
+// Fixed in: compiler 0.33.186
+// Regression (issue #41): an `else if` arm that ends with a nested `if`
+// (no else) must not hand the following `else if` to that nested `if`. The
+// pest grammar, which parses plugin-emitted fragments the token parser
+// rejects (frame.ui's generated setBound assigns `this.field`), matched an
+// `else` at any indentation, so the `size` arm below became the nested if's
+// else and never ran. Rust tests in src/parser/grammar.rs cover the fragment
+// path; this file pins the same shape for source files.
+// Expected output:
+//   agree=false size=0 bio=
+//   agree=true size=7 bio=
+//   agree=true size=7 bio=hi
+
+start:
+	Form f = Form()
+	f.setBound("size", "")
+	printl(f.show())
+	f.setBound("agree", "true")
+	f.setBound("size", "7")
+	printl(f.show())
+	f.setBound("bio", "hi")
+	printl(f.show())
+
+class Form
+	boolean agree = false
+	integer size = 0
+	string bio = ""
+
+	functions:
+		public:
+			void setBound(string field, string value)
+				if field == "agree"
+					if value != ""
+						agree = value.toBoolean()
+				else if field == "size"
+					if value != ""
+						size = value.toInteger()
+				else if field == "bio"
+					bio = value
+
+			string show()
+				return "agree=" + agree.toString() + " size=" + size.toString() + " bio=" + bio

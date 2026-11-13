@@ -549,6 +549,114 @@ mod tests {
         }
     }
 
+    /// The arms of an `if` / `else if` chain, outermost first.
+    fn else_if_arms(stmt: &Statement) -> Vec<&Vec<Statement>> {
+        let mut arms = Vec::new();
+        let mut current = stmt;
+        loop {
+            let Statement::If {
+                then_branch,
+                else_branch,
+                ..
+            } = current
+            else {
+                panic!("expected an if statement, got {:?}", current)
+            };
+            arms.push(then_branch);
+            match else_branch.as_deref() {
+                Some([next @ Statement::If { .. }]) => current = next,
+                Some(other) => panic!("unexpected else branch {:?}", other),
+                None => return arms,
+            }
+        }
+    }
+
+    /// The chain `f == "agree"` / `"size"` / `"bio"` whose first two arms end
+    /// with a nested `if` that has no `else`.
+    fn assert_three_arm_chain(stmt: &Statement) {
+        let arms = else_if_arms(stmt);
+        assert_eq!(arms.len(), 3, "chain must keep all three arms: {:?}", stmt);
+        for arm in &arms[..2] {
+            match arm.as_slice() {
+                [Statement::If { else_branch, .. }] => assert!(
+                    else_branch.is_none(),
+                    "the nested if must not take the next else-if arm: {:?}",
+                    stmt
+                ),
+                other => panic!("arm must hold the nested if, got {:?}", other),
+            }
+        }
+    }
+
+    /// Regression (issue #41): a fragment whose `else if` arm ends with a
+    /// nested `if` — frame.ui's generated setBound. `this.field = value` sends
+    /// the fragment to the pest grammar, whose `else` matched at any depth,
+    /// so the nested `if` took the following `else if` and that arm never
+    /// ran.
+    #[test]
+    fn fragment_else_if_after_nested_if_stays_in_the_outer_chain() {
+        let fragment = "if __field == \"agree\"\n\tif __value != \"\"\n\t\tthis.agree = __value.toBoolean()\nelse if __field == \"size\"\n\tif __value != \"\"\n\t\tthis.size = __value.toInteger()\nelse if __field == \"bio\"\n\tthis.bio = __value\n";
+        match CleanParser::parse_single_statement(fragment) {
+            SingleStatementParse::Statement(stmt) => assert_three_arm_chain(&stmt),
+            _ => panic!("fragment must parse as a statement"),
+        }
+    }
+
+    /// The pest grammar gives an `else` to the `if` at its own indentation in
+    /// every block form: `start:`, function bodies, class methods and
+    /// constructors.
+    #[test]
+    fn pest_else_belongs_to_the_if_at_its_indentation() {
+        let chain = |indent: &str| {
+            [
+                "if f == \"agree\"",
+                "\tif v != \"\"",
+                "\t\tprintl(\"agree\")",
+                "else if f == \"size\"",
+                "\tif v != \"\"",
+                "\t\tprintl(\"size\")",
+                "else if f == \"bio\"",
+                "\tprintl(\"bio\")",
+            ]
+            .iter()
+            .map(|line| format!("{}{}\n", indent, line))
+            .collect::<String>()
+        };
+        let parse = |source: &str| {
+            ErrorRecoveringParser::new(source, "")
+                .parse_program()
+                .unwrap_or_else(|e| panic!("pest must parse `{}`: {}", source, e))
+        };
+
+        let program = parse(&format!(
+            "start:\n\tstring f = \"size\"\n\tstring v = \"1\"\n{}",
+            chain("\t")
+        ));
+        let body = &program.start_function.as_ref().expect("start block").body;
+        assert_three_arm_chain(&body[2]);
+
+        let program = parse(&format!(
+            "functions:\n\tvoid pick(string f, string v)\n{}",
+            chain("\t\t")
+        ));
+        let pick = program
+            .functions
+            .iter()
+            .find(|f| f.name == "pick")
+            .expect("function pick");
+        assert_three_arm_chain(&pick.body[0]);
+
+        let program = parse(&format!(
+            "class Box\n\tinteger n = 0\n\n\tconstructor(string f, string v)\n{}\n\tfunctions:\n\t\tvoid pick(string f, string v)\n{}",
+            chain("\t\t"),
+            chain("\t\t\t")
+        ));
+        let class = &program.classes[0];
+        let constructor = class.constructor.as_ref().expect("constructor");
+        assert_three_arm_chain(&constructor.body[0]);
+        assert_three_arm_chain(&class.methods[0].body[0]);
+    }
+
     #[test]
     fn statement_offsets_skip_the_wrapper_tabs() {
         // wrapped: "start:\n\tab\n\n\tcd\n"
