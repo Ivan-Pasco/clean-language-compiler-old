@@ -55,6 +55,8 @@ impl MirBuilder {
                         | "string.toInteger"
                         | "string.toNumber"
                         | "string.toBoolean"
+                        | crate::typechecker::tast::STRING_TO_U32
+                        | crate::typechecker::tast::STRING_TO_U64
                         | "__json_decode_v2_or_raise"
                         | crate::stdlib::json_class::JSON_TO_CLN_LIST
                         | crate::stdlib::json_class::ANY_ITERABLE

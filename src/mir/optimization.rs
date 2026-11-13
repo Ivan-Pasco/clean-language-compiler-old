@@ -281,6 +281,26 @@ impl OptimizationPass for ConstantFoldingPass {
         // their value changes at runtime.
         self.find_multi_def_values(function);
 
+        // Arithmetic on `integer:32u` / `integer:64u` values is unsigned;
+        // the folding rules below are signed, so it is left to run time.
+        let unsigned_values: std::collections::HashSet<ValueId> = function
+            .locals
+            .iter()
+            .filter(|(_, local)| {
+                matches!(
+                    local.local_type,
+                    crate::mir::MirType::U32 | crate::mir::MirType::U64
+                )
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        let involves_unsigned = |dest: Option<ValueId>, operands: &[&MirOperand]| {
+            dest.is_some_and(|d| unsigned_values.contains(&d))
+                || operands
+                    .iter()
+                    .any(|o| matches!(o, MirOperand::Value(id) if unsigned_values.contains(id)))
+        };
+
         // Track constants through the function
         for block in function.blocks.values_mut() {
             for instruction in block.instructions.iter_mut() {
@@ -297,6 +317,10 @@ impl OptimizationPass for ConstantFoldingPass {
                         }
                     }
 
+                    MirOperation::BinaryOp { left, right, .. }
+                        if involves_unsigned(instruction.dest, &[left, right]) => {}
+                    MirOperation::UnaryOp { operand, .. }
+                        if involves_unsigned(instruction.dest, &[operand]) => {}
                     MirOperation::BinaryOp { op, left, right } => {
                         // Try to resolve operands to constants
                         // CRITICAL: Only look up constants for single-def values

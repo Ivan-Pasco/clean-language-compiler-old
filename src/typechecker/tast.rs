@@ -63,6 +63,14 @@ pub const OPTIONAL_BOX: &str = "__optional_box";
 /// which raises "<value> does not fit in <type>".
 pub const INTEGER_FIT_PREFIX: &str = "__integer_fit_";
 
+/// `.toInteger()` of text stored straight into an `integer:32u`: the type
+/// checker calls this converter instead, which accepts up to 4294967295.
+pub const STRING_TO_U32: &str = "__string_to_u32";
+
+/// `.toInteger()` of text stored straight into an `integer:64u`: accepts up
+/// to 18446744073709551615.
+pub const STRING_TO_U64: &str = "__string_to_u64";
+
 /// Type-checked program representation
 #[derive(Debug, Clone)]
 pub struct TastProgram {

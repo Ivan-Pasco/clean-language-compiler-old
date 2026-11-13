@@ -93,33 +93,49 @@ impl MirCodeGenerator<'_> {
                     && (left_is_i64 || right_is_i64)
                     && !self.is_string_operand(left)
                     && !self.is_string_operand(right);
+                // `integer:32u` / `integer:64u` operands: unsigned
+                // extension, conversion, division, comparison and overflow.
+                let left_unsigned = self.is_unsigned_operand(left);
+                let right_unsigned = self.is_unsigned_operand(right);
+                let unsigned = (left_unsigned || right_unsigned)
+                    && !left_is_float
+                    && !right_is_float
+                    && !self.is_string_operand(left)
+                    && !self.is_string_operand(right);
+                let to_f64 = |is_i64: bool, is_unsigned: bool| match (is_i64, is_unsigned) {
+                    (true, true) => Instruction::F64ConvertI64U,
+                    (true, false) => Instruction::F64ConvertI64S,
+                    (false, true) => Instruction::F64ConvertI32U,
+                    (false, false) => Instruction::F64ConvertI32S,
+                };
+                let extend = |is_unsigned: bool| {
+                    if is_unsigned {
+                        Instruction::I64ExtendI32U
+                    } else {
+                        Instruction::I64ExtendI32S
+                    }
+                };
 
                 // Load left operand
                 self.load_operand(left)?;
                 // Convert left to f64 if right is float and left is not
                 if !left_is_float && right_is_float {
-                    self.current_instructions.push(if left_is_i64 {
-                        Instruction::F64ConvertI64S
-                    } else {
-                        Instruction::F64ConvertI32S
-                    });
+                    self.current_instructions
+                        .push(to_f64(left_is_i64, left_unsigned));
                 }
                 if use_i64 && !left_is_i64 {
-                    self.current_instructions.push(Instruction::I64ExtendI32S);
+                    self.current_instructions.push(extend(left_unsigned));
                 }
 
                 // Load right operand
                 self.load_operand(right)?;
                 // Convert right to f64 if left is float and right is not
                 if left_is_float && !right_is_float {
-                    self.current_instructions.push(if right_is_i64 {
-                        Instruction::F64ConvertI64S
-                    } else {
-                        Instruction::F64ConvertI32S
-                    });
+                    self.current_instructions
+                        .push(to_f64(right_is_i64, right_unsigned));
                 }
                 if use_i64 && !right_is_i64 {
-                    self.current_instructions.push(Instruction::I64ExtendI32S);
+                    self.current_instructions.push(extend(right_unsigned));
                 }
 
                 // Generate the operation
@@ -127,7 +143,7 @@ impl MirCodeGenerator<'_> {
                     && !left_is_float
                     && !right_is_float
                 {
-                    self.emit_integer_division(op, use_i64, right)?;
+                    self.emit_integer_division(op, use_i64, unsigned, right)?;
                 } else if matches!(
                     op,
                     MirBinaryOp::CheckedAdd | MirBinaryOp::CheckedSub | MirBinaryOp::CheckedMul
@@ -136,7 +152,23 @@ impl MirCodeGenerator<'_> {
                     && !self.is_string_operand(left)
                     && !self.is_string_operand(right)
                 {
-                    self.emit_checked_arithmetic(op, use_i64)?;
+                    self.emit_checked_arithmetic(op, use_i64, unsigned)?;
+                } else if unsigned
+                    && matches!(
+                        op,
+                        MirBinaryOp::Lt | MirBinaryOp::Le | MirBinaryOp::Gt | MirBinaryOp::Ge
+                    )
+                {
+                    self.current_instructions.push(match (op, use_i64) {
+                        (MirBinaryOp::Lt, false) => Instruction::I32LtU,
+                        (MirBinaryOp::Le, false) => Instruction::I32LeU,
+                        (MirBinaryOp::Gt, false) => Instruction::I32GtU,
+                        (MirBinaryOp::Ge, false) => Instruction::I32GeU,
+                        (MirBinaryOp::Lt, true) => Instruction::I64LtU,
+                        (MirBinaryOp::Le, true) => Instruction::I64LeU,
+                        (MirBinaryOp::Gt, true) => Instruction::I64GtU,
+                        _ => Instruction::I64GeU,
+                    });
                 } else if use_i64 {
                     self.generate_i64_binary_operation(op);
                 } else {
@@ -2820,7 +2852,8 @@ impl MirCodeGenerator<'_> {
         ])
     }
 
-    /// Integer `/` or `%` with both operands on the stack (i64 when `wide`).
+    /// Integer `/` or `%` with both operands on the stack (i64 when `wide`;
+    /// `div_u` / `rem_u` when `unsigned`).
     /// A zero divisor raises "division by zero" and `MIN / -1` raises
     /// "integer overflow"; the result is then 0, and the `ErrorCheck` the
     /// MIR builder put after the operation unwinds to the handler. A
@@ -2829,15 +2862,21 @@ impl MirCodeGenerator<'_> {
         &mut self,
         op: &MirBinaryOp,
         wide: bool,
+        unsigned: bool,
         divisor: &MirOperand,
     ) -> Result<(), CompilerError> {
-        let is_div = matches!(op, MirBinaryOp::Div);
-        let operation = match (is_div, wide) {
-            (true, false) => Instruction::I32DivS,
-            (false, false) => Instruction::I32RemS,
-            (true, true) => Instruction::I64DivS,
-            (false, true) => Instruction::I64RemS,
+        let operation = match (matches!(op, MirBinaryOp::Div), wide, unsigned) {
+            (true, false, false) => Instruction::I32DivS,
+            (false, false, false) => Instruction::I32RemS,
+            (true, true, false) => Instruction::I64DivS,
+            (false, true, false) => Instruction::I64RemS,
+            (true, false, true) => Instruction::I32DivU,
+            (false, false, true) => Instruction::I32RemU,
+            (true, true, true) => Instruction::I64DivU,
+            (false, true, true) => Instruction::I64RemU,
         };
+        // Unsigned division has no `MIN / -1`.
+        let is_div = matches!(op, MirBinaryOp::Div) && !unsigned;
         let constant_divisor = match divisor {
             MirOperand::Constant(MirConstant::Integer(n)) => Some(i64::from(*n as i32)),
             MirOperand::Constant(MirConstant::Integer64(n)) => Some(*n),
@@ -2913,8 +2952,12 @@ impl MirCodeGenerator<'_> {
         &mut self,
         op: &MirBinaryOp,
         wide: bool,
+        unsigned: bool,
     ) -> Result<(), CompilerError> {
         let overflow = self.raise_with_zero("integer overflow", wide)?;
+        if unsigned {
+            return self.emit_checked_unsigned_arithmetic(op, wide, overflow);
+        }
         if !wide {
             let wide_op = match op {
                 MirBinaryOp::CheckedAdd => Instruction::I64Add,
@@ -3019,10 +3062,116 @@ impl MirCodeGenerator<'_> {
         Ok(())
     }
 
+    /// Unsigned `+`, `-`, `*` (`integer:32u`, `integer:64u`) with both
+    /// operands on the stack: a result above the maximum or below 0 raises
+    /// "integer overflow" (`overflow` leaves the zero). 32-bit operands are
+    /// zero-extended and the i64 result compared with `u32::MAX`; 64-bit
+    /// addition overflows when `r <u a`, subtraction when `a <u b`, and
+    /// multiplication when `a != 0 && r /u a != b`.
+    fn emit_checked_unsigned_arithmetic(
+        &mut self,
+        op: &MirBinaryOp,
+        wide: bool,
+        overflow: Vec<Instruction<'static>>,
+    ) -> Result<(), CompilerError> {
+        let operation = match op {
+            MirBinaryOp::CheckedAdd => Instruction::I64Add,
+            MirBinaryOp::CheckedSub => Instruction::I64Sub,
+            _ => Instruction::I64Mul,
+        };
+        if !wide {
+            let right = self.alloc_temp_local(ValType::I32);
+            let result = self.alloc_temp_local(ValType::I64);
+            self.current_instructions.extend([
+                Instruction::LocalSet(right),
+                Instruction::I64ExtendI32U,
+                Instruction::LocalGet(right),
+                Instruction::I64ExtendI32U,
+                operation,
+                Instruction::LocalTee(result),
+                Instruction::I64Const(u32::MAX as i64),
+                Instruction::I64GtU,
+                Instruction::If(BlockType::Result(ValType::I32)),
+            ]);
+            self.current_instructions.extend(overflow);
+            self.current_instructions.extend([
+                Instruction::Else,
+                Instruction::LocalGet(result),
+                Instruction::I32WrapI64,
+                Instruction::End,
+            ]);
+            return Ok(());
+        }
+        let a = self.alloc_temp_local(ValType::I64);
+        let b = self.alloc_temp_local(ValType::I64);
+        let r = self.alloc_temp_local(ValType::I64);
+        self.current_instructions.extend([
+            Instruction::LocalSet(b),
+            Instruction::LocalTee(a),
+            Instruction::LocalGet(b),
+            operation,
+            Instruction::LocalSet(r),
+        ]);
+        self.current_instructions.extend(match op {
+            MirBinaryOp::CheckedAdd => vec![
+                Instruction::LocalGet(r),
+                Instruction::LocalGet(a),
+                Instruction::I64LtU,
+            ],
+            MirBinaryOp::CheckedSub => vec![
+                Instruction::LocalGet(a),
+                Instruction::LocalGet(b),
+                Instruction::I64LtU,
+            ],
+            _ => vec![
+                Instruction::LocalGet(a),
+                Instruction::I64Eqz,
+                Instruction::If(BlockType::Result(ValType::I32)),
+                Instruction::I32Const(0),
+                Instruction::Else,
+                Instruction::LocalGet(r),
+                Instruction::LocalGet(a),
+                Instruction::I64DivU,
+                Instruction::LocalGet(b),
+                Instruction::I64Ne,
+                Instruction::End,
+            ],
+        });
+        self.current_instructions
+            .push(Instruction::If(BlockType::Result(ValType::I64)));
+        self.current_instructions.extend(overflow);
+        self.current_instructions.extend([
+            Instruction::Else,
+            Instruction::LocalGet(r),
+            Instruction::End,
+        ]);
+        Ok(())
+    }
+
     /// `-x` of an integer on the stack (i64 when `wide`): `-MIN` raises
     /// "integer overflow" and gives 0.
-    fn emit_checked_negation(&mut self, wide: bool) -> Result<(), CompilerError> {
+    fn emit_checked_negation(&mut self, wide: bool, unsigned: bool) -> Result<(), CompilerError> {
         let overflow = self.raise_with_zero("integer overflow", wide)?;
+        if unsigned {
+            // `-x` of an unsigned value is below 0 unless x is 0.
+            let is_zero = if wide {
+                Instruction::I64Eqz
+            } else {
+                Instruction::I32Eqz
+            };
+            let val_type = if wide { ValType::I64 } else { ValType::I32 };
+            let value = self.alloc_temp_local(val_type);
+            self.current_instructions.extend([
+                Instruction::LocalTee(value),
+                is_zero,
+                Instruction::If(BlockType::Result(val_type)),
+                Instruction::LocalGet(value),
+                Instruction::Else,
+            ]);
+            self.current_instructions.extend(overflow);
+            self.current_instructions.push(Instruction::End);
+            return Ok(());
+        }
         let (val_type, minimum, eq, zero, sub) = if wide {
             (
                 ValType::I64,
@@ -3078,6 +3227,15 @@ impl MirCodeGenerator<'_> {
             MirBinaryOp::Or => Instruction::I64Or,
         };
         self.current_instructions.push(instruction);
+    }
+
+    /// Helper: whether an operand is an unsigned 32- or 64-bit integer
+    /// (`integer:32u`, `integer:64u`).
+    pub(super) fn is_unsigned_operand(&self, operand: &MirOperand) -> bool {
+        matches!(
+            self.get_operand_mir_type(operand),
+            Some(MirType::U32 | MirType::U64)
+        )
     }
 
     /// Helper: Check if an operand is a 64-bit integer (`integer:64`).
@@ -3140,7 +3298,10 @@ impl MirCodeGenerator<'_> {
                     self.current_instructions.push(Instruction::F64Neg);
                 } else {
                     // `-MIN` raises "integer overflow".
-                    self.emit_checked_negation(is_i64)?;
+                    self.emit_checked_negation(
+                        is_i64,
+                        matches!(operand_type, Some(MirType::U32 | MirType::U64)),
+                    )?;
                 }
             }
             MirUnaryOp::Not => {

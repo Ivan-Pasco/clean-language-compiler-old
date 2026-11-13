@@ -161,15 +161,28 @@ impl MirBuilder {
     /// map whose values are collections, `any` values or instances; `None`
     /// for the one-level collections `emit_box_any` converts directly.
     pub(super) fn nested_collection_descriptor(source_type: &ConcreteType) -> Option<String> {
+        // `integer:32u` / `integer:64u` elements box through `__cln_to_any`,
+        // which keeps their values above the signed maximum.
+        let unsigned = |t: &ConcreteType| {
+            matches!(
+                t,
+                ConcreteType::IntegerSized {
+                    bits: 32 | 64,
+                    unsigned: true
+                }
+            )
+        };
         let nested = match source_type {
             ConcreteType::Array(element) => {
-                matches!(
-                    **element,
-                    ConcreteType::Array(_) | ConcreteType::Pairs(_, _)
-                )
+                unsigned(element)
+                    || matches!(
+                        **element,
+                        ConcreteType::Array(_) | ConcreteType::Pairs(_, _)
+                    )
             }
             ConcreteType::Pairs(_, value) => {
-                value.optional_primitive().is_some()
+                unsigned(value)
+                    || value.optional_primitive().is_some()
                     || matches!(
                         **value,
                         ConcreteType::Array(_)
@@ -1052,6 +1065,16 @@ impl MirBuilder {
                     ConcreteType::Boolean => code::OPTIONAL_BOOLEAN,
                     _ => return None,
                 },
+                // Boxing (`any_key`, `__cln_to_any`) keeps the unsigned
+                // values above the signed maximum.
+                ConcreteType::IntegerSized {
+                    bits: 32,
+                    unsigned: true,
+                } if any_key => code::UNSIGNED_32,
+                ConcreteType::IntegerSized {
+                    bits: 64,
+                    unsigned: true,
+                } if any_key => code::UNSIGNED_64,
                 ConcreteType::Integer
                 | ConcreteType::IntegerSized {
                     bits: 8 | 16 | 32, ..
@@ -1133,13 +1156,20 @@ impl MirBuilder {
         expr_type: &ConcreteType,
     ) -> MirConstant {
         match literal {
-            TastLiteral::Integer(i) => {
-                if Self::is_i64_literal(*i, expr_type) {
-                    MirConstant::Integer64(*i)
-                } else {
-                    MirConstant::Integer(*i)
-                }
-            }
+            // An `integer:32u` literal is its 32-bit pattern (`Integer`
+            // narrows to i32), an `integer:64u` literal its 64-bit one.
+            TastLiteral::Integer(i) => match expr_type {
+                ConcreteType::IntegerSized {
+                    bits: 32,
+                    unsigned: true,
+                } => MirConstant::Integer(*i),
+                ConcreteType::IntegerSized {
+                    bits: 64,
+                    unsigned: true,
+                } => MirConstant::Integer64(*i),
+                _ if Self::is_i64_literal(*i, expr_type) => MirConstant::Integer64(*i),
+                _ => MirConstant::Integer(*i),
+            },
             TastLiteral::Number(f) => MirConstant::Float(*f),
             TastLiteral::String(s) => {
                 let index = self.get_string_index(s.clone());
@@ -1158,13 +1188,18 @@ impl MirBuilder {
         expr_type: &ConcreteType,
     ) -> MirType {
         match literal {
-            TastLiteral::Integer(i) => {
-                if Self::is_i64_literal(*i, expr_type) {
-                    MirType::I64
-                } else {
-                    MirType::I32 // Default integer type
-                }
-            }
+            TastLiteral::Integer(i) => match expr_type {
+                ConcreteType::IntegerSized {
+                    bits: 32,
+                    unsigned: true,
+                } => MirType::U32,
+                ConcreteType::IntegerSized {
+                    bits: 64,
+                    unsigned: true,
+                } => MirType::U64,
+                _ if Self::is_i64_literal(*i, expr_type) => MirType::I64,
+                _ => MirType::I32, // Default integer type
+            },
             TastLiteral::Number(_) => MirType::F64, // Default float type
             TastLiteral::String(_) => MirType::Ptr(Box::new(MirType::I8)), // String as i8 pointer
             TastLiteral::Boolean(_) => MirType::Bool,
@@ -1209,6 +1244,49 @@ impl MirBuilder {
         context.function.locals.insert(value_id, local);
     }
 
+    /// The decimal text of an `integer:32u` (zero-extended to i64) or an
+    /// `integer:64u` (`uint64_to_string`, which reads the top bit as part of
+    /// the value).
+    pub(super) fn unsigned_integer_text(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        value_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let text_type = MirType::Ptr(Box::new(MirType::U8));
+        if matches!(value_type, ConcreteType::IntegerSized { bits: 64, .. }) {
+            return self.emit_named_call(
+                context,
+                "uint64_to_string",
+                vec![MirOperand::Value(value_id)],
+                text_type,
+                location,
+            );
+        }
+        let wide_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, wide_id, MirType::I64, location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(wide_id),
+                operation: MirOperation::Cast {
+                    value: MirOperand::Value(value_id),
+                    target_type: MirType::I64,
+                },
+                location: location.clone(),
+            },
+        );
+        self.emit_named_call(
+            context,
+            "int64_to_string",
+            vec![MirOperand::Value(wide_id)],
+            text_type,
+            location,
+        )
+    }
+
     /// Convert a value to string for print() calls
     /// Returns the ValueId of the string result
     pub(super) fn convert_value_to_string(
@@ -1234,6 +1312,9 @@ impl MirBuilder {
                     MirType::Ptr(Box::new(MirType::U8)),
                     location,
                 )
+            }
+            ConcreteType::IntegerSized { unsigned: true, .. } => {
+                Ok(self.unsigned_integer_text(context, value_id, value_type, location))
             }
             ConcreteType::IntegerSized { bits: 64, .. } => {
                 // 64-bit integers use int64_to_string (registered with i64 param)

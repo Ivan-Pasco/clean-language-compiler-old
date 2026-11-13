@@ -1,0 +1,56 @@
+// Test: bugfixes/unsigned_64_values_above_signed_maximum
+// Semantic: type-system.md §2 — `integer:64u` holds 0 to
+//   18446744073709551615; values above the signed maximum behave as the
+//   positive numbers they are (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   18446744073709551615
+//   18446744073709551615
+//   1844674407370955161
+//   5
+//   true
+//   false
+//   18446744073709551610
+//   overflow 1
+//   overflow 2
+//   below 3
+//   negate 4
+//   integer 5
+//   integer -6
+//   12
+//   9223372036854775808
+//   text 7
+//   [1.8446744073709552e+19,5]
+
+start:
+	integer:64u huge = "18446744073709551615".toInteger()
+	integer:64u mid = 5
+	print(huge)
+	print("{huge}")
+	print(huge / 10)
+	print(huge % 10)
+	print(huge > mid)
+	print(huge < mid)
+	print(huge - mid)
+	integer:64u sum = huge + mid onError 1
+	print("overflow {sum}")
+	integer:64u product = huge * 2 onError 2
+	print("overflow {product}")
+	integer:64u below = mid - huge onError 3
+	print("below {below}")
+	integer:64u negated = -mid onError 4
+	print("negate {negated}")
+	integer asInteger = huge onError 5
+	print("integer {asInteger}")
+	integer small = mid
+	integer fromSmall = small - 11 onError 6
+	print("integer {fromSmall + 0}")
+	integer:64u twelve = 12
+	integer twelveAsInteger = twelve
+	print(twelveAsInteger)
+	integer:64u half = "9223372036854775808".toInteger()
+	print(half)
+	integer:64u tooBig = "18446744073709551616".toInteger() onError 7
+	print("text {tooBig}")
+	list<integer:64u> ys = [huge, mid]
+	print(ys)

@@ -736,7 +736,7 @@ impl super::CodeGenerator {
             &[WasmType::I32],
             Some(WasmType::I32),
             &integer_locals,
-            &gen_string_to_integer(false, integer_errors),
+            &gen_string_to_integer(false, false, integer_errors),
         )?;
         self.add_function_alias("string_to_int", to_int);
         self.add_function_alias("string.toInteger", to_int);
@@ -745,8 +745,31 @@ impl super::CodeGenerator {
             &[WasmType::I32],
             Some(WasmType::I64),
             &integer_locals,
-            &gen_string_to_integer(true, integer64_errors),
+            &gen_string_to_integer(true, false, integer64_errors),
         )?;
+        for (name, wide, type_name) in [
+            (
+                crate::typechecker::tast::STRING_TO_U32,
+                false,
+                "integer:32u",
+            ),
+            (crate::typechecker::tast::STRING_TO_U64, true, "integer:64u"),
+        ] {
+            let errors = ConversionErrors {
+                too_large: self
+                    .get_or_create_string_offset(&format!("' is too large for {type_name}"))?,
+                too_small: self
+                    .get_or_create_string_offset(&format!("' is too small for {type_name}"))?,
+                ..integer_errors
+            };
+            self.register_function_with_locals(
+                name,
+                &[WasmType::I32],
+                Some(if wide { WasmType::I64 } else { WasmType::I32 }),
+                &integer_locals,
+                &gen_string_to_integer(wide, true, errors),
+            )?;
+        }
 
         let number_errors = ConversionErrors {
             raise,
@@ -787,9 +810,25 @@ impl super::CodeGenerator {
         // `__integer_fit_integer`, which `any` → `integer` conversions call
         // (`emit_any_unbox`).
         let int64_to_string = required(self, "__int64_to_string")?;
+        // The text of an `integer:64u`.
+        let uint64_to_string = self.register_function(
+            "__uint64_to_string",
+            &[WasmType::I64],
+            Some(WasmType::I32),
+            &native_stdlib::type_conversions::gen_uint64_to_string(int64_to_string, concat_idx),
+        )?;
+        self.add_function_alias("uint64_to_string", uint64_to_string);
         for (suffix, type_name, min, max) in native_stdlib::type_conversions::INTEGER_FIT_TARGETS {
-            let name = format!("__integer_fit_{suffix}");
-            if suffix == "integer" || self.has_reachable_prefix(&name) {
+            for unsigned_source in [false, true] {
+                let name = if unsigned_source {
+                    format!("__integer_fit_{suffix}_u")
+                } else {
+                    format!("__integer_fit_{suffix}")
+                };
+                let always = suffix == "integer" && !unsigned_source;
+                if !always && !self.has_reachable_prefix(&name) {
+                    continue;
+                }
                 let message =
                     self.get_or_create_string_offset(&format!(" does not fit in {type_name}"))?;
                 self.register_function(
@@ -799,7 +838,9 @@ impl super::CodeGenerator {
                     &native_stdlib::type_conversions::gen_integer_fit(
                         min,
                         max,
+                        unsigned_source,
                         int64_to_string,
+                        uint64_to_string,
                         concat_idx,
                         err_raise_idx,
                         message,

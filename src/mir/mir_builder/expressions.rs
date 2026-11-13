@@ -762,6 +762,15 @@ impl MirBuilder {
                     {
                         result_type = MirType::I64;
                     }
+                    // `integer:32u` / `integer:64u` results stay unsigned.
+                    if !is_comparison_or_logical
+                        && matches!(
+                            expression.expr_type,
+                            ConcreteType::IntegerSized { unsigned: true, .. }
+                        )
+                    {
+                        result_type = self.convert_concrete_type(&expression.expr_type);
+                    }
                     self.register_temp_local(
                         context,
                         result_id,
@@ -929,6 +938,25 @@ impl MirBuilder {
                         &expression.expr_type,
                         &expression.location,
                     );
+                }
+
+                // `.toInteger()` of text stored into `integer:32u` /
+                // `integer:64u`: the type checker calls the unsigned parser.
+                if let Some(converter) = function_name_opt.as_deref().filter(|name| {
+                    *name == crate::typechecker::tast::STRING_TO_U32
+                        || *name == crate::typechecker::tast::STRING_TO_U64
+                }) {
+                    if arguments.len() == 1 {
+                        let text_id = self.build_expression(context, &arguments[0])?;
+                        let result_type = self.convert_concrete_type(&expression.expr_type);
+                        return Ok(self.emit_named_call(
+                            context,
+                            converter,
+                            vec![MirOperand::Value(text_id)],
+                            result_type,
+                            &expression.location,
+                        ));
+                    }
                 }
 
                 // A value stored into a sized integer it may not fit in:
@@ -1740,6 +1768,22 @@ impl MirBuilder {
                     );
 
                     return Ok(result_id);
+                }
+
+                // `integer:32u` / `integer:64u`: the unsigned text.
+                if method_name == "toString"
+                    && matches!(
+                        &receiver_actual_type,
+                        ConcreteType::IntegerSized { unsigned: true, .. }
+                    )
+                {
+                    let receiver_type = receiver_actual_type.clone();
+                    return Ok(self.unsigned_integer_text(
+                        context,
+                        receiver_id,
+                        &receiver_type,
+                        &expression.location,
+                    ));
                 }
 
                 // NOTE: Handle IntegerSized{64}.toString() EARLY — bypass the regular

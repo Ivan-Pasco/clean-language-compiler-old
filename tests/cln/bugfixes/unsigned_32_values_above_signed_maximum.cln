@@ -1,0 +1,80 @@
+// Test: bugfixes/unsigned_32_values_above_signed_maximum
+// Semantic: type-system.md §2 — `integer:32u` holds 0 to 4294967295; values
+//   above the signed maximum behave as the positive numbers they are in
+//   arithmetic, division, comparison, text, conversions, `any`, fit checks
+//   and collections (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   3000000000
+//   3000000000
+//   big = 3000000000
+//   4000000000
+//   true
+//   false
+//   428571428
+//   4
+//   overflow 1
+//   below 2
+//   3000000000
+//   integer 3
+//   4294967295
+//   text 4
+//   text 5
+//   3000000000
+//   3000000000
+//   [3000000000,7]
+//   {"a":3000000000}
+//   [3000000000,7]
+//   3000000007
+//   4000000000
+//   fit 6
+//   fit 7
+//   0
+
+start:
+	integer:32u big = 3000000000
+	integer:32u other = 1000000000
+	print(big)
+	print(big.toString())
+	print("big = {big}")
+	print(big + other)
+	print(big > other)
+	print(big < other)
+	print(big / 7)
+	print(big % 7)
+	integer:32u sum = big + big onError 1
+	print("overflow {sum}")
+	integer:32u five = 5
+	integer:32u below = five - 6 onError 2
+	print("below {below}")
+	print(big.toNumber())
+	integer asInteger = big onError 3
+	print("integer {asInteger}")
+	integer:32u fromText = "4294967295".toInteger()
+	print(fromText)
+	integer:32u tooBig = "4294967296".toInteger() onError 4
+	print("text {tooBig}")
+	integer:32u negative = "-1".toInteger() onError 5
+	print("text {negative}")
+	any boxed = big
+	print(boxed)
+	integer:32u back = boxed
+	print(back)
+	list<integer:32u> xs = [big, 7]
+	print(xs)
+	pairs<string, integer:32u> m = {"a": big}
+	print(m)
+	print(json.encode(xs))
+	integer:32u total = 0
+	iterate x in xs
+		total = total + x
+	print(total)
+	xs.add(4000000000)
+	print(xs.get(2))
+	integer:8u tiny = big onError 6
+	print("fit {tiny}")
+	integer minusOne = -1
+	integer:32u fromNegative = minusOne onError 7
+	print("fit {fromNegative}")
+	integer:32u zero = 0
+	print(-zero)

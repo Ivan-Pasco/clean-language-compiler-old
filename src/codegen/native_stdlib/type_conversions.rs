@@ -446,17 +446,28 @@ fn raise_and_return(
 /// Locals: 0 text (parameter), 1 len, 2 negative, 3 i, 4 magnitude (i64),
 /// 5 byte, then its digit value, 6 limit (i64, the largest magnitude
 /// allowed), 7 digit (i64).
-pub fn gen_string_to_integer(wide: bool, errors: ConversionErrors) -> Vec<Instruction<'static>> {
+///
+/// With `unsigned`, the target is `integer:32u` (`__string_to_u32`) or
+/// `integer:64u` (`__string_to_u64`): up to 4294967295 or
+/// 18446744073709551615 (the magnitude compares unsigned), and a negative
+/// value other than `-0` is too small.
+pub fn gen_string_to_integer(
+    wide: bool,
+    unsigned: bool,
+    errors: ConversionErrors,
+) -> Vec<Instruction<'static>> {
     let zero = if wide {
         Instruction::I64Const(0)
     } else {
         Instruction::I32Const(0)
     };
     // The negative limit of integer:64 is 2^63, i64::MIN read unsigned.
-    let (max, negative_limit) = if wide {
-        (i64::MAX, i64::MIN)
-    } else {
-        (i32::MAX as i64, -(i32::MIN as i64))
+    let (max, negative_limit) = match (wide, unsigned) {
+        (true, false) => (i64::MAX, i64::MIN),
+        (false, false) => (i32::MAX as i64, -(i32::MIN as i64)),
+        // u64::MAX read unsigned; a negative magnitude is rejected below.
+        (true, true) => (-1, -1),
+        (false, true) => (u32::MAX as i64, u32::MAX as i64),
     };
     let invalid = || vec![Instruction::I32Const(errors.invalid as i32)];
     let out_of_range = vec![
@@ -553,7 +564,7 @@ pub fn gen_string_to_integer(wide: bool, errors: ConversionErrors) -> Vec<Instru
         Instruction::I64GtU,
         Instruction::If(BlockType::Empty),
     ]);
-    v.extend(raise_and_return(errors.raise, out_of_range, zero));
+    v.extend(raise_and_return(errors.raise, out_of_range, zero.clone()));
     v.extend([
         Instruction::End,
         Instruction::LocalGet(4),
@@ -569,19 +580,64 @@ pub fn gen_string_to_integer(wide: bool, errors: ConversionErrors) -> Vec<Instru
         Instruction::Br(0),
         Instruction::End,
         Instruction::End,
-        Instruction::LocalGet(2),
-        Instruction::If(BlockType::Result(ValType::I64)),
-        Instruction::I64Const(0),
-        Instruction::LocalGet(4),
-        Instruction::I64Sub,
-        Instruction::Else,
-        Instruction::LocalGet(4),
-        Instruction::End,
     ]);
+    if unsigned {
+        // `-0` is 0; any other negative value is too small.
+        v.extend([
+            Instruction::LocalGet(2),
+            Instruction::LocalGet(4),
+            Instruction::I64Const(0),
+            Instruction::I64Ne,
+            Instruction::I32And,
+            Instruction::If(BlockType::Empty),
+        ]);
+        v.extend(raise_and_return(
+            errors.raise,
+            vec![Instruction::I32Const(errors.too_small as i32)],
+            zero,
+        ));
+        v.extend([Instruction::End, Instruction::LocalGet(4)]);
+    } else {
+        v.extend([
+            Instruction::LocalGet(2),
+            Instruction::If(BlockType::Result(ValType::I64)),
+            Instruction::I64Const(0),
+            Instruction::LocalGet(4),
+            Instruction::I64Sub,
+            Instruction::Else,
+            Instruction::LocalGet(4),
+            Instruction::End,
+        ]);
+    }
     if !wide {
         v.push(Instruction::I32WrapI64);
     }
     v
+}
+
+/// `__uint64_to_string(value: i64) -> string`: the decimal text of an
+/// `integer:64u`, whose values above `i64::MAX` have the top bit set:
+/// `value /u 10` (which fits in an `i64`) followed by the last digit.
+pub fn gen_uint64_to_string(int64_to_string: u32, concat: u32) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(0),
+        Instruction::I64Const(0),
+        Instruction::I64GeS,
+        Instruction::If(BlockType::Result(ValType::I32)),
+        Instruction::LocalGet(0),
+        Instruction::Call(int64_to_string),
+        Instruction::Else,
+        Instruction::LocalGet(0),
+        Instruction::I64Const(10),
+        Instruction::I64DivU,
+        Instruction::Call(int64_to_string),
+        Instruction::LocalGet(0),
+        Instruction::I64Const(10),
+        Instruction::I64RemU,
+        Instruction::Call(int64_to_string),
+        Instruction::Call(concat),
+        Instruction::End,
+    ]
 }
 
 /// Count the decimal digits starting at `text[local 2]`: advance local 2
@@ -845,7 +901,8 @@ pub fn gen_string_to_boolean(raise: u32, invalid: u32) -> Vec<Instruction<'stati
 
 /// The sized integer types a value is checked against when it is stored
 /// into one (`__integer_fit_*`): name suffix, Clean type name, range.
-pub const INTEGER_FIT_TARGETS: [(&str, &str, i64, i64); 8] = [
+pub const INTEGER_FIT_TARGETS: [(&str, &str, i64, i64); 9] = [
+    ("64", "integer:64", i64::MIN, i64::MAX),
     ("integer", "integer", i32::MIN as i64, i32::MAX as i64),
     ("8", "integer:8", i8::MIN as i64, i8::MAX as i64),
     ("8u", "integer:8u", 0, u8::MAX as i64),
@@ -859,15 +916,39 @@ pub const INTEGER_FIT_TARGETS: [(&str, &str, i64, i64); 8] = [
 /// `__integer_fit_<suffix>(value: i64) -> i64`: the value when it lies in
 /// `min..=max`; otherwise raise `<value> does not fit in <type>` (`suffix_ptr`
 /// is the length-prefixed ` does not fit in <type>`) and return 0.
+///
+/// `__integer_fit_<suffix>_u` (`unsigned_source`) checks an `integer:64u`
+/// value: one with the top bit set is above every target's range and is
+/// named with its unsigned text (`uint64_to_string`).
+#[allow(clippy::too_many_arguments)]
 pub fn gen_integer_fit(
     min: i64,
     max: i64,
+    unsigned_source: bool,
     int64_to_string: u32,
+    uint64_to_string: u32,
     concat: u32,
     err_raise: u32,
     suffix_ptr: u32,
 ) -> Vec<Instruction<'static>> {
-    vec![
+    let mut v = Vec::new();
+    if unsigned_source {
+        v.extend([
+            Instruction::LocalGet(0),
+            Instruction::I64Const(0),
+            Instruction::I64LtS,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(0),
+            Instruction::Call(uint64_to_string),
+            Instruction::I32Const(suffix_ptr as i32),
+            Instruction::Call(concat),
+            Instruction::Call(err_raise),
+            Instruction::I64Const(0),
+            Instruction::Return,
+            Instruction::End,
+        ]);
+    }
+    v.extend([
         Instruction::LocalGet(0),
         Instruction::I64Const(min),
         Instruction::I64LtS,
@@ -885,5 +966,6 @@ pub fn gen_integer_fit(
         Instruction::Return,
         Instruction::End,
         Instruction::LocalGet(0),
-    ]
+    ]);
+    v
 }

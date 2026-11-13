@@ -649,18 +649,41 @@ impl MirCodeGenerator<'_> {
             )
         };
         let is_i64 = |t: &MirType| matches!(t, MirType::I64 | MirType::U64);
-        let instruction = if *src == MirType::F64 && *dst == MirType::I32 {
-            Instruction::I32TruncSatF64S
+        // `integer:32u` / `integer:64u` values read their top bit as part of
+        // the value: zero extension and unsigned conversions.
+        let unsigned = |t: &MirType| matches!(t, MirType::U32 | MirType::U64);
+        let instruction = if *src == MirType::F64 && is_i32(dst) && *dst != MirType::Bool {
+            if unsigned(dst) {
+                Instruction::I32TruncSatF64U
+            } else {
+                Instruction::I32TruncSatF64S
+            }
         } else if is_i32(src) && *src != MirType::Bool && *dst == MirType::F64 {
-            Instruction::F64ConvertI32S
+            if unsigned(src) {
+                Instruction::F64ConvertI32U
+            } else {
+                Instruction::F64ConvertI32S
+            }
         } else if is_i32(src) && is_i64(dst) {
-            Instruction::I64ExtendI32S
-        } else if is_i64(src) && *dst == MirType::I32 {
+            if unsigned(src) {
+                Instruction::I64ExtendI32U
+            } else {
+                Instruction::I64ExtendI32S
+            }
+        } else if is_i64(src) && is_i32(dst) && *dst != MirType::Bool {
             Instruction::I32WrapI64
         } else if is_i64(src) && *dst == MirType::F64 {
-            Instruction::F64ConvertI64S
+            if unsigned(src) {
+                Instruction::F64ConvertI64U
+            } else {
+                Instruction::F64ConvertI64S
+            }
         } else if *src == MirType::F64 && is_i64(dst) {
-            Instruction::I64TruncSatF64S
+            if unsigned(dst) {
+                Instruction::I64TruncSatF64U
+            } else {
+                Instruction::I64TruncSatF64S
+            }
         } else {
             return;
         };

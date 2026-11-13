@@ -82,6 +82,11 @@ pub mod any_descriptor {
     pub const INTEGER: u8 = b'i';
     /// `integer:64`: an integer value (list elements only).
     pub const INTEGER_64: u8 = b'l';
+    /// `integer:32u` (`__cln_to_any` only): the zero extension of the value.
+    pub const UNSIGNED_32: u8 = b'u';
+    /// `integer:64u` (`__cln_to_any` only, by address like `integer:64`): an
+    /// integer box up to `i64::MAX`, a number box above it.
+    pub const UNSIGNED_64: u8 = b'U';
     /// `number`: a number or integer value (list elements only).
     pub const NUMBER: u8 = b'n';
     /// `boolean`: a boolean value.
@@ -1716,6 +1721,10 @@ impl ClnToAnyRuntime {
             Instruction::I32Const(INTEGER_64 as i32),
             Instruction::I32Eq,
             Instruction::I32Or,
+            Instruction::LocalGet(Self::ELEMENT_CODE),
+            Instruction::I32Const(UNSIGNED_64 as i32),
+            Instruction::I32Eq,
+            Instruction::I32Or,
             Instruction::If(wasm_encoder::BlockType::Result(wasm_encoder::ValType::I32)),
             Instruction::I32Const(8),
             Instruction::Else,
@@ -1836,6 +1845,51 @@ impl ClnToAnyRuntime {
             ],
         ));
         v.extend(when(Self::CODE, INTEGER_64, integer_64));
+        // integer:32u: the i64 zero extension of the value.
+        v.extend(when(
+            Self::CODE,
+            UNSIGNED_32,
+            self.boxed(
+                JSON_TAG_INTEGER,
+                vec![
+                    Instruction::LocalGet(Self::BOX),
+                    Instruction::LocalGet(Self::VALUE),
+                    Instruction::I64ExtendI32U,
+                    Instruction::I64Store(Self::unaligned_double(4)),
+                ],
+            ),
+        ));
+        // integer:64u (by address): an integer box up to i64::MAX, above it
+        // the number it is.
+        let mut unsigned_64 = self.null_when_zero();
+        unsigned_64.extend([
+            Instruction::LocalGet(Self::VALUE),
+            Instruction::I64Load(Self::unaligned_double(0)),
+            Instruction::I64Const(0),
+            Instruction::I64GeS,
+            Instruction::If(wasm_encoder::BlockType::Empty),
+        ]);
+        unsigned_64.extend(self.boxed(
+            JSON_TAG_INTEGER,
+            vec![
+                Instruction::LocalGet(Self::BOX),
+                Instruction::LocalGet(Self::VALUE),
+                Instruction::I64Load(Self::unaligned_double(0)),
+                Instruction::I64Store(Self::unaligned_double(4)),
+            ],
+        ));
+        unsigned_64.push(Instruction::End);
+        unsigned_64.extend(self.boxed(
+            JSON_TAG_NUMBER,
+            vec![
+                Instruction::LocalGet(Self::BOX),
+                Instruction::LocalGet(Self::VALUE),
+                Instruction::I64Load(Self::unaligned_double(0)),
+                Instruction::F64ConvertI64U,
+                Instruction::F64Store(Self::unaligned_double(4)),
+            ],
+        ));
+        v.extend(when(Self::CODE, UNSIGNED_64, unsigned_64));
         // number (by address).
         let mut number = self.null_when_zero();
         number.extend(self.boxed(

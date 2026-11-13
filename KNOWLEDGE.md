@@ -359,3 +359,13 @@ Where it is handled:
 - Every class without a `toString()` of its own or of an ancestor gets a generated public `toString()` returning its name (`add_default_to_string_methods`, `mir_builder/mod.rs`), so `obj.toString()` names the object's class through a parent-typed value. `toString()` is never a static method. `__instance_to_string` (a generated MIR function, a `CallVirtual` over every class's `toString`) gives the text of an instance for `print`, interpolation and the text of collections; collection text is `__cln_to_any` → `__text_normalize` (instances become their `toString()` strings, `class_json.rs`) → `_json_encode_v2`.
 
 **Regression:** `tests/cln/bugfixes/overridden_method_*.cln`, `overridden_void_and_number_methods_dispatch.cln`, `base_method_call_*.cln`, `override_*.cln`, `default_to_string_is_object_class_name.cln`.
+
+## 26. Unsigned 32- and 64-bit Integers
+
+**What:** `integer:32u` is `ConcreteType::IntegerSized { bits: 32, unsigned: true }` (MIR `U32`); it does not collapse to `integer` like the other 8–32-bit types, because its values above `i32::MAX` read their top bit as part of the value. `integer:64u` is MIR `U64`. Unsignedness is decided from the operands' MIR types (`is_unsigned_operand`): division and remainder use `div_u`/`rem_u`, comparisons `lt_u`…, conversions zero-extend / `convert_u` / `trunc_sat_u` (`emit_numeric_coercion`, `cast_instruction`, the BinaryOp operand widening), and `+`, `-`, `*`, `-x` raise "integer overflow" past the maximum or below 0 (`emit_checked_unsigned_arithmetic`, `emit_checked_negation`). A BinaryOp whose TAST type is unsigned gets an unsigned result local; constant folding skips anything touching an unsigned local (its rules are signed).
+
+Text: `unsigned_integer_text` (32u zero-extended into `int64_to_string`, 64u through `__uint64_to_string`). `.toInteger()` of text stored straight into a 32u/64u is rewritten by the type checker to `__string_to_u32`/`__string_to_u64`. Boxing: `emit_box_value` keeps a U32 zero-extended and boxes a U64 as a number; collections box through `__cln_to_any` with descriptor codes `u`/`U`. Fit checks take i128 ranges; an `integer:64u` source uses the `__integer_fit_<suffix>_u` variant.
+
+**Limits:** a literal above `i64::MAX` cannot be written (the parser reads integer literals as i64); an `integer:64u` above `i64::MAX` boxed into `any` (text of a collection, JSON) is a number (`1.8446744073709552e+19`); `any` → `list<integer:32u>` / `list<integer:64u>` converts with the signed element rules.
+
+**Regression:** `tests/cln/bugfixes/unsigned_32_values_above_signed_maximum.cln`, `unsigned_64_values_above_signed_maximum.cln`.

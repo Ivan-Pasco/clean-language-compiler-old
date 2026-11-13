@@ -9,7 +9,7 @@ use super::tast::{
     TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
     TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStatement,
     TastWatchBlock, TypeConstraint, UnaryOperator, Visibility, INTEGER_FIT_PREFIX, LIST_WIDEN_F64,
-    OPTIONAL_BOX,
+    OPTIONAL_BOX, STRING_TO_U32, STRING_TO_U64,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
@@ -1552,20 +1552,36 @@ impl<'a> TypeInference<'a> {
     /// of its runtime check (`__integer_fit_<suffix>`). `integer:64` needs
     /// no check: it holds every integer value. `integer:64u` values above
     /// `i64::MAX` come only from `integer:64u` itself.
-    fn integer_range(hir_type: &HirType) -> Option<(Option<&'static str>, i64, i64)> {
+    fn integer_range(hir_type: &HirType) -> Option<(&'static str, i128, i128)> {
         Some(match hir_type {
             // Plain `integer` is 32-bit (type-system.md §2).
-            HirType::Integer => (Some("integer"), i32::MIN as i64, i32::MAX as i64),
-            HirType::Integer32 => (Some("32"), i32::MIN as i64, i32::MAX as i64),
-            HirType::Integer8 => (Some("8"), i8::MIN as i64, i8::MAX as i64),
-            HirType::Integer8u => (Some("8u"), 0, u8::MAX as i64),
-            HirType::Integer16 => (Some("16"), i16::MIN as i64, i16::MAX as i64),
-            HirType::Integer16u => (Some("16u"), 0, u16::MAX as i64),
-            HirType::Integer32u => (Some("32u"), 0, u32::MAX as i64),
-            HirType::Integer64 => (None, i64::MIN, i64::MAX),
-            HirType::Integer64u => (Some("64u"), 0, i64::MAX),
+            HirType::Integer => ("integer", i32::MIN.into(), i32::MAX.into()),
+            HirType::Integer32 => ("32", i32::MIN.into(), i32::MAX.into()),
+            HirType::Integer8 => ("8", i8::MIN.into(), i8::MAX.into()),
+            HirType::Integer8u => ("8u", 0, u8::MAX.into()),
+            HirType::Integer16 => ("16", i16::MIN.into(), i16::MAX.into()),
+            HirType::Integer16u => ("16u", 0, u16::MAX.into()),
+            HirType::Integer32u => ("32u", 0, u32::MAX.into()),
+            HirType::Integer64 => ("64", i64::MIN.into(), i64::MAX.into()),
+            HirType::Integer64u => ("64u", 0, u64::MAX.into()),
             _ => return None,
         })
+    }
+
+    /// The range of a value of concrete type `ty`, when it is an integer.
+    fn concrete_integer_range(ty: &ConcreteType) -> Option<(i128, i128)> {
+        match ty {
+            ConcreteType::Integer => Some((i32::MIN.into(), i32::MAX.into())),
+            ConcreteType::IntegerSized {
+                bits: 32,
+                unsigned: true,
+            } => Some((0, u32::MAX.into())),
+            ConcreteType::IntegerSized {
+                unsigned: false, ..
+            } => Some((i64::MIN.into(), i64::MAX.into())),
+            ConcreteType::IntegerSized { unsigned: true, .. } => Some((0, u64::MAX.into())),
+            _ => None,
+        }
     }
 
     /// The Clean name of the integer type a check suffix stands for.
@@ -1671,31 +1687,94 @@ impl<'a> TypeInference<'a> {
             self.fit_into_sized_integer(fallback, target);
             return;
         }
-        let Some((Some(suffix), min, max)) = Self::integer_range(target) else {
+        let Some((suffix, min, max)) = Self::integer_range(target) else {
             return;
         };
-        let source = Self::value_source_symbol(value)
+        // Text converted with `.toInteger()` straight into `integer:32u` or
+        // `integer:64u` is read with the unsigned range.
+        if let Some(converter) = match target {
+            HirType::Integer32u => Some(STRING_TO_U32),
+            HirType::Integer64u => Some(STRING_TO_U64),
+            _ => None,
+        } {
+            if let TastExpressionKind::MethodCall {
+                receiver,
+                method_name,
+                arguments,
+                ..
+            } = &mut value.kind
+            {
+                if method_name == "toInteger"
+                    && arguments.is_empty()
+                    && receiver.expr_type == ConcreteType::String
+                {
+                    let text = std::mem::replace(
+                        receiver.as_mut(),
+                        TastExpression {
+                            kind: TastExpressionKind::Literal {
+                                value: TastLiteral::Null,
+                            },
+                            expr_type: ConcreteType::Null,
+                            location: value.location.clone(),
+                        },
+                    );
+                    value.kind = TastExpressionKind::FunctionCall {
+                        function: Box::new(TastExpression {
+                            kind: TastExpressionKind::Variable {
+                                symbol_id: SymbolId(0),
+                                name: converter.to_string(),
+                            },
+                            expr_type: ConcreteType::Unknown,
+                            location: value.location.clone(),
+                        }),
+                        arguments: vec![text],
+                        type_args: Vec::new(),
+                    };
+                    value.expr_type = self.hir_type_to_concrete(target);
+                    return;
+                }
+            }
+        }
+        let declared_source = Self::value_source_symbol(value)
             .and_then(|id| self.declared_hir_type(id))
             .and_then(|declared| Self::integer_range(&declared))
-            .map(|(_, low, high)| (low, high))
-            .or(match &value.expr_type {
-                ConcreteType::Integer => Some((i32::MIN as i64, i32::MAX as i64)),
-                ConcreteType::IntegerSized {
-                    unsigned: false, ..
-                } => Some((i64::MIN, i64::MAX)),
-                ConcreteType::IntegerSized { unsigned: true, .. } => Some((0, i64::MAX)),
-                // An `any` converted to a plain `integer` is checked by the
-                // conversion itself (`emit_any_unbox`).
-                ConcreteType::Any if matches!(target, HirType::Integer) => return,
-                ConcreteType::Any => None,
-                _ => return,
-            });
+            .map(|(_, low, high)| (low, high));
+        let source = match declared_source {
+            Some(range) => Some(range),
+            // An `any` converted to a plain `integer` is checked by the
+            // conversion itself (`emit_any_unbox`).
+            // (`integer:64` holds every value an `any` converts to.)
+            None if value.expr_type == ConcreteType::Any => {
+                if matches!(target, HirType::Integer | HirType::Integer64) {
+                    return;
+                }
+                None
+            }
+            None => match Self::concrete_integer_range(&value.expr_type) {
+                Some(range) => Some(range),
+                None => return,
+            },
+        };
         if let Some((low, high)) = source {
             if low >= min && high <= max {
                 return;
             }
         }
-        if let Some(n) = Self::integer_constant(value) {
+        // A 64-bit unsigned value is checked by the `_u` variant, which
+        // reads the top bit as part of the value.
+        let unsigned_source = matches!(
+            value.expr_type,
+            ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: true
+            }
+        );
+        let check = if unsigned_source {
+            format!("{INTEGER_FIT_PREFIX}{suffix}_u")
+        } else {
+            format!("{INTEGER_FIT_PREFIX}{suffix}")
+        };
+        if let Some(n) = Self::integer_constant(value).map(i128::from) {
             if n < min || n > max {
                 let name = Self::integer_type_name(suffix);
                 self.errors.push(CompilerError::type_error(
@@ -1707,10 +1786,7 @@ impl<'a> TypeInference<'a> {
             return;
         }
         let location = value.location.clone();
-        let expr_type = match &value.expr_type {
-            ConcreteType::Any => self.hir_type_to_concrete(target),
-            other => other.clone(),
-        };
+        let expr_type = self.hir_type_to_concrete(target);
         let inner = std::mem::replace(
             value,
             TastExpression {
@@ -1726,7 +1802,7 @@ impl<'a> TypeInference<'a> {
                 function: Box::new(TastExpression {
                     kind: TastExpressionKind::Variable {
                         symbol_id: SymbolId(0),
-                        name: format!("{INTEGER_FIT_PREFIX}{suffix}"),
+                        name: check,
                     },
                     expr_type: ConcreteType::Unknown,
                     location: location.clone(),
@@ -3832,11 +3908,13 @@ impl<'a> TypeInference<'a> {
         (min..=max).contains(&value).then_some(value)
     }
 
-    /// The range of `integer` (32-bit) and `integer:64`.
+    /// The range of `integer` (32-bit), `integer:32u`, `integer:64` and
+    /// `integer:64u`.
     fn integer_type_bounds(ty: &ConcreteType) -> Option<(i128, i128)> {
         match ty {
-            ConcreteType::Integer => Some((i32::MIN.into(), i32::MAX.into())),
-            ConcreteType::IntegerSized { bits: 64, .. } => Some((i64::MIN.into(), i64::MAX.into())),
+            ConcreteType::Integer | ConcreteType::IntegerSized { bits: 32 | 64, .. } => {
+                Self::concrete_integer_range(ty)
+            }
             _ => None,
         }
     }
@@ -5331,12 +5409,20 @@ impl<'a> TypeInference<'a> {
             }
             return;
         }
-        if !matches!(
-            tast_init.kind,
-            TastExpressionKind::Literal {
-                value: TastLiteral::Integer(_)
+        let TastExpressionKind::Literal {
+            value: TastLiteral::Integer(literal),
+        } = tast_init.kind
+        else {
+            return;
+        };
+        // An unsigned target takes a literal in its range, also one above
+        // the signed 32-bit maximum (`integer:32u big = 3000000000`).
+        if let ConcreteType::IntegerSized { unsigned: true, .. } = declared_type {
+            if Self::concrete_integer_range(declared_type)
+                .is_some_and(|(min, max)| (min..=max).contains(&i128::from(literal)))
+            {
+                tast_init.expr_type = declared_type.clone();
             }
-        ) {
             return;
         }
         if !matches!(tast_init.expr_type, ConcreteType::Integer) {
@@ -7161,7 +7247,13 @@ impl<'a> TypeInference<'a> {
             HirType::Integer16 => ConcreteType::Integer,
             HirType::Integer16u => ConcreteType::Integer,
             HirType::Integer32 => ConcreteType::Integer,
-            HirType::Integer32u => ConcreteType::Integer,
+            // `integer:32u` holds values above the signed 32-bit maximum, so
+            // it keeps its unsigned type (MIR `U32`: unsigned division,
+            // comparison, conversion and printing).
+            HirType::Integer32u => ConcreteType::IntegerSized {
+                bits: 32,
+                unsigned: true,
+            },
             HirType::Integer64 => ConcreteType::IntegerSized {
                 bits: 64,
                 unsigned: false,
