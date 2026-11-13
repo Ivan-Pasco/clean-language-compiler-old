@@ -1,0 +1,75 @@
+// Test: bugfixes/list_literal_mixed_subclasses
+// Grammar: list_literal, iterate_statement, method_call
+// Semantic: type-system.md §Assignability — the elements of a list literal
+//   stored into a `list<Parent>` may be of any subclass of `Parent`; with no
+//   declared element type the list's element type is the elements' nearest
+//   common parent class. Each element keeps its own class, so an overridden
+//   method runs the element's version.
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   square 4
+//   circle 3
+//   square 4
+//   circle 3
+//   2
+//   square 4
+//   circle 3
+//   square 4
+//   7
+//   circle
+//   square
+//
+// Regression: the element type came from the first element, so
+// `list<Shape> l = [(Sq()), (Circle())]` was rejected with SEM004.
+
+start:
+	list<Shape> shapes = [(Sq()), (Circle())]
+	iterate s in shapes
+		print(s.name() + " " + s.area().toString())
+
+	Sq one = Sq()
+	Circle two = Circle()
+	list<Shape> named = [one, two]
+	iterate w in named
+		print(w.name() + " " + w.area().toString())
+	print(named.length())
+
+	shapes.add(Sq())
+	iterate t in shapes
+		print(t.name() + " " + t.area().toString())
+
+	print(total([(Circle()), (Sq())]))
+
+	iterate u in [two, one]
+		print(u.name())
+
+class Shape
+	functions:
+		public:
+			string name()
+				return "shape"
+			integer area()
+				return 0
+
+class Sq is Shape
+	functions:
+		public:
+			string name()
+				return "square"
+			integer area()
+				return 4
+
+class Circle is Shape
+	functions:
+		public:
+			string name()
+				return "circle"
+			integer area()
+				return 3
+
+functions:
+	integer total(list<Shape> items)
+		integer sum = 0
+		iterate item in items
+			sum = sum + item.area()
+		return sum

@@ -1477,6 +1477,7 @@ impl<'a> TypeInference<'a> {
         target: &ConcreteType,
         location: &SourceLocation,
     ) {
+        self.fit_to_expected_type(value, target);
         Self::widen_literal_to_declared_type(value, target);
         Self::widen_integer_list_to_number_list(value, target);
         // The elements of a list literal and the values of a pairs literal
@@ -2783,6 +2784,7 @@ impl<'a> TypeInference<'a> {
                         // default `ConcreteType::Integer` tag and codegen narrows it to i32 in
                         // `load_constant`, truncating the high bits.
                         Self::widen_literal_to_declared_type(&mut tast_init, &declared_type);
+                        self.fit_to_expected_type(&mut tast_init, &declared_type);
 
                         // Add constraint that initializer type matches declared type.
                         // SEM004: If a declared type annotation is provably incompatible
@@ -4620,8 +4622,24 @@ impl<'a> TypeInference<'a> {
         }
         // A list literal with runtime elements (`[title]`) has no element type
         // from the HIR; it is the first element's type.
+        // Elements of different classes share their nearest common parent.
         let concrete_element_type = match (element_type, tast_elements.first()) {
-            (HirType::Void, Some(first)) => first.expr_type.clone(),
+            (HirType::Void, Some(first)) => {
+                let classes: Option<Vec<SymbolId>> = tast_elements
+                    .iter()
+                    .map(|e| match e.expr_type {
+                        ConcreteType::Class { symbol_id, .. } => Some(symbol_id),
+                        _ => None,
+                    })
+                    .collect();
+                match classes.and_then(|ids| self.nearest_common_class(&ids)) {
+                    Some(symbol_id) => ConcreteType::Class {
+                        symbol_id,
+                        type_args: Vec::new(),
+                    },
+                    None => first.expr_type.clone(),
+                }
+            }
             _ => self.hir_type_to_concrete(element_type),
         };
 
@@ -6998,6 +7016,77 @@ impl<'a> TypeInference<'a> {
             break;
         }
         false
+    }
+
+    /// The nearest class that every one of `classes` is (or inherits from):
+    /// the first ancestor of the first class that the others descend from.
+    fn nearest_common_class(&self, classes: &[SymbolId]) -> Option<SymbolId> {
+        let (first, rest) = classes.split_first()?;
+        let mut candidate = Some(*first);
+        let mut visited = std::collections::HashSet::new();
+        while let Some(id) = candidate {
+            if !visited.insert(id) {
+                break;
+            }
+            if rest.iter().all(|c| self.class_is_subclass_of(*c, id)) {
+                return Some(id);
+            }
+            candidate = match self.symbol_table.get_symbol(id).map(|s| &s.kind) {
+                Some(SymbolKind::Class { parent, .. }) => *parent,
+                _ => None,
+            };
+        }
+        None
+    }
+
+    /// Give a value the type of the slot it is stored into where the value's
+    /// own type is only a stand-in for it:
+    ///
+    /// - `value onError fallback` with an `any` value converts the value to
+    ///   the slot's type inside the protected region, so a failed conversion
+    ///   gives the fallback (14-error-handling.md);
+    /// - a list literal of subclasses of the slot's element class is a list
+    ///   of that class (type-system.md §Assignability).
+    fn fit_to_expected_type(&self, value: &mut TastExpression, target: &ConcreteType) {
+        match (&mut value.kind, target) {
+            (TastExpressionKind::OnError { expression, .. }, _)
+                if matches!(expression.expr_type, ConcreteType::Any)
+                    && matches!(
+                        target,
+                        ConcreteType::Integer
+                            | ConcreteType::Number
+                            | ConcreteType::IntegerSized { bits: 64, .. }
+                            | ConcreteType::String
+                            | ConcreteType::Boolean
+                    ) =>
+            {
+                value.expr_type = target.clone();
+            }
+            (
+                TastExpressionKind::ArrayLiteral {
+                    elements,
+                    element_type,
+                },
+                ConcreteType::Array(target_element),
+            ) => {
+                let ConcreteType::Class {
+                    symbol_id: parent, ..
+                } = **target_element
+                else {
+                    return;
+                };
+                let all_subclasses = !elements.is_empty()
+                    && elements.iter().all(|e| {
+                        matches!(e.expr_type, ConcreteType::Class { symbol_id, .. }
+                            if self.class_is_subclass_of(symbol_id, parent))
+                    });
+                if all_subclasses {
+                    *element_type = (**target_element).clone();
+                    value.expr_type = target.clone();
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Find a common type between two types for control flow branches

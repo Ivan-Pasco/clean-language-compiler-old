@@ -447,6 +447,11 @@ impl MirBuilder {
             }
             return self.emit_box_any(context, value_id, &branch.expr_type, &branch.location);
         }
+        // An `any` stored into a typed slot (the type checker gave the whole
+        // expression the slot's type): converted here, inside the region.
+        if matches!(branch.expr_type, ConcreteType::Any) {
+            return self.emit_unbox_any(context, value_id, result_type, &branch.location);
+        }
         // An optional primitive branch of a plain result (`n default 0`)
         // gives its value; a plain branch of an optional primitive result
         // is boxed.

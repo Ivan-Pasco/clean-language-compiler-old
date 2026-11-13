@@ -1,0 +1,40 @@
+// Test: bugfixes/onerror_covers_implicit_any_conversion
+// Grammar: onerror_expression, variable_declaration, assignment
+// Semantic: 14-error-handling.md — `value onError fallback` where `value` is
+//   an `any` stored into a typed slot converts the value inside the
+//   protected region, so a failed conversion gives the fallback
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   -3
+//   -4
+//   -5
+//   7
+//   abc
+//   -6
+//   12
+//
+// Regression: the conversion to the declared type ran after the onError
+// region, so `integer:64 w = data.c onError -3` with `data.c` holding text
+// stopped the program instead of giving -3. The explicit
+// `data.c.toInteger() onError -3` already worked.
+
+start:
+	any data = json.textToData("{\"c\": \"abc\", \"n\": 7, \"s\": 12}")
+	integer:64 w = data.c onError -3
+	print(w)
+	integer i = data.c onError -4
+	print(i)
+	number x = data.c onError -5.0
+	print(x)
+	integer good = data.n onError -1
+	print(good)
+	string text = data.c onError "fallback"
+	print(text)
+	integer again = 0
+	again = data.c onError -6
+	print(again)
+	print(twice(data.s onError 0) / 2)
+
+functions:
+	integer twice(integer value)
+		return value * 2
