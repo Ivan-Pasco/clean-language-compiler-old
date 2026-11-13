@@ -1,0 +1,21 @@
+// Test: bugfixes/validator_rule_calls_are_checked
+// Grammar: function_call (validator.each)
+// Semantic: FUNC002 — stdlib-reference §15 declares `validator.each(v, rules)`
+//   (validator, validator); like every §15 function its calls are checked
+//   against that signature
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   error[FUNC002]
+//   Function requires at least 2 arguments, got 1
+//
+// Regression: `validator.shape`, `validator.each` and `validator.merge` had
+// no declaration in the type checker (and `validator.trim` / `validator.type`
+// none in the global symbol table MCP `list_builtins` reads), so their calls
+// were not checked: a missing argument produced invalid WASM (COM001) and a
+// string passed as rules compiled.
+
+start:
+	integer v = validator.field(validator.create(), "tags")
+	v = validator.each(v)
+	print(validator.isOk(validator.run(v, 0)))

@@ -822,113 +822,6 @@ impl<'a> TypeInference<'a> {
             );
         }
 
-        // Validator namespace functions
-        // validator.create - creates validation rules (returns pointer to rules struct)
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("validator.create", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![],
-                    return_type: Box::new(ConcreteType::Integer), // Returns pointer
-                    is_background: false,
-                },
-            );
-        }
-
-        // validator.ok - creates success validation result
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("validator.ok", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::Integer],      // Value to wrap
-                    return_type: Box::new(ConcreteType::Integer), // Returns ValidationResult pointer
-                    is_background: false,
-                },
-            );
-        }
-
-        // validator.error - creates error validation result
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("validator.error", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::Integer], // Errors list pointer
-                    return_type: Box::new(ConcreteType::Integer), // Returns ValidationResult pointer
-                    is_background: false,
-                },
-            );
-        }
-
-        // validator.isOk - checks if result is success
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("validator.isOk", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::Integer], // ValidationResult pointer
-                    return_type: Box::new(ConcreteType::Boolean),
-                    is_background: false,
-                },
-            );
-        }
-
-        // validator.isError - checks if result is error
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("validator.isError", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::Integer], // ValidationResult pointer
-                    return_type: Box::new(ConcreteType::Boolean),
-                    is_background: false,
-                },
-            );
-        }
-
-        // validator.getValue - gets value from successful result
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("validator.getValue", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::Integer], // ValidationResult pointer
-                    return_type: Box::new(ConcreteType::Integer), // Returns the wrapped value
-                    is_background: false,
-                },
-            );
-        }
-
-        // validator.getErrors - gets errors from failed result
-        // Returns a list<string> pointer (matches resolver registration and HIR desugaring)
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("validator.getErrors", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::Integer], // ValidationResult pointer
-                    return_type: Box::new(ConcreteType::Array(Box::new(ConcreteType::String))), // Returns list<string>
-                    is_background: false,
-                },
-            );
-        }
-
         // Generic registration: Register all builtin functions from symbol table
         // This automatically handles namespace functions and other builtins
         let builtin_symbols: Vec<_> = self.symbol_table.accessible_symbols();
@@ -1428,6 +1321,42 @@ impl<'a> TypeInference<'a> {
             self.require_assignable(arg, param_type, &location);
         }
         self.check_sized_arguments(callee, callee_name, arguments, location);
+    }
+
+    /// SEM001: `validator.run` / `validator.validate` look each field up by
+    /// name in a `pairs` (or JSON object) input (stdlib-reference §15). A
+    /// class instance has no named entries, so every field would be absent.
+    fn check_validator_input(
+        &mut self,
+        callee_name: &str,
+        arguments: &[TastExpression],
+        location: &SourceLocation,
+    ) {
+        if !matches!(callee_name, "validator.run" | "validator.validate") {
+            return;
+        }
+        let Some(input) = arguments.get(1) else {
+            return;
+        };
+        if matches!(
+            input.expr_type,
+            ConcreteType::Class { .. } | ConcreteType::Interface { .. }
+        ) {
+            self.errors.push(CompilerError::semantic_error_with_code(
+                format!(
+                    "{} checks a pairs value, not a {} instance",
+                    callee_name,
+                    input.expr_type.source_name(Some(self.symbol_table))
+                ),
+                Some(
+                    "Pass a pairs<string, any> whose keys are the field names, \
+                     e.g. {\"name\": person.name}"
+                        .to_string(),
+                ),
+                Some(location.clone()),
+                "SEM001",
+            ));
+        }
     }
 
     /// SEM004: sized arguments follow the same widening rules as an
@@ -5597,6 +5526,7 @@ impl<'a> TypeInference<'a> {
                         .map(|s| s.name.clone())
                         .unwrap_or_default();
                     self.check_sized_arguments(function_symbol_id, &name, arguments, location);
+                    self.check_validator_input(&name, arguments, location);
                 }
 
                 Ok((**return_type).clone())

@@ -1136,11 +1136,22 @@ impl GlobalSymbolTable {
                 vec![HirType::String, HirType::Integer],
                 HirType::Integer,
             ),
-            // Validator namespace functions
+            // Validator namespace functions (stdlib-reference.md §15). Rules
+            // and result handles are integers.
             ("validator.create", vec![], HirType::Integer),
             (
                 "validator.createWithName",
                 vec![HirType::String],
+                HirType::Integer,
+            ),
+            (
+                "validator.field",
+                vec![HirType::Integer, HirType::String],
+                HirType::Integer,
+            ),
+            (
+                "validator.merge",
+                vec![HirType::Integer, HirType::Integer],
                 HirType::Integer,
             ),
             (
@@ -1178,11 +1189,6 @@ impl GlobalSymbolTable {
                 HirType::String,
             ),
             (
-                "validator.field",
-                vec![HirType::Integer, HirType::String],
-                HirType::Integer,
-            ),
-            (
                 "validator.required",
                 vec![HirType::Integer],
                 HirType::Integer,
@@ -1212,14 +1218,32 @@ impl GlobalSymbolTable {
                 vec![HirType::Integer, HirType::Integer],
                 HirType::Integer,
             ),
+            // The check function `boolean fn(string value)` (grammar.ebnf
+            // §8.10), passed as a function reference.
             (
                 "validator.custom",
-                vec![HirType::Integer, HirType::Integer],
+                vec![HirType::Integer, HirType::Handler],
                 HirType::Integer,
             ),
             (
                 "validator.message",
                 vec![HirType::Integer, HirType::String],
+                HirType::Integer,
+            ),
+            ("validator.trim", vec![HirType::Integer], HirType::Integer),
+            (
+                "validator.type",
+                vec![HirType::Integer, HirType::String],
+                HirType::Integer,
+            ),
+            (
+                "validator.shape",
+                vec![HirType::Integer, HirType::Integer],
+                HirType::Integer,
+            ),
+            (
+                "validator.each",
+                vec![HirType::Integer, HirType::Integer],
                 HirType::Integer,
             ),
             // db.* / crypto.{hashPassword,verifyPassword,randomBytes,randomHex,hmac}
@@ -1503,6 +1527,11 @@ impl GlobalSymbolTable {
                     "validator.maxLength",
                     "validator.custom",
                     "validator.message",
+                    "validator.trim",
+                    "validator.type",
+                    "validator.shape",
+                    "validator.each",
+                    "validator.merge",
                 ],
             ),
             (
