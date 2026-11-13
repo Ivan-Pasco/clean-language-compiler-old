@@ -90,19 +90,36 @@ fn allocate_string_in_memory(
     offset as i32
 }
 
-/// The UTF-8 text at `ptr..ptr + len` in the module's memory; traps on a
-/// missing memory export, an out-of-bounds range or invalid UTF-8.
-fn read_utf8(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -> Result<String> {
+/// The bytes at `ptr..ptr + len` in the module's memory; traps on a missing
+/// memory export or an out-of-bounds range.
+fn read_bytes(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -> Result<Vec<u8>> {
     let Some(Extern::Memory(memory)) = caller.get_export("memory") else {
         return Err(wasmtime::Error::msg("module exports no memory"));
     };
     let start = ptr as u32 as usize;
     let end = start + len as u32 as usize;
-    let bytes = memory
+    memory
         .data(&*caller)
         .get(start..end)
-        .ok_or_else(|| wasmtime::Error::msg(format!("string {start}..{end} is out of bounds")))?;
-    String::from_utf8(bytes.to_vec()).map_err(|e| wasmtime::Error::msg(e.to_string()))
+        .map(<[u8]>::to_vec)
+        .ok_or_else(|| wasmtime::Error::msg(format!("string {start}..{end} is out of bounds")))
+}
+
+/// The UTF-8 text at `ptr..ptr + len` in the module's memory; traps like
+/// `read_bytes`, and on invalid UTF-8.
+fn read_utf8(caller: &mut Caller<'_, ()>, ptr: i32, len: i32) -> Result<String> {
+    String::from_utf8(read_bytes(caller, ptr, len)?)
+        .map_err(|e| wasmtime::Error::msg(e.to_string()))
+}
+
+/// Write `bytes` to stdout unchanged. A string is a byte sequence, so a byte
+/// that is part of a multi-byte character is written as that byte.
+fn write_stdout(bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+    std::io::stdout()
+        .lock()
+        .write_all(bytes)
+        .map_err(|e| wasmtime::Error::msg(format!("writing to stdout failed: {e}")))
 }
 
 /// Call an exported function; on a trap print the whole error chain (the
@@ -243,23 +260,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create linker and add imports
     let mut linker = Linker::new(&engine);
 
-    // print(ptr, len) / printl(ptr, len): the UTF-8 text at ptr..ptr+len,
-    // printl adding a newline. A range outside the module's memory or
-    // invalid UTF-8 traps.
+    // print(ptr, len) / printl(ptr, len): the bytes at ptr..ptr+len written
+    // unchanged, printl adding a newline. A range outside the module's
+    // memory traps.
     linker.func_wrap(
         "env",
         "print",
         |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> Result<()> {
-            print!("{}", read_utf8(&mut caller, ptr, len)?);
-            Ok(())
+            write_stdout(&read_bytes(&mut caller, ptr, len)?)
         },
     )?;
     linker.func_wrap(
         "env",
         "printl",
         |mut caller: Caller<'_, ()>, ptr: i32, len: i32| -> Result<()> {
-            println!("{}", read_utf8(&mut caller, ptr, len)?);
-            Ok(())
+            let mut bytes = read_bytes(&mut caller, ptr, len)?;
+            bytes.push(b'\n');
+            write_stdout(&bytes)
         },
     )?;
 
