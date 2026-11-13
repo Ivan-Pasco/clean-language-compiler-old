@@ -1,0 +1,53 @@
+// Test: bugfixes/validate_block_one_of_and_custom
+// Grammar: validate_block, validate_one_of, validate_custom, validate_messages_block
+// Semantic: stdlib-validator.md — `oneOf: v1, v2, ...`: the value is one of the
+//   listed string or integer literals; `custom: fnName` calls
+//   `boolean fnName(string value)` and `false` fails the field; the `default`
+//   message replaces the errors of a field without its own message
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   valid
+//   role must be one of: admin, editor
+//   tier must be one of: 1, 2, 3
+//   code is invalid
+//   Check this field
+//   Phone is required
+//
+// Regression: any `validate` block with `oneOf:` failed with SEM001 "Cannot
+// unify types: Array<string> and integer"; `custom:` was never called, and a
+// `messages:` entry added an empty field rule instead of a message.
+
+validate account:
+	role: string required oneOf: "admin", "editor"
+	tier: integer oneOf: 1, 2, 3
+	code: string custom: isCode
+
+validate contact:
+	email: string required match: email
+	phone: string required
+
+	messages:
+		default: "Check this field"
+		phone: "Phone is required"
+
+start:
+	pairs<string, any> good = {"role": "admin", "tier": 2, "code": "AB12"}
+	account.check good:
+		ok: print("valid")
+		error: print("invalid")
+	pairs<string, any> bad = {"role": "guest", "tier": 5, "code": "x"}
+	account.check bad:
+		ok: print("valid")
+		error:
+			iterate message in errors
+				print(message)
+	pairs<string, any> partial = {"email": "ada"}
+	contact.check partial:
+		ok: print("valid")
+		error:
+			iterate message in errors
+				print(message)
+
+functions:
+	boolean isCode(string value)
+		return value.length() == 4

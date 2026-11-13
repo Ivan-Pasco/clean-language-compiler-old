@@ -3028,6 +3028,9 @@ impl TokenParser {
         use crate::ast::{ValidateBlock, ValidateMessages};
 
         let location = Some(self.current().location.clone());
+        // The level of the `validate` line: 0 at the top level, the body's
+        // level as a statement.
+        let header_level = self.get_current_indent_level();
 
         // Consume "validate" keyword (Identifier token)
         self.bump();
@@ -3069,7 +3072,7 @@ impl TokenParser {
             // Exit if we've de-dented below the block level
             if let TokenKind::Dedent(level) = self.current_kind() {
                 if *level < indent_level {
-                    self.bump();
+                    self.consume_dedents_to(header_level);
                     break;
                 }
                 self.bump();
@@ -3084,6 +3087,7 @@ impl TokenParser {
                     // Peek to check for colon
                     if matches!(self.peek_kind(), Some(TokenKind::Colon)) {
                         messages = Some(self.parse_validate_messages_block()?);
+                        self.consume_dedents_to(header_level);
                         break;
                     }
                 }
@@ -3331,7 +3335,8 @@ impl TokenParser {
             // Key: either "default" or an identifier
             let key = match self.current_kind() {
                 TokenKind::Identifier(k) => k.clone(),
-                // "default" might also tokenize as Identifier
+                // `default` is a keyword (grammar.ebnf §8.9 `validate_message_entry`)
+                TokenKind::Default => "default".to_string(),
                 _ => break,
             };
             self.bump();
@@ -3479,31 +3484,17 @@ impl TokenParser {
 
         let mut body: Vec<Statement> = Vec::new();
 
-        // If the next token is a Newline, this is a block-style branch (body on subsequent lines)
-        if matches!(self.current_kind(), TokenKind::Newline) {
-            self.bump(); // consume the newline
+        // A deeper indent (`skip_whitespace` consumed the newline) starts a
+        // block-style branch: the body on the following lines.
+        if matches!(self.current_kind(), TokenKind::Indent(level) if *level > header_level) {
             body = self.parse_block(header_level)?;
         } else {
-            // Inline style: parse statements until end of line
-            while !self.is_at_end()
-                && !matches!(
-                    self.current_kind(),
-                    TokenKind::Newline | TokenKind::Indent(_) | TokenKind::Dedent(_)
-                )
-            {
-                match self.parse_statement() {
-                    Ok(stmt) => body.push(stmt),
-                    Err(e) => {
-                        return Err(e);
-                    }
-                }
-                self.skip_whitespace();
-                // If we hit a newline after the inline statement, consume it and stop
-                if matches!(self.current_kind(), TokenKind::Newline) {
-                    self.bump();
-                    break;
-                }
-            }
+            // Inline style: the one statement on the label's line. (A
+            // statement may consume its own newline, so the next line — the
+            // `error:` label — must not be read as part of this branch.)
+            body.push(self.parse_statement()?);
+            self.skip_whitespace();
+            self.eat(&TokenKind::Newline);
         }
 
         Ok(body)

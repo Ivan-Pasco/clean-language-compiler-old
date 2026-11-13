@@ -1,0 +1,33 @@
+// Test: bugfixes/validate_block_min_max_bounds
+// Grammar: validate_block, validate_min, validate_max, validate_check_block
+// Semantic: stdlib-validator.md — `min: n` / `max: n` are numeric bounds,
+//   inclusive, built with `validator.range(v, lo, hi)` (number bounds)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   valid
+//   age must be between 13 and 120
+//   score must be at least 0.5
+//   level must be at most 3
+//
+// Regression: an integer field with `min:` / `max:` lowered each bound to its
+// own `validator.range` call with an `integer:64` extreme as the other bound,
+// so the module failed WASM validation (COM001, i32/i64 type mismatch). A
+// second `.check` of the same schema in a scope was SEM007 (both checks
+// declared the same result variable).
+
+validate person:
+	age: integer required min: 13 max: 120
+	score: number min: 0.5
+	level: integer max: 3
+
+start:
+	pairs<string, any> fine = {"age": 30, "score": 1.5, "level": 3}
+	person.check fine:
+		ok: print("valid")
+		error: print("invalid")
+	pairs<string, any> outside = {"age": 7, "score": 0.25, "level": 9}
+	person.check outside:
+		ok: print("valid")
+		error:
+			iterate message in errors
+				print(message)

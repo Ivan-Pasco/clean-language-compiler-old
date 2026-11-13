@@ -271,6 +271,15 @@ impl TokenParser {
         self.bump(); // consume identifier
         self.skip_whitespace();
 
+        // `validate name:` is a statement (grammar.ebnf §4 `validate_block`).
+        if first_name == "validate"
+            && matches!(self.current_kind(), TokenKind::Identifier(_))
+            && matches!(self.peek_kind(), Some(TokenKind::Colon))
+        {
+            self.cursor = first_cursor;
+            return self.parse_validate_block();
+        }
+
         // Check for apply block: identifier: or identifier.method:
         if self.check(&TokenKind::Colon) {
             // Check if identifier is a registered plugin block name (e.g., html, component)

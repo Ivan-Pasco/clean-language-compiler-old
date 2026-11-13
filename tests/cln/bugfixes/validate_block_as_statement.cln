@@ -1,0 +1,40 @@
+// Test: bugfixes/validate_block_as_statement
+// Grammar: statement = validate_block | ... (grammar.ebnf §4), validate_block,
+//   validate_messages_block, validate_check_block
+// Semantic: stdlib-validator.md — the `messages:` entry of a field replaces
+//   every error message of that field
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   user must be at least 3 characters
+//   PIN must be digits
+//   after the check
+//   false
+//   true
+//
+// Regression: a `validate name:` block inside `start:` or a function body
+// failed with SYN001 ("Expected a new line after the statement, found
+// Colon"), though grammar.ebnf lists it as a statement.
+
+start:
+	validate login:
+		user: string required trim length: 3 to 20
+		pin: string required match: integer
+
+		messages:
+			pin: "PIN must be digits"
+	pairs<string, any> form = {"user": "  bo  ", "pin": "12a"}
+	login.check form:
+		ok: print("valid")
+		error:
+			iterate message in errors
+				print(message)
+	print("after the check")
+	print(longEnough("Ada"))
+	print(longEnough("Grace"))
+
+functions:
+	boolean longEnough(string name)
+		validate named:
+			name: string length: 4 to 10
+		pairs<string, any> input = {"name": name}
+		return validator.isOk(validator.run(named, input))
