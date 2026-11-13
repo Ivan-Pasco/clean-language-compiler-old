@@ -23,19 +23,25 @@ impl super::CodeGenerator {
 
     /// Register validator operation functions (validator.create, validator.ok, validator.isOk, etc.)
     pub fn register_validator_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::validator::ValidatorManager;
+        use crate::stdlib::validator::{ValidatorImports, ValidatorManager};
 
-        // Validators allocate through the module's own `__malloc`, so they
-        // are registered after `register_memory_operations`.
-        let malloc_idx = self.get_function_index("__malloc").ok_or_else(|| {
-            CompilerError::codegen_error(
-                "register_validator_operations: __malloc is not registered yet",
-                None,
-                None,
-            )
-        })?;
-        let validator_manager = ValidatorManager::new_with_malloc_idx(malloc_idx);
-        validator_manager.register_functions(self)?;
+        // Validators allocate through the module's own `__malloc` and compare
+        // names with `__pairs_str_eq`, so they are registered after
+        // `register_memory_operations` and `register_pairs_operations`.
+        let index_of = |name: &str| {
+            self.get_function_index(name).ok_or_else(|| {
+                CompilerError::codegen_error(
+                    format!("register_validator_operations: {name} is not registered yet"),
+                    None,
+                    None,
+                )
+            })
+        };
+        let imports = ValidatorImports {
+            malloc: index_of("__malloc")?,
+            str_eq: index_of("__pairs_str_eq")?,
+        };
+        ValidatorManager::new(imports).register_functions(self)?;
 
         Ok(())
     }

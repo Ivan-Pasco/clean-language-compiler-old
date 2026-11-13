@@ -5535,13 +5535,18 @@ impl<'a> TypeInference<'a> {
 
                 // Skip argument count check for variadic print functions
                 if !is_variadic_print_fn && arguments.len() > parameters.len() {
+                    let help = self
+                        .symbol_table
+                        .get_symbol(function_symbol_id)
+                        .and_then(|s| crate::stdlib::validator::too_many_arguments_help(&s.name))
+                        .map(str::to_string);
                     return Err(CompilerError::semantic_error_with_code(
                         format!(
                             "Function accepts at most {} arguments, got {}",
                             parameters.len(),
                             arguments.len()
                         ),
-                        None,
+                        help,
                         Some(location.clone()),
                         "FUNC002",
                     ));

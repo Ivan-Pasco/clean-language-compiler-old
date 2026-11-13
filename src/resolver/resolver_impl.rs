@@ -4537,19 +4537,10 @@ impl NameResolver {
             builtin_location.clone(),
         );
 
-        // validator.field(rules: Integer, fieldName: String, value: String) -> Integer
-        // (stdlib-reference §15)
+        // validator.field(rules: Integer, fieldName: String) -> Integer
+        // Starts a field rule; its value comes from validator.run's input.
         self.register_builtin_fn(
             "validator.field",
-            vec![HirType::Integer, HirType::String, HirType::String],
-            Some(HirType::Integer),
-            builtin_location.clone(),
-        );
-
-        // __validator_schema_field(rules: Integer, fieldName: String) -> Integer
-        // A field with no bound value; inserted by `validate name:` desugaring.
-        self.register_builtin_fn(
-            "__validator_schema_field",
             vec![HirType::Integer, HirType::String],
             Some(HirType::Integer),
             builtin_location.clone(),

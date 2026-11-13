@@ -926,12 +926,6 @@ impl MirCodeGenerator<'_> {
                 .register_memory_operations()
                 .map_err(|e| vec![e])?;
 
-            // After `__malloc`, which the validators allocate with.
-            debug_mir!("DEBUG MIR: Registering validator operations");
-            self.wasm_generator
-                .register_validator_operations()
-                .map_err(|e| vec![e])?;
-
             debug_mir!("DEBUG MIR: Registering native string trim functions");
             self.wasm_generator
                 .register_string_trim_imports()
@@ -945,6 +939,12 @@ impl MirCodeGenerator<'_> {
             debug_mir!("DEBUG MIR: Registering native pairs operations");
             self.wasm_generator
                 .register_pairs_operations()
+                .map_err(|e| vec![e])?;
+
+            // After `__malloc` and `__pairs_str_eq`, which the validators call.
+            debug_mir!("DEBUG MIR: Registering validator operations");
+            self.wasm_generator
+                .register_validator_operations()
                 .map_err(|e| vec![e])?;
 
             debug_mir!("DEBUG MIR: Registering JSON operations");

@@ -1151,7 +1151,7 @@ impl GlobalSymbolTable {
             ),
             (
                 "validator.run",
-                vec![HirType::Integer, HirType::Integer],
+                vec![HirType::Integer, HirType::Any],
                 HirType::Integer,
             ),
             (
@@ -1161,7 +1161,7 @@ impl GlobalSymbolTable {
             ),
             (
                 "validator.validate",
-                vec![HirType::Integer, HirType::Integer],
+                vec![HirType::Integer, HirType::Any],
                 HirType::Integer,
             ),
             ("validator.ok", vec![HirType::Integer], HirType::Integer),
@@ -1185,7 +1185,7 @@ impl GlobalSymbolTable {
             ),
             (
                 "validator.field",
-                vec![HirType::Integer, HirType::String, HirType::String],
+                vec![HirType::Integer, HirType::String],
                 HirType::Integer,
             ),
             (

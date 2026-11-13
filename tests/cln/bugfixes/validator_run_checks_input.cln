@@ -1,0 +1,61 @@
+// Test: bugfixes/validator_run_checks_input
+// Grammar: function_call (validator.field, validator.required, validator.run)
+// Semantic: stdlib-reference §15 — rules never hold data: `validator.field(v, name)`
+//   starts a field rule and the rule calls that follow apply to it;
+//   `validator.run(v, input)` checks each field against the input entry with
+//   the field's name; `validator.runField(v, name, value)` checks one value.
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   false
+//   true
+//   false
+//   true
+//   false
+//   true
+//   true
+//   false
+//   true
+//   false
+//   true
+//
+// Changed in 0.33.184: rewritten to field(v, name) + run(v, input) (was
+// validator_field_binds_value.cln, which bound a value with field(v, name, value)).
+//
+// Regression: `validator.run` checked every field against the whole input
+// instead of the input entry with the field's name, and `validator.run` /
+// `validator.runField` read their `any` argument as a raw string instead of
+// a boxed value; a pairs value was boxed as an integer. The required check
+// was inverted (a required field failed when its value was present),
+// `validator.runField` looped forever once it found the named field, and it
+// matched field names by address, so a name built at run time never matched.
+
+start:
+	integer name = validator.create()
+	name = validator.field(name, "name")
+	name = validator.required(name)
+	name = validator.minLength(name, 3)
+	pairs<string, string> ab = {"name": "ab"}
+	pairs<string, string> abcd = {"name": "abcd"}
+	pairs<string, string> city = {"city": "Lima"}
+	print(validator.isOk(validator.run(name, ab)))
+	print(validator.isOk(validator.run(name, abcd)))
+	print(validator.isOk(validator.run(name, city)))
+
+	integer two = validator.create()
+	two = validator.maxLength(validator.field(two, "code"), 3)
+	two = validator.minLength(validator.field(two, "city"), 2)
+	pairs<string, string> fits = {"code": "xyz", "city": "Lima"}
+	pairs<string, string> tooLong = {"code": "wxyz", "city": "Lima"}
+	print(validator.isOk(validator.run(two, fits)))
+	print(validator.isOk(validator.run(two, tooLong)))
+	print(validator.isOk(validator.run(two, city)))
+
+	string key = "na" + "me"
+	print(validator.isOk(validator.runField(name, key, "abcd")))
+	print(validator.isOk(validator.runField(name, "name", "ab")))
+	print(validator.isOk(validator.runField(name, "name", "abcde")))
+
+	pairs<string, any> person = {"name": "Ada", "age": 36}
+	pairs<string, any> child = {"name": "Al", "age": 7}
+	print(validator.isOk(validator.run(name, child)))
+	print(validator.isOk(validator.run(name, person)))

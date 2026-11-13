@@ -11,6 +11,7 @@
 // rejected the §15 form `validator.required(v)`.
 
 start:
-	integer v = validator.field(validator.create(), "email", "ada@example.com")
+	// Changed in 0.33.184: validator.field(v, name) holds no value (developer decision)
+	integer v = validator.field(validator.create(), "email")
 	v = validator.required(v, 1)
 	print(validator.isOk(validator.run(v, 0)))
