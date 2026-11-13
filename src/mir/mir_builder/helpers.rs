@@ -544,6 +544,7 @@ impl MirBuilder {
             ConcreteType::Matrix(_) => 4,          // Pointer
             ConcreteType::Pairs(_, _) => 4,        // Pointer
             ConcreteType::Function { .. } => 4,    // Pointer
+            ConcreteType::Handler => 4,            // Function table index
             ConcreteType::Class { .. } => 4,       // Pointer
             ConcreteType::Interface { .. } => 4,   // Pointer
             ConcreteType::Union(_) => 4,           // Pointer (boxed)

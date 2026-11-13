@@ -5230,7 +5230,7 @@ impl NameResolver {
                 Box::new(Self::builtin_type_to_hir_type(v)),
             ),
             BuiltinType::Any => HirType::Any, // Any type for dynamic/JSON values
-            BuiltinType::Handler => HirType::Integer, // Handler is an i32 index at WASM level
+            BuiltinType::Handler => HirType::Handler,
         }
     }
 

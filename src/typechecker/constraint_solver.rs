@@ -455,11 +455,10 @@ impl<'a> ConstraintSolver<'a> {
             // At runtime, values are boxed with type tags for proper handling
             (ConcreteType::Any, _) | (_, ConcreteType::Any) => Ok(()),
 
-            // Function references unify with Integer (handler/callback parameters)
-            // In WASM, function references become integer indices in the function table
-            // (tests/cln/functions/function_references_distinct_values.cln).
-            (ConcreteType::Function { .. }, ConcreteType::Integer)
-            | (ConcreteType::Integer, ConcreteType::Function { .. }) => Ok(()),
+            // A `handler` holds a reference to a function of any signature
+            // (grammar.ebnf `handler_type`); no other type holds one.
+            (ConcreteType::Function { .. }, ConcreteType::Handler)
+            | (ConcreteType::Handler, ConcreteType::Function { .. }) => Ok(()),
 
             // Optional unification: Optional(A) unifies with Optional(B) if A unifies with B
             (ConcreteType::Optional(a), ConcreteType::Optional(b)) => self.unify(a, b, location),

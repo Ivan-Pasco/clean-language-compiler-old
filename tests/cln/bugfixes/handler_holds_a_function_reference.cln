@@ -1,0 +1,33 @@
+// Test: bugfixes/handler_holds_a_function_reference
+// Grammar: variable_type, parameter_type, handler_type
+// Semantic: SEM001 — a `handler` variable or parameter holds a reference to
+//   a function; two references to the same function are equal, references
+//   to different functions are not
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   distinct
+//   same
+//   passed
+//
+// Regression: `handler` mapped to `integer`, so `handler h = onSave` was
+// rejected (SEM004 "Type annotation 'integer' contradicts the inferred
+// type '() -> none'").
+
+start:
+	handler save = onSave
+	handler load = onLoad
+	if save != load
+		print("distinct")
+	handler again = onSave
+	if save == again
+		print("same")
+	if matches(onLoad, load)
+		print("passed")
+
+functions:
+	boolean matches(handler first, handler second)
+		return first == second
+	onSave()
+		print("save")
+	onLoad()
+		print("load")

@@ -2,24 +2,27 @@
 // Regression: COMPILER_FN_POINTERS_UNIMPL — previously every function reference
 // compiled to i32.const 0, so every handler shared the same value. Fix emits the
 // function's WASM index plus a __indirect_function_table so hosts can dispatch.
+// Changed in 0.33.184: a function reference is held by a `handler` (grammar.ebnf
+// handler_type), not an `integer`; passing a function where an integer is
+// expected is SEM001, and a handler is not compared with 0 (developer decision)
 
 start:
-	integer a = take_fn(handler_a)
-	integer b = take_fn(handler_b)
-	integer a2 = take_fn(handler_a)
+	handler a = handler_a
+	handler b = handler_b
+	handler a2 = handler_a
 	// Distinct references must produce distinct values.
 	// Same function must produce the same value across references.
-	if a == b
+	if same(a, b)
 		print("FAIL: distinct functions collided")
-	if a != a2
+	if not same(a, a2)
 		print("FAIL: same function produced different values")
-	if a == 0 or b == 0
-		print("FAIL: function reference is still zero")
+	if not same(handler_b, b)
+		print("FAIL: a function passed directly differs from its handler")
 	print("OK")
 
 functions:
-	integer take_fn(integer fn)
-		return fn
+	boolean same(handler first, handler second)
+		return first == second
 	handler_a()
 		integer x = 0
 	handler_b()

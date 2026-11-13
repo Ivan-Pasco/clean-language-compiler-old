@@ -137,6 +137,10 @@ pub enum HirType {
     /// Supports bracket notation with string keys (object access) or integer indices (array access)
     Any,
 
+    /// `handler`: a reference to a function (grammar.ebnf `handler_type`).
+    /// At WASM level it is the function's i32 table index.
+    Handler,
+
     /// `T?`: a `T` or none. Every plain type rejects none
     /// (type-system.md §8), so the type checker keeps this wrapper to tell
     /// `T?` from `T`. Same WASM representation as the inner type, except for

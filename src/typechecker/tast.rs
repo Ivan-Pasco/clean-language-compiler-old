@@ -483,6 +483,10 @@ pub enum ConcreteType {
     /// At runtime: boxed value with [tag:i32][value1:i32][value2:i32] layout
     Any,
 
+    /// `handler`: a reference to a function of any signature. At the WASM
+    /// level it is the function's i32 table index.
+    Handler,
+
     /// Optional type — inferred when a function has any `return none` path alongside
     /// non-none return paths.  At the WASM level the representation is identical to
     /// the inner type; `none` maps to 0/null pointer.  The wrapper is purely a
@@ -655,6 +659,9 @@ impl ConcreteType {
                 p1.iter().zip(p2.iter()).all(|(t1, t2)| t2.is_assignable_to(t1)) && // contravariant
                 r1.is_assignable_to(r2) // covariant
             }
+
+            // A `handler` holds a reference to a function of any signature.
+            (ConcreteType::Function { .. }, ConcreteType::Handler) => true,
 
             // Union types (can assign to union if assignable to any member)
             (t, ConcreteType::Union(types)) => types.iter().any(|ut| t.is_assignable_to(ut)),
@@ -928,6 +935,7 @@ impl std::fmt::Display for ConcreteType {
             ConcreteType::Unknown => write!(f, "?"),
             ConcreteType::Namespace => write!(f, "namespace"),
             ConcreteType::Any => write!(f, "any"),
+            ConcreteType::Handler => write!(f, "handler"),
             ConcreteType::Optional(inner) => write!(f, "{}?", inner),
         }
     }

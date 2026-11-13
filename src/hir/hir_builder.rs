@@ -1422,11 +1422,7 @@ impl HirBuilder {
                 // unknown Named type (it falls through to the _ arm → valid).
                 Ok(HirType::Any)
             }
-            Type::Handler => {
-                // handler is a first-class function reference — at WASM level it is
-                // an i32 function-table index, so we map it to Integer in HIR.
-                Ok(HirType::Integer)
-            }
+            Type::Handler => Ok(HirType::Handler),
             // A generic type without a plugin instance template
             // (`Box<Item>`): the type checker infers the concrete type from
             // the value.

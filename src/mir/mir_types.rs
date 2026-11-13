@@ -783,6 +783,8 @@ impl MirType {
                 }
             }
             ConcreteType::Any => MirType::Any, // Boxed any type with runtime type tag
+            // A function's table index.
+            ConcreteType::Handler => MirType::I32,
             // An optional primitive (`integer?`, `number?`, `boolean?`) is a
             // pointer to a boxed value, 0 for none (type-system.md §8): the
             // boxed-any layout, so it is an `any` restricted to its type.
