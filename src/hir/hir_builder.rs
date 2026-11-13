@@ -770,23 +770,14 @@ impl HirBuilder {
                     // so `target:\n\tframe.server` (PLUGIN-DISCOVERY-TARGET-BLOCK,
                     // fp 590e61575e58) points the author at the real declaration form.
                     //
-                    // A type-named apply block (`integer:` with `x = 5`) declares
-                    // variables, which only exist inside a body (05-apply-blocks.md).
-                    if matches!(
-                        name.as_str(),
-                        "integer"
-                            | "number"
-                            | "string"
-                            | "boolean"
-                            | "any"
-                            | "list"
-                            | "matrix"
-                            | "pairs"
-                    ) {
+                    // A block named after one of the file's functions is a function
+                    // apply block, a statement (grammar.ebnf `function_apply_block`).
+                    // The parser rejects every other apply block form at the top level.
+                    if program.functions.iter().any(|f| f.name == *name) {
                         return Err(CompilerError::syntax_error_with_code(
                             format!(
-                                "A type block like `{name}:` must be inside `start:`, \
-                                 `state:` or a function body"
+                                "An apply block like `{name}:` must be inside `start:` or \
+                                 a function body"
                             ),
                             Some(format!(
                                 "Move the `{name}:` block into the body that uses the values."

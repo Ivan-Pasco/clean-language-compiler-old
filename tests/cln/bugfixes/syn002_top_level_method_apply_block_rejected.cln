@@ -1,0 +1,16 @@
+// Test: bugfixes/syn002_top_level_method_apply_block_rejected
+// Grammar: method_apply_block
+// Semantic: SYN002 — an apply block (`items.add:`) is a statement; at file top level it is rejected with a message saying where it belongs (semantic-rules.md §SYN002)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SYN002
+//   An apply block like `items.add:` must be inside `start:` or a function body
+//
+// Regression: reported as SYN001 "Unexpected identifier at top level: \"items\"".
+
+items.add:
+		1
+
+start:
+	print("test")

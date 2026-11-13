@@ -1,0 +1,16 @@
+// Test: bugfixes/syn002_top_level_generic_type_block_rejected
+// Grammar: type_apply_block (list_type)
+// Semantic: SYN002 — an apply block (`list<string>:`) is a statement; at file top level it is rejected with a message saying where it belongs (semantic-rules.md §SYN002)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SYN002
+//   A type block like `list<string>:` must be inside `start:`, `state:` or a function body
+//
+// Regression: reported as SYN001 "Unexpected identifier at top level: \"list\"".
+
+list<string>:
+	names = []
+
+start:
+	print("test")

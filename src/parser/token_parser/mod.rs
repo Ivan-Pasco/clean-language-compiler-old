@@ -272,6 +272,13 @@ impl TokenParser {
                 }
             }
 
+            // An apply block is a statement, not a top-level item (SYN002).
+            if let Some(error) = self.top_level_apply_block_error() {
+                self.errors.push(error);
+                self.skip_rejected_declaration();
+                continue;
+            }
+
             // Parse top-level declarations
             match self.current_kind() {
                 TokenKind::Function => {
@@ -742,6 +749,84 @@ impl TokenParser {
                 .with_error_code("SYN002"),
             ),
         }
+    }
+
+    /// When the cursor is at the header of an apply block (grammar.ebnf
+    /// `apply_block`: `integer:`, `list<string>:`, `constant:`, `print:`,
+    /// `items.add:`), the SYN002 error for finding it at the top level.
+    /// The cursor is left where it was. A bare `name:` header is a framework
+    /// block here; HIR rejects it when it names a function.
+    fn top_level_apply_block_error(&mut self) -> Option<CompilerError> {
+        let start = self.cursor;
+        let is_type_block = match self.current_kind() {
+            TokenKind::Constant | TokenKind::Print => {
+                self.bump();
+                false
+            }
+            TokenKind::Identifier(name)
+                if matches!(
+                    name.as_str(),
+                    "integer"
+                        | "number"
+                        | "string"
+                        | "boolean"
+                        | "any"
+                        | "list"
+                        | "matrix"
+                        | "pairs"
+                ) =>
+            {
+                if self.parse_type().is_err() {
+                    self.cursor = start;
+                    return None;
+                }
+                true
+            }
+            TokenKind::Identifier(_) => {
+                self.bump();
+                let mut chained = false;
+                while self.eat(&TokenKind::Dot) {
+                    if !self.at_member_name() {
+                        break;
+                    }
+                    self.bump();
+                    chained = true;
+                }
+                if !chained {
+                    self.cursor = start;
+                    return None;
+                }
+                false
+            }
+            _ => return None,
+        };
+        let header_ends = self.check(&TokenKind::Colon)
+            && matches!(
+                self.look_ahead(1).kind,
+                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::Eof
+            );
+        let end = self.cursor;
+        self.cursor = start;
+        if !header_ends {
+            return None;
+        }
+        let mut head = String::new();
+        for token in &self.tokens[start..end] {
+            head.push_str(&token.text);
+            if token.kind == TokenKind::Comma {
+                head.push(' ');
+            }
+        }
+        // Only a type block declares variables, so only it may sit in `state:`.
+        let (kind, homes) = if is_type_block {
+            ("A type block", "`start:`, `state:` or a function body")
+        } else {
+            ("An apply block", "`start:` or a function body")
+        };
+        Some(self.unsupported_syntax_error(
+            format!("{kind} like `{head}:` must be inside {homes}"),
+            &format!("Move the `{head}:` block into the body that uses the values."),
+        ))
     }
 
     /// Skip a rejected top-level declaration: the rest of its header line

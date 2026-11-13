@@ -1,0 +1,21 @@
+// Test: bugfixes/syn002_top_level_function_apply_block_rejected
+// Grammar: function_apply_block
+// Semantic: SYN002 — an apply block (`helper:`) is a statement; at file top level it is rejected with a message saying where it belongs (semantic-rules.md §SYN002)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SYN002
+//   An apply block like `helper:` must be inside `start:` or a function body
+//
+// Regression: reported as "No plugin loaded handles block 'helper:'",
+// pointing at the plugin system although `helper` is one of the file's functions.
+
+helper:
+		1
+
+start:
+	print("test")
+
+functions:
+	void helper(integer value)
+		print(value)

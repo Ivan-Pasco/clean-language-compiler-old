@@ -1,0 +1,16 @@
+// Test: bugfixes/syn002_top_level_sized_type_block_rejected
+// Grammar: type_apply_block (sized_type)
+// Semantic: SYN002 — an apply block (`integer:8:`) is a statement; at file top level it is rejected with a message saying where it belongs (semantic-rules.md §SYN002)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SYN002
+//   A type block like `integer:8:` must be inside `start:`, `state:` or a function body
+//
+// Regression: the message named the block `integer:`, dropping the precision.
+
+integer:8:
+	small = 1
+
+start:
+	print("test")

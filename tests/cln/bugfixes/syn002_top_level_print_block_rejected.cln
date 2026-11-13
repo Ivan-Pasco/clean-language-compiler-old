@@ -1,0 +1,16 @@
+// Test: bugfixes/syn002_top_level_print_block_rejected
+// Grammar: function_apply_block
+// Semantic: SYN002 — an apply block (`print:`) is a statement; at file top level it is rejected with a message saying where it belongs (semantic-rules.md §SYN002)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SYN002
+//   An apply block like `print:` must be inside `start:` or a function body
+//
+// Regression: reported as SYN001 "Unexpected token at top level: Print".
+
+print:
+		"hello"
+
+start:
+	print("test")
