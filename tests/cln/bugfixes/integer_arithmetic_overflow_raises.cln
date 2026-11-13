@@ -1,0 +1,80 @@
+// Test: bugfixes/integer_arithmetic_overflow_raises
+// Semantic: semantic-rules.md RUN003 — integer `+`, `-`, `*`, unary `-`
+//   and `MIN / -1` whose result is outside `integer` (32-bit) or
+//   `integer:64` raise the catchable error "integer overflow" instead of
+//   wrapping (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   2147483647
+//   -2147483648
+//   -1
+//   -2
+//   -3
+//   -4
+//   -5
+//   -6
+//   caught: integer overflow
+//   -7
+//   -8
+//   -9
+//   -10
+//   -11
+//   -12
+//   9223372036854775807
+//   4611686018427387904
+//   3
+//   last 2147483647
+//   2.5
+
+start:
+	integer max = 2147483647
+	integer min = -2147483648
+	integer one = 1
+	integer minusOne = -1
+	print(max - one + one)
+	print(min + one - one)
+	integer a = max + one onError -1
+	print(a)
+	integer b = min - one onError -2
+	print(b)
+	integer c = max * 2 onError -3
+	print(c)
+	integer d = -min onError -4
+	print(d)
+	integer e = min / minusOne onError -5
+	print(e)
+	integer f = addOne(max) onError -6
+	print(f)
+	integer g = max + one onError:
+		print("caught: " + error)
+	integer:64 big = 9223372036854775807
+	integer:64 small = -9223372036854775807
+	integer:64 one64 = 1
+	integer:64 h = big + one64 onError -7
+	print(h)
+	integer:64 i = small - one64 - one64 onError -8
+	print(i)
+	integer:64 j = big * 2 onError -9
+	print(j)
+	integer:64 low = small - one64
+	integer:64 k = -low onError -10
+	print(k)
+	integer:64 minus64 = -1
+	integer:64 l = low / minus64 onError -11
+	print(l)
+	integer:64 m = minus64 * low onError -12
+	print(m)
+	print(big)
+	integer:64 half = 2147483648
+	print(half * half)
+	print(min % minusOne + 3)
+	integer last = 0
+	iterate step in 2147483645 to 2147483647
+		last = step
+	print("last " + last.toString())
+	number x = 1.5
+	print(x + one)
+
+functions:
+	integer addOne(integer value)
+		return value + 1

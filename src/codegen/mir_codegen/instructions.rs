@@ -128,6 +128,15 @@ impl MirCodeGenerator<'_> {
                     && !right_is_float
                 {
                     self.emit_integer_division(op, use_i64, right)?;
+                } else if matches!(
+                    op,
+                    MirBinaryOp::CheckedAdd | MirBinaryOp::CheckedSub | MirBinaryOp::CheckedMul
+                ) && !left_is_float
+                    && !right_is_float
+                    && !self.is_string_operand(left)
+                    && !self.is_string_operand(right)
+                {
+                    self.emit_checked_arithmetic(op, use_i64)?;
                 } else if use_i64 {
                     self.generate_i64_binary_operation(op);
                 } else {
@@ -2678,21 +2687,21 @@ impl MirCodeGenerator<'_> {
 
         let instruction = match op {
             // Arithmetic operations
-            MirBinaryOp::Add => {
+            MirBinaryOp::Add | MirBinaryOp::CheckedAdd => {
                 if is_float {
                     Instruction::F64Add
                 } else {
                     Instruction::I32Add
                 }
             }
-            MirBinaryOp::Sub => {
+            MirBinaryOp::Sub | MirBinaryOp::CheckedSub => {
                 if is_float {
                     Instruction::F64Sub
                 } else {
                     Instruction::I32Sub
                 }
             }
-            MirBinaryOp::Mul => {
+            MirBinaryOp::Mul | MirBinaryOp::CheckedMul => {
                 if is_float {
                     Instruction::F64Mul
                 } else {
@@ -2781,53 +2790,81 @@ impl MirCodeGenerator<'_> {
         Ok(())
     }
 
+    /// The instructions that raise the catchable error `message`
+    /// (`__err_raise`; `onError` catches it, otherwise the program stops
+    /// with the message) and leave the zero of `wide` on the stack.
+    fn raise_with_zero(
+        &mut self,
+        message: &str,
+        wide: bool,
+    ) -> Result<Vec<Instruction<'static>>, CompilerError> {
+        let err_raise = self
+            .wasm_generator
+            .get_function_index("__err_raise")
+            .ok_or_else(|| {
+                CompilerError::codegen_error(
+                    format!("raising \"{message}\" requires __err_raise, which was not registered"),
+                    None,
+                    None,
+                )
+            })?;
+        let message = self.wasm_generator.get_or_create_string_offset(message)?;
+        Ok(vec![
+            Instruction::I32Const(message as i32),
+            Instruction::Call(err_raise),
+            if wide {
+                Instruction::I64Const(0)
+            } else {
+                Instruction::I32Const(0)
+            },
+        ])
+    }
+
     /// Integer `/` or `%` with both operands on the stack (i64 when `wide`).
-    /// A zero divisor raises "division by zero" (`__err_raise`: `onError`
-    /// catches it, otherwise the program stops with the message) and the
-    /// result is 0; the `ErrorCheck` the MIR builder put after the operation
-    /// unwinds to the handler. A non-zero constant divisor needs no test.
+    /// A zero divisor raises "division by zero" and `MIN / -1` raises
+    /// "integer overflow"; the result is then 0, and the `ErrorCheck` the
+    /// MIR builder put after the operation unwinds to the handler. A
+    /// constant divisor other than 0 and -1 needs no test.
     fn emit_integer_division(
         &mut self,
         op: &MirBinaryOp,
         wide: bool,
         divisor: &MirOperand,
     ) -> Result<(), CompilerError> {
-        let operation = match (op, wide) {
-            (MirBinaryOp::Div, false) => Instruction::I32DivS,
-            (MirBinaryOp::Rem, false) => Instruction::I32RemS,
-            (MirBinaryOp::Div, true) => Instruction::I64DivS,
-            _ => Instruction::I64RemS,
+        let is_div = matches!(op, MirBinaryOp::Div);
+        let operation = match (is_div, wide) {
+            (true, false) => Instruction::I32DivS,
+            (false, false) => Instruction::I32RemS,
+            (true, true) => Instruction::I64DivS,
+            (false, true) => Instruction::I64RemS,
         };
         let constant_divisor = match divisor {
-            MirOperand::Constant(MirConstant::Integer(n) | MirConstant::Integer64(n)) => Some(*n),
+            MirOperand::Constant(MirConstant::Integer(n)) => Some(i64::from(*n as i32)),
+            MirOperand::Constant(MirConstant::Integer64(n)) => Some(*n),
             _ => None,
         };
-        let non_zero_constant = match constant_divisor {
-            Some(n) if wide => n != 0,
-            Some(n) => n as i32 != 0,
-            None => false,
-        };
-        if non_zero_constant {
+        if constant_divisor.is_some_and(|n| n != 0 && (n != -1 || !is_div)) {
             self.current_instructions.push(operation);
             return Ok(());
         }
-        let err_raise = self
-            .wasm_generator
-            .get_function_index("__err_raise")
-            .ok_or_else(|| {
-                CompilerError::codegen_error(
-                    "integer division requires __err_raise, which was not registered".to_string(),
-                    None,
-                    None,
-                )
-            })?;
-        let message = self
-            .wasm_generator
-            .get_or_create_string_offset("division by zero")?;
-        let (val_type, zero, is_zero) = if wide {
-            (ValType::I64, Instruction::I64Const(0), Instruction::I64Eqz)
+        let division_by_zero = self.raise_with_zero("division by zero", wide)?;
+        let overflow = self.raise_with_zero("integer overflow", wide)?;
+        let (val_type, is_zero, minimum, minus_one, eq) = if wide {
+            (
+                ValType::I64,
+                Instruction::I64Eqz,
+                Instruction::I64Const(i64::MIN),
+                Instruction::I64Const(-1),
+                Instruction::I64Eq,
+            )
         } else {
-            (ValType::I32, Instruction::I32Const(0), Instruction::I32Eqz)
+            (
+                ValType::I32,
+                Instruction::I32Eqz,
+                Instruction::I32Const(i32::MIN),
+                Instruction::I32Const(-1),
+                Instruction::I32Eq,
+            )
         };
         let divisor_local = self.alloc_temp_local(val_type);
         let dividend_local = self.alloc_temp_local(val_type);
@@ -2837,13 +2874,185 @@ impl MirCodeGenerator<'_> {
             Instruction::LocalGet(divisor_local),
             is_zero,
             Instruction::If(BlockType::Result(val_type)),
-            Instruction::I32Const(message as i32),
-            Instruction::Call(err_raise),
-            zero,
-            Instruction::Else,
+        ]);
+        self.current_instructions.extend(division_by_zero);
+        self.current_instructions.push(Instruction::Else);
+        if is_div {
+            self.current_instructions.extend([
+                Instruction::LocalGet(divisor_local),
+                minus_one,
+                eq.clone(),
+                Instruction::LocalGet(dividend_local),
+                minimum,
+                eq,
+                Instruction::I32And,
+                Instruction::If(BlockType::Result(val_type)),
+            ]);
+            self.current_instructions.extend(overflow);
+            self.current_instructions.push(Instruction::Else);
+        }
+        self.current_instructions.extend([
             Instruction::LocalGet(dividend_local),
             Instruction::LocalGet(divisor_local),
             operation,
+            Instruction::End,
+        ]);
+        if is_div {
+            self.current_instructions.push(Instruction::End);
+        }
+        Ok(())
+    }
+
+    /// Source `+`, `-`, `*` on integers with both operands on the stack (i64
+    /// when `wide`): a result outside the type's range raises "integer
+    /// overflow" and gives 0. i32 operands are computed in i64 and
+    /// range-checked; i64 addition and subtraction use the sign rule
+    /// (`(a ^ r) & (b ^ r) < 0`, `(a ^ b) & (a ^ r) < 0`), and i64
+    /// multiplication checks `r / a == b` (with `-1 * MIN` excluded).
+    fn emit_checked_arithmetic(
+        &mut self,
+        op: &MirBinaryOp,
+        wide: bool,
+    ) -> Result<(), CompilerError> {
+        let overflow = self.raise_with_zero("integer overflow", wide)?;
+        if !wide {
+            let wide_op = match op {
+                MirBinaryOp::CheckedAdd => Instruction::I64Add,
+                MirBinaryOp::CheckedSub => Instruction::I64Sub,
+                _ => Instruction::I64Mul,
+            };
+            let right = self.alloc_temp_local(ValType::I32);
+            let result = self.alloc_temp_local(ValType::I64);
+            self.current_instructions.extend([
+                Instruction::LocalSet(right),
+                Instruction::I64ExtendI32S,
+                Instruction::LocalGet(right),
+                Instruction::I64ExtendI32S,
+                wide_op,
+                Instruction::LocalTee(result),
+                Instruction::LocalGet(result),
+                Instruction::I32WrapI64,
+                Instruction::I64ExtendI32S,
+                Instruction::I64Ne,
+                Instruction::If(BlockType::Result(ValType::I32)),
+            ]);
+            self.current_instructions.extend(overflow);
+            self.current_instructions.extend([
+                Instruction::Else,
+                Instruction::LocalGet(result),
+                Instruction::I32WrapI64,
+                Instruction::End,
+            ]);
+            return Ok(());
+        }
+        let a = self.alloc_temp_local(ValType::I64);
+        let b = self.alloc_temp_local(ValType::I64);
+        let r = self.alloc_temp_local(ValType::I64);
+        let operation = match op {
+            MirBinaryOp::CheckedAdd => Instruction::I64Add,
+            MirBinaryOp::CheckedSub => Instruction::I64Sub,
+            _ => Instruction::I64Mul,
+        };
+        self.current_instructions.extend([
+            Instruction::LocalSet(b),
+            Instruction::LocalTee(a),
+            Instruction::LocalGet(b),
+            operation,
+            Instruction::LocalSet(r),
+        ]);
+        let overflowed: Vec<Instruction<'static>> = match op {
+            MirBinaryOp::CheckedAdd => vec![
+                Instruction::LocalGet(a),
+                Instruction::LocalGet(r),
+                Instruction::I64Xor,
+                Instruction::LocalGet(b),
+                Instruction::LocalGet(r),
+                Instruction::I64Xor,
+                Instruction::I64And,
+                Instruction::I64Const(0),
+                Instruction::I64LtS,
+            ],
+            MirBinaryOp::CheckedSub => vec![
+                Instruction::LocalGet(a),
+                Instruction::LocalGet(b),
+                Instruction::I64Xor,
+                Instruction::LocalGet(a),
+                Instruction::LocalGet(r),
+                Instruction::I64Xor,
+                Instruction::I64And,
+                Instruction::I64Const(0),
+                Instruction::I64LtS,
+            ],
+            // a != 0 && ((a == -1 && b == MIN) || r / a != b)
+            _ => vec![
+                Instruction::LocalGet(a),
+                Instruction::I64Eqz,
+                Instruction::If(BlockType::Result(ValType::I32)),
+                Instruction::I32Const(0),
+                Instruction::Else,
+                Instruction::LocalGet(a),
+                Instruction::I64Const(-1),
+                Instruction::I64Eq,
+                Instruction::If(BlockType::Result(ValType::I32)),
+                Instruction::LocalGet(b),
+                Instruction::I64Const(i64::MIN),
+                Instruction::I64Eq,
+                Instruction::Else,
+                Instruction::LocalGet(r),
+                Instruction::LocalGet(a),
+                Instruction::I64DivS,
+                Instruction::LocalGet(b),
+                Instruction::I64Ne,
+                Instruction::End,
+                Instruction::End,
+            ],
+        };
+        self.current_instructions.extend(overflowed);
+        self.current_instructions
+            .push(Instruction::If(BlockType::Result(ValType::I64)));
+        self.current_instructions.extend(overflow);
+        self.current_instructions.extend([
+            Instruction::Else,
+            Instruction::LocalGet(r),
+            Instruction::End,
+        ]);
+        Ok(())
+    }
+
+    /// `-x` of an integer on the stack (i64 when `wide`): `-MIN` raises
+    /// "integer overflow" and gives 0.
+    fn emit_checked_negation(&mut self, wide: bool) -> Result<(), CompilerError> {
+        let overflow = self.raise_with_zero("integer overflow", wide)?;
+        let (val_type, minimum, eq, zero, sub) = if wide {
+            (
+                ValType::I64,
+                Instruction::I64Const(i64::MIN),
+                Instruction::I64Eq,
+                Instruction::I64Const(0),
+                Instruction::I64Sub,
+            )
+        } else {
+            (
+                ValType::I32,
+                Instruction::I32Const(i32::MIN),
+                Instruction::I32Eq,
+                Instruction::I32Const(0),
+                Instruction::I32Sub,
+            )
+        };
+        let value = self.alloc_temp_local(val_type);
+        self.current_instructions.extend([
+            Instruction::LocalTee(value),
+            minimum,
+            eq,
+            Instruction::If(BlockType::Result(val_type)),
+        ]);
+        self.current_instructions.extend(overflow);
+        self.current_instructions.extend([
+            Instruction::Else,
+            zero,
+            Instruction::LocalGet(value),
+            sub,
             Instruction::End,
         ]);
         Ok(())
@@ -2854,9 +3063,9 @@ impl MirCodeGenerator<'_> {
     /// comparisons produce an i32 boolean, as in the i32 path.
     pub(super) fn generate_i64_binary_operation(&mut self, op: &MirBinaryOp) {
         let instruction = match op {
-            MirBinaryOp::Add => Instruction::I64Add,
-            MirBinaryOp::Sub => Instruction::I64Sub,
-            MirBinaryOp::Mul => Instruction::I64Mul,
+            MirBinaryOp::Add | MirBinaryOp::CheckedAdd => Instruction::I64Add,
+            MirBinaryOp::Sub | MirBinaryOp::CheckedSub => Instruction::I64Sub,
+            MirBinaryOp::Mul | MirBinaryOp::CheckedMul => Instruction::I64Mul,
             MirBinaryOp::Div => Instruction::I64DivS,
             MirBinaryOp::Rem => Instruction::I64RemS,
             MirBinaryOp::Eq => Instruction::I64Eq,
@@ -2929,23 +3138,9 @@ impl MirCodeGenerator<'_> {
                     // F64Neg is a single-instruction float negation and
                     // preserves IEEE-754 sign correctly (e.g. -0.0, -NaN).
                     self.current_instructions.push(Instruction::F64Neg);
-                } else if is_i64 {
-                    // `integer:64`: the same two's complement, in i64.
-                    self.current_instructions.extend([
-                        Instruction::I64Const(-1),
-                        Instruction::I64Xor,
-                        Instruction::I64Const(1),
-                        Instruction::I64Add,
-                    ]);
                 } else {
-                    // Integer negate via two's complement: -x = ~x + 1.
-                    // Stackless — no temp local required, and avoids the
-                    // earlier bug where `0 - x` was emitted as
-                    // `[x, 0] ; i32.sub` = x (identity, not negation).
-                    self.current_instructions.push(Instruction::I32Const(-1));
-                    self.current_instructions.push(Instruction::I32Xor);
-                    self.current_instructions.push(Instruction::I32Const(1));
-                    self.current_instructions.push(Instruction::I32Add);
+                    // `-MIN` raises "integer overflow".
+                    self.emit_checked_negation(is_i64)?;
                 }
             }
             MirUnaryOp::Not => {

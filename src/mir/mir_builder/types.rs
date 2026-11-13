@@ -1417,9 +1417,9 @@ impl MirBuilder {
     pub(super) fn convert_binary_op(&self, op: &BinaryOperator) -> MirBinaryOp {
         match op {
             // Arithmetic operators
-            BinaryOperator::Add => MirBinaryOp::Add,
-            BinaryOperator::Subtract => MirBinaryOp::Sub,
-            BinaryOperator::Multiply => MirBinaryOp::Mul,
+            BinaryOperator::Add => MirBinaryOp::CheckedAdd,
+            BinaryOperator::Subtract => MirBinaryOp::CheckedSub,
+            BinaryOperator::Multiply => MirBinaryOp::CheckedMul,
             BinaryOperator::Divide => MirBinaryOp::Div,
             BinaryOperator::Modulo => MirBinaryOp::Rem,
 

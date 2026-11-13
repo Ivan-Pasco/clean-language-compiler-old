@@ -769,7 +769,25 @@ impl MirBuilder {
                         expression.location.clone(),
                     );
 
-                    let mir_op = self.convert_binary_op(operator);
+                    // `+`, `-`, `*` raise "integer overflow" only on
+                    // integers; other operands use the plain operations.
+                    let mir_op = match self.convert_binary_op(operator) {
+                        op @ (MirBinaryOp::CheckedAdd
+                        | MirBinaryOp::CheckedSub
+                        | MirBinaryOp::CheckedMul)
+                            if !matches!(
+                                expression.expr_type,
+                                ConcreteType::Integer | ConcreteType::IntegerSized { .. }
+                            ) =>
+                        {
+                            match op {
+                                MirBinaryOp::CheckedAdd => MirBinaryOp::Add,
+                                MirBinaryOp::CheckedSub => MirBinaryOp::Sub,
+                                _ => MirBinaryOp::Mul,
+                            }
+                        }
+                        op => op,
+                    };
                     let instruction = MirInstruction {
                         dest: Some(result_id),
                         operation: MirOperation::BinaryOp {

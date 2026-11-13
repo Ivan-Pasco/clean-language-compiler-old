@@ -173,9 +173,9 @@ impl ConstantFoldingPass {
     /// The folded result must be exactly what the unoptimized WASM computes:
     /// `MirConstant::Integer` is an `i32` at runtime (`i32.add`, `i32.div_s`, ...
     /// with two's-complement wrapping), `MirConstant::Integer64` is an `i64`, and
-    /// floats compare with IEEE-754 equality (`f64.eq`). Operations that trap at
-    /// runtime (integer division or remainder by zero, `MIN / -1`) are left
-    /// unfolded so the trap still happens.
+    /// floats compare with IEEE-754 equality (`f64.eq`). Operations that raise
+    /// or trap at runtime (integer division or remainder by zero, `MIN / -1`,
+    /// an overflowing `+`, `-`, `*`) are left unfolded so that still happens.
     fn try_fold_binary_op(
         &self,
         op: &MirBinaryOp,
@@ -191,6 +191,10 @@ impl ConstantFoldingPass {
                     MirBinaryOp::Add => int(a.wrapping_add(b)),
                     MirBinaryOp::Sub => int(a.wrapping_sub(b)),
                     MirBinaryOp::Mul => int(a.wrapping_mul(b)),
+                    // An overflow raises at run time: left unfolded.
+                    MirBinaryOp::CheckedAdd => a.checked_add(b).and_then(int),
+                    MirBinaryOp::CheckedSub => a.checked_sub(b).and_then(int),
+                    MirBinaryOp::CheckedMul => a.checked_mul(b).and_then(int),
                     // `i32.div_s` traps on b == 0 and on MIN / -1.
                     MirBinaryOp::Div => a.checked_div(b).and_then(int),
                     // `i32.rem_s` traps on b == 0; MIN % -1 is 0.
@@ -211,6 +215,9 @@ impl ConstantFoldingPass {
                     MirBinaryOp::Add => int(a.wrapping_add(b)),
                     MirBinaryOp::Sub => int(a.wrapping_sub(b)),
                     MirBinaryOp::Mul => int(a.wrapping_mul(b)),
+                    MirBinaryOp::CheckedAdd => a.checked_add(b).and_then(int),
+                    MirBinaryOp::CheckedSub => a.checked_sub(b).and_then(int),
+                    MirBinaryOp::CheckedMul => a.checked_mul(b).and_then(int),
                     MirBinaryOp::Div => a.checked_div(b).and_then(int),
                     MirBinaryOp::Rem if b != 0 => int(a.wrapping_rem(b)),
                     MirBinaryOp::Eq => Some(MirConstant::Boolean(a == b)),
@@ -223,9 +230,9 @@ impl ConstantFoldingPass {
                 }
             }
             (MirConstant::Float(a), MirConstant::Float(b)) => match op {
-                MirBinaryOp::Add => Some(MirConstant::Float(a + b)),
-                MirBinaryOp::Sub => Some(MirConstant::Float(a - b)),
-                MirBinaryOp::Mul => Some(MirConstant::Float(a * b)),
+                MirBinaryOp::Add | MirBinaryOp::CheckedAdd => Some(MirConstant::Float(a + b)),
+                MirBinaryOp::Sub | MirBinaryOp::CheckedSub => Some(MirConstant::Float(a - b)),
+                MirBinaryOp::Mul | MirBinaryOp::CheckedMul => Some(MirConstant::Float(a * b)),
                 MirBinaryOp::Div if *b != 0.0 => Some(MirConstant::Float(a / b)),
                 MirBinaryOp::Eq => Some(MirConstant::Boolean(a == b)),
                 MirBinaryOp::Ne => Some(MirConstant::Boolean(a != b)),
@@ -250,9 +257,10 @@ impl ConstantFoldingPass {
     /// rules as `try_fold_binary_op`).
     fn try_fold_unary_op(&self, op: &MirUnaryOp, operand: &MirConstant) -> Option<MirConstant> {
         match (op, operand) {
-            (MirUnaryOp::Neg, MirConstant::Integer(i)) => {
-                Some(MirConstant::Integer(i64::from((*i as i32).wrapping_neg())))
-            }
+            // `-MIN` raises "integer overflow" at run time: left unfolded.
+            (MirUnaryOp::Neg, MirConstant::Integer(i)) => (*i as i32)
+                .checked_neg()
+                .map(|n| MirConstant::Integer(i64::from(n))),
             (MirUnaryOp::Neg, MirConstant::Float(f)) => Some(MirConstant::Float(-f)),
             (MirUnaryOp::Not, MirConstant::Boolean(b)) => Some(MirConstant::Boolean(!b)),
             _ => None,
@@ -621,7 +629,8 @@ impl OptimizationPass for DeadCodeEliminationPass {
 /// destination value, so it must stay even when that value is unused: memory
 /// and global writes, every kind of call (including dynamic capability
 /// dispatch), the `!` check (it halts on none even when its value is not
-/// used), a division that may divide by zero, and a short-circuit `and`/`or` whose right-hand side contains one
+/// used), a division that may divide by zero, source arithmetic that may
+/// overflow, and a short-circuit `and`/`or` whose right-hand side contains one
 /// of those.
 fn has_side_effects(operation: &MirOperation) -> bool {
     match operation {
@@ -635,6 +644,19 @@ fn has_side_effects(operation: &MirOperation) -> bool {
             op: MirUnaryOp::Required,
             ..
         } => true,
+        // Source `+`, `-`, `*` and `-x` raise "integer overflow" on integers.
+        MirOperation::BinaryOp {
+            op: MirBinaryOp::CheckedAdd | MirBinaryOp::CheckedSub | MirBinaryOp::CheckedMul,
+            left,
+            right,
+        } => !matches!(
+            (left, right),
+            (MirOperand::Constant(_), MirOperand::Constant(_))
+        ),
+        MirOperation::UnaryOp {
+            op: MirUnaryOp::Neg,
+            operand,
+        } => !matches!(operand, MirOperand::Constant(_)),
         // An integer division by zero raises "division by zero".
         MirOperation::BinaryOp {
             op: MirBinaryOp::Div | MirBinaryOp::Rem,

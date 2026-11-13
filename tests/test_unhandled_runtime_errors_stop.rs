@@ -115,6 +115,14 @@ fn value_that_does_not_fit_a_sized_integer_stops_with_message() {
 }
 
 #[test]
+fn integer_overflow_without_on_error_stops_with_message() {
+    let (output, completed) =
+        run("start:\n\tinteger top = 2147483647\n\tinteger n = top + 1\n\tprintl(\"after\")\n");
+    assert!(!completed, "the program must stop");
+    assert_eq!(output, "integer overflow\n");
+}
+
+#[test]
 fn integer64_into_integer_stops_with_message() {
     let (output, completed) =
         run("start:\n\tinteger:64 big = 5000000000\n\tinteger small = big\n\tprintl(\"after\")\n");

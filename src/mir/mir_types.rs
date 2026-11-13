@@ -654,10 +654,18 @@ pub enum OptionalConversion {
 /// Binary operations in MIR
 #[derive(Debug, Clone, PartialEq)]
 pub enum MirBinaryOp {
-    // Arithmetic
+    // Arithmetic. `Add`, `Sub` and `Mul` wrap on integers; they are the
+    // compiler's own arithmetic (addresses, counters, the range loop step
+    // whose wrap it detects).
     Add,
     Sub,
     Mul,
+    // The source operators `+`, `-`, `*`: on integers (`integer`,
+    // `integer:64`) a result outside the type's range raises the catchable
+    // error "integer overflow"; on numbers they are IEEE arithmetic.
+    CheckedAdd,
+    CheckedSub,
+    CheckedMul,
     Div,
     Rem,
 

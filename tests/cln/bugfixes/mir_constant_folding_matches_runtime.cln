@@ -1,5 +1,6 @@
 // Test: bugfixes/mir_constant_folding_matches_runtime
-// Semantic: type-system.md integer (32-bit, wrapping) and number (IEEE-754 f64)
+// Semantic: type-system.md integer (32-bit; overflow raises "integer overflow")
+//   and number (IEEE-754 f64)
 // Regression: the MIR constant-folding pass (enabled at the default -O2)
 //   computed integer arithmetic in 64 bits and compared floats with an
 //   epsilon, so folded results disagreed with the unoptimized WASM
@@ -10,19 +11,23 @@
 //   false
 //   true
 //   false
-//   -2147483648
-//   2147483647
-//   -2147483648
+//   -1
+//   -2
+//   -3
 //   2
 
 start:
 	printl(0.1 + 0.2 == 0.3)
 	printl(0.1 + 0.2 != 0.3)
-	printl(2147483647 + 1 > 0)
-	integer wrapped = 2147483647 + 1
+	// Changed in 0.33.184: integer overflow raises "integer overflow" instead of wrapping,
+	// and a constant expression that overflows is a compile error (developer decision);
+	// the folded and the runtime results still agree.
+	integer top = 2147483647
+	printl((top + 1 onError -1) > 0)
+	integer wrapped = top + 1 onError -1
 	printl(wrapped)
-	integer m = 2147483647 * 2147483647 * 2147483647
+	integer m = top * top * top onError -2
 	printl(m)
-	integer neg = -(0 - 2147483647 - 1)
+	integer neg = -(0 - top - 1) onError -3
 	printl(neg)
 	printl(-7 % 3 + 3)

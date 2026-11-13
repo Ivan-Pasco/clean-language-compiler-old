@@ -3785,11 +3785,90 @@ impl<'a> TypeInference<'a> {
         };
 
         self.recursion_depth -= 1;
-        Ok(TastExpression {
+        let expression = TastExpression {
             kind,
             expr_type,
             location: self.located(&location),
-        })
+        };
+        self.check_constant_overflow(&expression);
+        Ok(expression)
+    }
+
+    /// The value of a constant integer expression (literals combined with
+    /// `+`, `-`, `*` and unary `-`), or None when it is not constant or an
+    /// operand already overflowed (reported there).
+    fn constant_integer_value(expression: &TastExpression) -> Option<i128> {
+        let value = match &expression.kind {
+            TastExpressionKind::Literal {
+                value: TastLiteral::Integer(n),
+            } => return Some(i128::from(*n)),
+            TastExpressionKind::UnaryOperation {
+                operator: UnaryOperator::Negate,
+                operand,
+            } => -Self::constant_integer_value(operand)?,
+            TastExpressionKind::BinaryOperation {
+                operator,
+                left,
+                right,
+            } => {
+                let (a, b) = (
+                    Self::constant_integer_value(left)?,
+                    Self::constant_integer_value(right)?,
+                );
+                match operator {
+                    BinaryOperator::Add => a + b,
+                    BinaryOperator::Subtract => a - b,
+                    BinaryOperator::Multiply => a.checked_mul(b)?,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let (min, max) = Self::integer_type_bounds(&expression.expr_type)?;
+        (min..=max).contains(&value).then_some(value)
+    }
+
+    /// The range of `integer` (32-bit) and `integer:64`.
+    fn integer_type_bounds(ty: &ConcreteType) -> Option<(i128, i128)> {
+        match ty {
+            ConcreteType::Integer => Some((i32::MIN.into(), i32::MAX.into())),
+            ConcreteType::IntegerSized { bits: 64, .. } => Some((i64::MIN.into(), i64::MAX.into())),
+            _ => None,
+        }
+    }
+
+    /// A constant integer expression whose value is outside its type is a
+    /// compile-time error (at run time the same arithmetic raises "integer
+    /// overflow").
+    fn check_constant_overflow(&mut self, expression: &TastExpression) {
+        let operands_constant = match &expression.kind {
+            TastExpressionKind::UnaryOperation {
+                operator: UnaryOperator::Negate,
+                operand,
+            } => Self::constant_integer_value(operand).is_some(),
+            TastExpressionKind::BinaryOperation {
+                operator: BinaryOperator::Add | BinaryOperator::Subtract | BinaryOperator::Multiply,
+                left,
+                right,
+            } => {
+                Self::constant_integer_value(left).is_some()
+                    && Self::constant_integer_value(right).is_some()
+            }
+            _ => false,
+        };
+        let Some((min, max)) = Self::integer_type_bounds(&expression.expr_type) else {
+            return;
+        };
+        if operands_constant && Self::constant_integer_value(expression).is_none() {
+            self.errors.push(CompilerError::type_error(
+                format!(
+                    "integer overflow: this constant expression is outside {} ({min} to {max})",
+                    expression.expr_type
+                ),
+                Some("Use integer:64 for larger values, or change the constants".to_string()),
+                Some(expression.location.clone()),
+            ));
+        }
     }
 
     // -------------------------------------------------------------------------

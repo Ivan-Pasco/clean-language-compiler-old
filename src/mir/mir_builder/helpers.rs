@@ -21,6 +21,17 @@ impl MirBuilder {
                 left,
                 right,
             } => Self::may_divide_integer_by_zero(context, left, right),
+            MirOperation::BinaryOp {
+                op: MirBinaryOp::CheckedAdd | MirBinaryOp::CheckedSub | MirBinaryOp::CheckedMul,
+                left,
+                right,
+            } => {
+                !Self::is_number_operand(context, left) && !Self::is_number_operand(context, right)
+            }
+            MirOperation::UnaryOp {
+                op: MirUnaryOp::Neg,
+                operand,
+            } => !Self::is_number_operand(context, operand),
             MirOperation::UnboxAnyToI32 { .. }
             | MirOperation::UnboxAnyToI64 { .. }
             | MirOperation::UnboxAnyToF64 { .. }
@@ -88,7 +99,18 @@ impl MirBuilder {
         left: &MirOperand,
         right: &MirOperand,
     ) -> bool {
-        let is_number = |operand: &MirOperand| match operand {
+        let non_zero_constant = matches!(
+            right,
+            MirOperand::Constant(MirConstant::Integer(n) | MirConstant::Integer64(n)) if *n != 0
+        );
+        !non_zero_constant
+            && !Self::is_number_operand(context, left)
+            && !Self::is_number_operand(context, right)
+    }
+
+    /// Whether `operand` is a `number` (IEEE arithmetic, which never raises).
+    fn is_number_operand(context: &FunctionBuildContext, operand: &MirOperand) -> bool {
+        match operand {
             MirOperand::Constant(MirConstant::Float(_)) => true,
             MirOperand::Value(id) => context
                 .function
@@ -96,12 +118,7 @@ impl MirBuilder {
                 .get(id)
                 .is_some_and(|local| matches!(local.local_type, MirType::F64 | MirType::F32)),
             _ => false,
-        };
-        let non_zero_constant = matches!(
-            right,
-            MirOperand::Constant(MirConstant::Integer(n) | MirConstant::Integer64(n)) if *n != 0
-        );
-        !non_zero_constant && !is_number(left) && !is_number(right)
+        }
     }
 
     /// Emit a call to an error-handling runtime function

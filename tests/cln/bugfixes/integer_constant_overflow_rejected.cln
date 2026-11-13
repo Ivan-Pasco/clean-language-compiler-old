@@ -1,0 +1,12 @@
+// Test: bugfixes/integer_constant_overflow_rejected
+// Semantic: semantic-rules.md RUN003 — a constant integer expression whose
+//   value is outside its type is a compile-time error (developer decision,
+//   compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   integer overflow: this constant expression is outside integer (-2147483648 to 2147483647)
+
+start:
+	integer a = 2147483647 + 1
+	print(a)
