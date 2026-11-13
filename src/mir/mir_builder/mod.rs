@@ -294,8 +294,86 @@ impl MirBuilder {
         }
     }
 
+    /// A class without a `toString()` of its own or of an ancestor converts
+    /// to its class name (07-statements.md "Default Class Behavior"). In a
+    /// class hierarchy that name is the object's own class, also through a
+    /// parent-typed value, so every such class gets a compiler-generated
+    /// `toString()` returning its name; a call bound to it dispatches like
+    /// any overridden method. A class outside a hierarchy keeps the literal
+    /// name at the call site.
+    fn add_default_to_string_methods(&mut self, classes: &mut [TastClass]) {
+        let declares = |classes: &[TastClass], id: SymbolId| {
+            classes
+                .iter()
+                .find(|c| c.symbol_id == id)
+                .is_some_and(|c| c.methods.iter().any(|m| m.name == "toString"))
+        };
+        let mut missing = Vec::new();
+        for class in classes.iter() {
+            let has_subclass = classes
+                .iter()
+                .any(|c| c.parent_class == Some(class.symbol_id));
+            if class.parent_class.is_none() && !has_subclass {
+                continue;
+            }
+            let mut current = Some(class.symbol_id);
+            let mut inherits = false;
+            while let Some(id) = current {
+                if declares(classes, id) {
+                    inherits = true;
+                    break;
+                }
+                current = classes
+                    .iter()
+                    .find(|c| c.symbol_id == id)
+                    .and_then(|c| c.parent_class);
+            }
+            if !inherits {
+                missing.push(class.symbol_id);
+            }
+        }
+        for class in classes.iter_mut() {
+            if !missing.contains(&class.symbol_id) {
+                continue;
+            }
+            let symbol_id = SymbolId(self.next_serializer_symbol_id);
+            self.next_serializer_symbol_id += 1;
+            let location = class.location.clone();
+            let name = TastExpression {
+                kind: TastExpressionKind::Literal {
+                    value: TastLiteral::String(class.name.clone()),
+                },
+                expr_type: ConcreteType::String,
+                location: location.clone(),
+            };
+            class.methods.push(TastFunction {
+                symbol_id,
+                name: "toString".to_string(),
+                parameters: Vec::new(),
+                return_type: ConcreteType::String,
+                body: TastBlock {
+                    statements: vec![TastStatement::Return {
+                        value: Some(name),
+                        return_type: ConcreteType::String,
+                        location: location.clone(),
+                    }],
+                    scope_id: crate::resolver::symbol_table::ScopeId(0),
+                    return_type: ConcreteType::String,
+                    location: location.clone(),
+                },
+                generic_params: Vec::new(),
+                constraints: Vec::new(),
+                is_background: false,
+                is_static: false,
+                visibility: Visibility::Public,
+                location,
+            });
+        }
+    }
+
     /// Build MIR from TAST program
-    pub fn build(&mut self, tast: TastProgram) -> Result<MirProgram, Vec<CompilerError>> {
+    pub fn build(&mut self, mut tast: TastProgram) -> Result<MirProgram, Vec<CompilerError>> {
+        self.add_default_to_string_methods(&mut tast.classes);
         // Store all classes for inheritance lookups
         self.all_classes = tast.classes.clone();
         for (class_sym, cap_sym) in tast.vtable_descriptors.keys() {

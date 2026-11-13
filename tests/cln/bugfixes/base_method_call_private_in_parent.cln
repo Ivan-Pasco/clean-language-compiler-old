@@ -1,0 +1,26 @@
+// Test: bugfixes/base_method_call_private_in_parent
+// Grammar: method_call with receiver "base" (`base.name(args)`)
+// Semantic: SEM005 — `base.method()` cannot call a private method of the parent
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   error[SEM005]: 'secret' is private and cannot be accessed from outside 'Parent'
+
+start:
+	Child c = Child()
+	print(c.run())
+
+class Parent
+	functions:
+		integer secret()
+			return 1
+
+		public:
+			integer run()
+				return secret()
+
+class Child is Parent
+	functions:
+		public:
+			integer run()
+				return base.secret()

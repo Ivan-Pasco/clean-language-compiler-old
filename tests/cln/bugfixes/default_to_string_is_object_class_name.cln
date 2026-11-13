@@ -1,0 +1,50 @@
+// Test: bugfixes/default_to_string_is_object_class_name
+// Grammar: method_call (`toString()`)
+// Semantic: 07-statements.md "Default Class Behavior" — the generated
+//   `toString()` of a class is the name of the object's own class, also
+//   through a parent-typed variable or list; a `toString()` a class declares
+//   (or inherits) overrides it
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   Animal
+//   Dog
+//   puppy!
+//   puppy!
+//   Cat
+//   Lone
+
+start:
+	list<Animal> animals = []
+	animals.add(Animal())
+	animals.add(Dog())
+	animals.add(Puppy())
+	animals.add(Pup())
+	animals.add(Cat())
+	iterate a in animals
+		print(a.toString())
+	Lone l = Lone()
+	print(l.toString())
+
+class Animal
+	functions:
+		public:
+			string sound()
+				return "..."
+
+class Dog is Animal
+
+class Puppy is Dog
+	functions:
+		public:
+			string toString()
+				return "puppy!"
+
+class Pup is Puppy
+
+class Cat is Animal
+
+class Lone
+	functions:
+		public:
+			integer one()
+				return 1

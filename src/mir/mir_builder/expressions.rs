@@ -1525,13 +1525,24 @@ impl MirBuilder {
 
                 // `obj.toString()` on a class that declares no `toString()`
                 // (nor inherits one) is the class name (07-statements.md
-                // "Default Class Behavior").
+                // "Default Class Behavior"): in a class hierarchy the call
+                // binds to the generated `toString()` of the class
+                // (`add_default_to_string_methods`), elsewhere it is the
+                // name literal.
+                let mut default_to_string = None;
                 if let ConcreteType::Class {
                     symbol_id: class_symbol,
                     ..
                 } = &receiver_actual_type
                 {
                     if method_name == "toString" && method_symbol.0 == 0 && arguments.is_empty() {
+                        default_to_string = self.class_method_by_name(*class_symbol, "toString");
+                    }
+                    if method_name == "toString"
+                        && method_symbol.0 == 0
+                        && arguments.is_empty()
+                        && default_to_string.is_none()
+                    {
                         if let Some(class_name) = self
                             .all_classes
                             .iter()
@@ -1549,6 +1560,9 @@ impl MirBuilder {
                         }
                     }
                 }
+
+                let bound_method = default_to_string.unwrap_or(*method_symbol);
+                let method_symbol = &bound_method;
 
                 // Capability-typed receiver — emit dynamic dispatch via
                 // MirOperation::CallCapability. The receiver's class-id (at
@@ -3256,8 +3270,16 @@ impl MirBuilder {
                         })
                         .unwrap_or_default();
 
-                    if let (false, ConcreteType::Class { symbol_id, .. }) =
-                        (method_is_static, &receiver.expr_type)
+                    // `base.method()` arrives as a call on `this` typed as
+                    // the parent class (`resolve_base_method_call`): it runs
+                    // the parent's implementation, never an override.
+                    let is_base_call = matches!(
+                        (&receiver.kind, &context.class_context),
+                        (TastExpressionKind::Variable { name, symbol_id }, Some(class))
+                            if name == "this" && *symbol_id != class.symbol_id
+                    );
+                    if let (false, false, ConcreteType::Class { symbol_id, .. }) =
+                        (method_is_static, is_base_call, &receiver.expr_type)
                     {
                         virtual_overrides = self.method_overrides(*symbol_id, *method_symbol);
                     }

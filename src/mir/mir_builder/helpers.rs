@@ -1631,15 +1631,28 @@ impl MirBuilder {
         }
     }
 
+    /// The nearest method named `name` from `class` up its parents.
+    pub(super) fn class_method_by_name(&self, class: SymbolId, name: &str) -> Option<SymbolId> {
+        let mut current = self.all_classes.iter().find(|c| c.symbol_id == class);
+        while let Some(c) = current {
+            if let Some(m) = c.methods.iter().find(|m| m.name == name) {
+                return Some(m.symbol_id);
+            }
+            current = c
+                .parent_class
+                .and_then(|p| self.all_classes.iter().find(|c| c.symbol_id == p));
+        }
+        None
+    }
+
     /// The methods that override `method` for an instance of a subclass of
     /// `static_class`, each with the class-ids of the classes whose
     /// instances run it (15-classes-and-objects.md "Method Overriding").
     /// Empty when the call can stay a direct call: no subclass redefines
     /// the method, or the method is private (a private method is not
     /// inherited, so a subclass method of the same name does not override
-    /// it). An override whose parameters or result lower to other WASM
-    /// types than `method`'s cannot take the same call and is not
-    /// dispatched to.
+    /// it). The resolver checks that an override has the bound method's
+    /// signature (SEM006), so every arm takes the same call.
     pub(super) fn method_overrides(
         &self,
         static_class: SymbolId,
@@ -1672,16 +1685,6 @@ impl MirBuilder {
         if declared.is_static || declared.visibility == Visibility::Private {
             return Vec::new();
         }
-        let signature = |m: &TastFunction| {
-            (
-                m.parameters
-                    .iter()
-                    .map(|p| self.convert_concrete_type(&p.param_type))
-                    .collect::<Vec<_>>(),
-                self.convert_concrete_type(&m.return_type),
-            )
-        };
-        let declared_signature = signature(declared);
         let is_subclass = |class: &TastClass| {
             let mut parent = class.parent_class;
             while let Some(p) = parent {
@@ -1697,10 +1700,7 @@ impl MirBuilder {
             let Some(target) = resolve(class.symbol_id, &declared.name) else {
                 continue;
             };
-            if target.symbol_id == method
-                || target.is_static
-                || signature(target) != declared_signature
-            {
+            if target.symbol_id == method || target.is_static {
                 continue;
             }
             let Some(&class_id) = self.class_ids.get(&class.symbol_id) else {

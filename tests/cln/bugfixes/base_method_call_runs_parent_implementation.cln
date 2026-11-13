@@ -1,0 +1,62 @@
+// Test: bugfixes/base_method_call_runs_parent_implementation
+// Grammar: method_call with receiver "base" (`base.name(args)`), base_call
+// Semantic: 15-classes-and-objects.md "Method Overriding" — `base.method()`
+//   inside a subclass runs the implementation of the nearest ancestor that
+//   defines it, on the same object, and is never dispatched to an override
+//   (also when the object belongs to a deeper subclass)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   grand(child)
+//   [grand(leaf)]
+//   12
+//   106
+
+start:
+	Grand c = Child()
+	print(c.describe())
+	Grand l = Leaf()
+	print(l.describe())
+	print(c.score(2).toString())
+	print(l.score(3).toString())
+
+class Grand
+	functions:
+		public:
+			string name()
+				return "grand"
+
+			string describe()
+				return "grand(" + this.name() + ")"
+
+			integer score(integer x)
+				return x
+
+class Parent is Grand
+	functions:
+		public:
+			string name()
+				return "parent"
+
+class Child is Parent
+	functions:
+		public:
+			string name()
+				return "child"
+
+			string describe()
+				return base.describe()
+
+			integer score(integer x)
+				return base.score(x) + 10
+
+class Leaf is Child
+	functions:
+		public:
+			string name()
+				return "leaf"
+
+			string describe()
+				return "[" + base.describe() + "]"
+
+			integer score(integer x)
+				return base.score(x) + 93

@@ -1387,7 +1387,16 @@ impl HirValidator {
                     }
                 }
 
-                Self::validate_expression(context, receiver);
+                // `base.method()` inside a class calls a parent's method; the
+                // resolver checks that a parent defines it.
+                let is_base_call = matches!(
+                    receiver.as_ref(),
+                    HirExpression::Variable { name, .. } if name == "base"
+                ) && context.lookup_variable("base").is_none()
+                    && context.lookup_variable("this").is_some();
+                if !is_base_call {
+                    Self::validate_expression(context, receiver);
+                }
 
                 for arg in arguments {
                     Self::validate_expression(context, arg);

@@ -1,0 +1,23 @@
+// Test: bugfixes/base_method_call_not_defined_by_parent
+// Grammar: method_call with receiver "base" (`base.name(args)`)
+// Semantic: SEM002 — `base.method()` names a method no parent class defines
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   error[SEM002]: No parent class of 'Child' defines a method 'missing'
+
+start:
+	Child c = Child()
+	print(c.run())
+
+class Parent
+	functions:
+		public:
+			integer run()
+				return 1
+
+class Child is Parent
+	functions:
+		public:
+			integer run()
+				return base.missing()

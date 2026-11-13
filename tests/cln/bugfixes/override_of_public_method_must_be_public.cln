@@ -1,0 +1,30 @@
+// Test: bugfixes/override_of_public_method_must_be_public
+// Grammar: class_declaration ("is" parent), functions_block (public:)
+// Semantic: SEM006 — an override of a public method is public too; a
+//   subclass method named like a private parent method is a new method
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   error[SEM006]: Method 'area' of class 'Square' overrides the public method 'Shape.area' but is private
+//   add 'area' under `public:`
+
+start:
+	Shape s = Square()
+	print(s.area(2))
+
+class Shape
+	functions:
+		integer helper()
+			return 1
+
+		public:
+			integer area(integer side)
+				return side * helper()
+
+class Square is Shape
+	functions:
+		integer area(integer side)
+			return side * side
+
+		integer helper()
+			return 2

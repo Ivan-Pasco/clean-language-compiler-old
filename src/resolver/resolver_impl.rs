@@ -347,6 +347,7 @@ impl NameResolver {
         // vtable descriptors keyed by (class symbol id, capability symbol id).
         let vtable_descriptors =
             self.validate_and_build_capability_descriptors(&resolved_classes, &hir.capabilities);
+        self.check_method_overrides(&resolved_classes);
 
         // Preserve HIR capability declarations as resolved capabilities so
         // codegen and IDE tooling can enumerate method-slot layouts.
@@ -704,6 +705,86 @@ impl NameResolver {
             body,
             location: class.location.clone(),
         })
+    }
+
+    /// A method that redefines a public method of an ancestor overrides it
+    /// (15-classes-and-objects.md "Method Overriding"): it must take the same
+    /// parameter types and return the same type, and be public too (SEM006).
+    /// A private ancestor method is not inherited, so a method of the same
+    /// name in a subclass is a new method.
+    fn check_method_overrides(&mut self, classes: &[ResolvedHirClass]) {
+        let is_private = |resolver: &Self, symbol: SymbolId| {
+            resolver
+                .symbol_table
+                .get_symbol(symbol)
+                .is_some_and(|s| s.is_private)
+        };
+        for class in classes {
+            for method in &class.methods {
+                let mut ancestor = class
+                    .parent
+                    .and_then(|p| classes.iter().find(|c| c.symbol_id == p));
+                let mut overridden = None;
+                while let Some(a) = ancestor {
+                    if let Some(m) = a.methods.iter().find(|m| m.name == method.name) {
+                        overridden = Some((a, m));
+                        break;
+                    }
+                    ancestor = a
+                        .parent
+                        .and_then(|p| classes.iter().find(|c| c.symbol_id == p));
+                }
+                let Some((parent, parent_method)) = overridden else {
+                    continue;
+                };
+                if is_private(self, parent_method.symbol_id) {
+                    continue;
+                }
+                let signature = |m: &ResolvedHirMethod| {
+                    format!(
+                        "{}{}({})",
+                        match &m.return_type {
+                            crate::hir::HirType::Void => String::new(),
+                            other => format!("{} ", hir_type_text(other)),
+                        },
+                        m.name,
+                        m.parameters
+                            .iter()
+                            .map(|p| hir_type_text(&p.param_type))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                if signature(method) != signature(parent_method) {
+                    self.error_with_help(
+                        &format!(
+                            "Method '{}' of class '{}' overrides '{}.{}' with a different signature",
+                            method.name, class.name, parent.name, parent_method.name
+                        ),
+                        Some(format!(
+                            "An override takes the same parameter types and returns the same type: declare it as `{}` (here it is `{}`), or give it another name",
+                            signature(parent_method),
+                            signature(method)
+                        )),
+                        method.location.clone(),
+                        "SEM006",
+                    );
+                } else if is_private(self, method.symbol_id) {
+                    self.error_with_help(
+                        &format!(
+                            "Method '{}' of class '{}' overrides the public method '{}.{}' but is private",
+                            method.name, class.name, parent.name, parent_method.name
+                        ),
+                        Some(format!(
+                            "An override of a public method is public too: add '{}' under `public:` in the `functions:` block of '{}'",
+                            method.name, class.name
+                        )),
+                        method.location.clone(),
+                        "SEM006",
+                    );
+                }
+            }
+        }
     }
 
     /// Stage 5b + 5c — Validate capability conformance for every class and
@@ -2897,6 +2978,99 @@ impl NameResolver {
         })
     }
 
+    /// `base.method(args)` inside a class: the implementation of the nearest
+    /// ancestor that defines `method`, run on the same object and never
+    /// dispatched to an override. The receiver is `this` typed as the parent
+    /// class; the MIR builder binds a call on such a receiver statically.
+    fn resolve_base_method_call(
+        &mut self,
+        class_id: SymbolId,
+        method: &str,
+        arguments: &[HirExpression],
+        location: &SourceLocation,
+    ) -> Result<ResolvedHirExpression, ()> {
+        let class_symbol = self.symbol_table.get_symbol(class_id);
+        let class_name = class_symbol.map(|s| s.name.clone()).unwrap_or_default();
+        let parent_id = class_symbol.and_then(|s| match &s.kind {
+            SymbolKind::Class { parent, .. } => *parent,
+            _ => None,
+        });
+        let Some(parent_id) = parent_id else {
+            self.error_with_help(
+                &format!(
+                    "'base.{}()' is used in class '{}', which has no parent class",
+                    method, class_name
+                ),
+                Some("`base.method()` calls the parent class's method; declare the parent with `class Child is Parent`".to_string()),
+                location.clone(),
+                "SEM002",
+            );
+            return Err(());
+        };
+        let method_symbol = self
+            .symbol_table
+            .lookup_class_member(parent_id, method)
+            .filter(|id| {
+                self.symbol_table
+                    .get_symbol(*id)
+                    .is_some_and(|s| matches!(s.kind, SymbolKind::Method { .. }))
+            });
+        let Some(method_symbol) = method_symbol else {
+            self.error_with_help(
+                &format!(
+                    "No parent class of '{}' defines a method '{}'",
+                    class_name, method
+                ),
+                Some("`base.method()` runs the implementation a parent class defines".to_string()),
+                location.clone(),
+                "SEM002",
+            );
+            return Err(());
+        };
+        if self
+            .symbol_table
+            .get_symbol(method_symbol)
+            .is_some_and(|s| s.is_private)
+        {
+            let owner = self
+                .symbol_table
+                .get_symbol(method_symbol)
+                .and_then(|s| match &s.kind {
+                    SymbolKind::Method { class_id, .. } => self.symbol_table.get_symbol(*class_id),
+                    _ => None,
+                })
+                .map(|s| s.name.clone())
+                .unwrap_or_default();
+            self.error_with_help(
+                &format!(
+                    "'{}' is private and cannot be accessed from outside '{}'",
+                    method, owner
+                ),
+                Some(format!(
+                    "A subclass calls only public methods of its parents: move '{}' under `public:` in '{}'",
+                    method, owner
+                )),
+                location.clone(),
+                "SEM005",
+            );
+            return Err(());
+        }
+        let mut resolved_arguments = Vec::new();
+        for arg in arguments {
+            resolved_arguments.push(self.resolve_expression(arg)?);
+        }
+        Ok(ResolvedHirExpression::MethodCall {
+            receiver: Box::new(ResolvedHirExpression::This {
+                class_symbol_id: parent_id,
+                location: location.clone(),
+            }),
+            method: method.to_string(),
+            method_symbol_id: Some(method_symbol),
+            arguments: resolved_arguments,
+            location: location.clone(),
+        })
+    }
+
     /// Resolve a `MethodCall` expression.
     ///
     /// Handles, in order:
@@ -2905,6 +3079,8 @@ impl NameResolver {
     /// 3. Three-level call (namespace.class.method) via FieldAccess receiver.
     /// 4. FUNC012 guard — reject method-call syntax on user-defined functions.
     /// 5. Regular instance method call.
+    ///
+    /// A `base.method(args)` call is resolved first.
     fn resolve_method_call_expression(
         &mut self,
         receiver: &HirExpression,
@@ -2912,6 +3088,14 @@ impl NameResolver {
         arguments: &[HirExpression],
         location: &SourceLocation,
     ) -> Result<ResolvedHirExpression, ()> {
+        if let (HirExpression::Variable { name, .. }, Some(class_id)) =
+            (receiver, self.current_class)
+        {
+            if name == "base" && self.symbol_table.lookup_symbol("base").is_none() {
+                return self.resolve_base_method_call(class_id, method, arguments, location);
+            }
+        }
+
         // Check if the receiver is a class name (for static method calls)
         if let HirExpression::Variable {
             name: class_name, ..
@@ -5138,6 +5322,39 @@ impl NameResolver {
 impl Default for NameResolver {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A type as written in source, for comparing and naming method signatures
+/// (`HirType::Named` carries the location of each mention).
+fn hir_type_text(hir_type: &crate::hir::HirType) -> String {
+    use crate::hir::HirType;
+    match hir_type {
+        HirType::Integer => "integer".to_string(),
+        HirType::Number => "number".to_string(),
+        HirType::String => "string".to_string(),
+        HirType::Boolean => "boolean".to_string(),
+        HirType::Void => "void".to_string(),
+        HirType::Integer8 => "integer:8".to_string(),
+        HirType::Integer8u => "integer:8u".to_string(),
+        HirType::Integer16 => "integer:16".to_string(),
+        HirType::Integer16u => "integer:16u".to_string(),
+        HirType::Integer32 => "integer:32".to_string(),
+        HirType::Integer32u => "integer:32u".to_string(),
+        HirType::Integer64 => "integer:64".to_string(),
+        HirType::Integer64u => "integer:64u".to_string(),
+        HirType::Number32 => "number:32".to_string(),
+        HirType::Number64 => "number:64".to_string(),
+        HirType::List(inner) => format!("list<{}>", hir_type_text(inner)),
+        HirType::Matrix(inner) => format!("matrix<{}>", hir_type_text(inner)),
+        HirType::Pairs(key, value) => {
+            format!("pairs<{}, {}>", hir_type_text(key), hir_type_text(value))
+        }
+        HirType::Named { name, .. } => name.clone(),
+        HirType::Inferred { id, .. } => format!("<inferred {}>", id),
+        HirType::Any => "any".to_string(),
+        HirType::Handler => "handler".to_string(),
+        HirType::Optional(inner) => format!("{}?", hir_type_text(inner)),
     }
 }
 

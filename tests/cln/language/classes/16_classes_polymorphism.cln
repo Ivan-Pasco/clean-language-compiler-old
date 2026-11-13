@@ -90,22 +90,23 @@ class Car is Vehicle
 		isElectric = electric
 
 	functions:
-		string startEngine()
-			if isElectric
-				return make + " " + model + " starting silently (electric)"
-			else
-				return make + " " + model + " engine starting"
-
-		string stopEngine()
-			return make + " " + model + " parking"
-
-		integer getMaxSpeed()
-			if isElectric
-				return 120
-			else
-				return 100
-
+		// Changed in 0.33.184: an override of a public method is public (SEM006)
 		public:
+			string startEngine()
+				if isElectric
+					return make + " " + model + " starting silently (electric)"
+				else
+					return make + " " + model + " engine starting"
+
+			string stopEngine()
+				return make + " " + model + " parking"
+
+			integer getMaxSpeed()
+				if isElectric
+					return 120
+				else
+					return 100
+
 			string getCarDetails()
 				string electric_status = ""
 				if isElectric
@@ -122,19 +123,20 @@ class Motorcycle is Vehicle
 		hasSidecar = sidecar
 
 	functions:
-		string startEngine()
-			return make + " " + model + " motorcycle roaring to life"
-
-		string stopEngine()
-			return make + " " + model + " motorcycle stopping"
-
-		integer getMaxSpeed()
-			if hasSidecar
-				return 80
-			else
-				return 140
-
+		// Changed in 0.33.184: an override of a public method is public (SEM006)
 		public:
+			string startEngine()
+				return make + " " + model + " motorcycle roaring to life"
+
+			string stopEngine()
+				return make + " " + model + " motorcycle stopping"
+
+			integer getMaxSpeed()
+				if hasSidecar
+					return 80
+				else
+					return 140
+
 			string getBikeDetails()
 				string sidecar_status = ""
 				if hasSidecar
