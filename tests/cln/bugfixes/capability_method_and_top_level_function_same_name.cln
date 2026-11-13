@@ -1,0 +1,37 @@
+// Test: bugfixes/capability_method_and_top_level_function_same_name
+// Grammar: can_declaration, class_declaration (can_clause), function_declaration_line, method_call, function_call
+// Semantic: 15-classes-and-objects.md "Capabilities" — a capability method
+//   dispatches on the receiver's class, and a top-level function of the
+//   same name (with other parameters) stays a separate function
+// Fixed in: compiler 0.33.186
+// Expected output:
+//   circle
+//   square
+//   top-level draw x3
+
+start:
+	render(Circle())
+	render(Square())
+	print(draw(3))
+
+can Draw:
+	string draw()
+
+class Circle can Draw
+	functions:
+		public:
+			string draw()
+				return "circle"
+
+class Square can Draw
+	functions:
+		public:
+			string draw()
+				return "square"
+
+functions:
+	render(Draw shape)
+		print(shape.draw())
+
+	string draw(integer times)
+		return "top-level draw x" + times.toString()

@@ -297,7 +297,7 @@ The JSON hosts only understand JSON-tree fragments, so every value bound for a J
 
 ## 21. Plugin Helpers Are Kept by Name
 
-**What:** Plugin helper functions (`location.file == "<plugin-output>"`) are dead-code eliminated in `mir_codegen/mod.rs::generate()` by NAME: a helper survives when its name is in the reachable set from `collect_all_called_names_from_mir` (`mir_codegen/utilities.rs`). That set also gets the name of every function the BFS visited. A user function can share a helper's name — a class method `notFound` next to frame.server's `notFound` helper — and then the helper survives too, without the BFS ever walking its body.
+**What:** Plugin helper functions (`location.file == "<plugin-output>"`) are dead-code eliminated in `mir_codegen/mod.rs::generate()` by NAME: a helper survives when its name is in the reachable set from `collect_all_called_names_from_mir` (`mir_codegen/utilities.rs`). That set also gets the name of every function the BFS visited. A user function can share a helper's name, and then the helper survives too, without the BFS ever walking its body. (A class method no longer can: methods are named `Class::method`, §22.)
 
 **Watch for:** every name added to the reachable set must be added before the preamble fixpoint, which walks the body of each kept helper. Adding names after it keeps a helper whose callees (`__json_escape`) were dropped, and codegen fails with "Function '__json_escape' not found in function map".
 
@@ -307,6 +307,8 @@ The JSON hosts only understand JSON-tree fragments, so every value bound for a J
 
 **What:** The module exports only what hosts look up (`src/codegen/mir_codegen/exports.rs`): `memory`, `__heap_ptr`, `malloc`/`free`/`scope_push`/`scope_pop`, `_start`, `_run_tests`, `handle_event_N`, `__indirect_function_table`, and every program function (plugin-generated ones included) under its own name. Imports and runtime helpers are not exported. Program functions, imports and runtime helpers share `function_map`, so `check_function_names` rejects (SEM003) a source-file function that takes a runtime name and any function that takes a module export name; plugin-generated functions may take runtime language names (frame.server's `redirect`).
 
+Class methods and constructors are named `Class::method` from the MIR on (`mir_types::class_member_name`, set when `MirBuilder::build` lowers a class; `MirFunction::source_name` gives the bare name back), so they never share an entry of `function_map` or of the other name-keyed tables (return types, signatures, the reachable-name set) with a top-level function, a screen function (`Screen.fn`) or another class's member. The internal name is never exported: a member is exported under its source name when no other function of that name is in `function_map` (a top-level function owns its name; among members the highest index wins, as when they shared the table). `check_function_names` checks a member by its source name, so a method still cannot take a runtime or export name. frame.ui `events:` handlers reach the browser through the bare-named top-level shims (`emit_event_handler_shims`), not the methods; the only host lookup that can land on a method is clean-server's embedded fallback island loader (`exports.hydrate` / `exports.render`, used when frame.ui is not installed).
+
 After `finalize_module` assembles the module, `codegen::module_dce` drops every defined function not reachable from the exports, the element segments and the start function, and renumbers the rest. Imports are kept (the Import Minimality Rule decides them at registration). Table slots keep their positions (a function value is its slot, `slot N holds function N`), only the function stored in each slot is renumbered.
 
 **Watch for:**
@@ -314,7 +316,7 @@ After `finalize_module` assembles the module, `codegen::module_dce` drops every 
 - Runtime code that refers to a function by index outside `call` / `return_call` / `ref.func` / element segments / exports (for example an index baked into an `i32.const` that is not a table slot): the pass cannot see it and renumbers the function. Function values must stay table slots.
 - New module shapes (non-function imports, passive element segments, `ref.func` in globals): `module_dce` returns such modules unchanged; extend it rather than working around it.
 
-**Regression:** `tests/test_module_exports.rs`, `tests/cln/bugfixes/function_named_like_runtime_helper_rejected.cln`, `tests/cln/bugfixes/function_named_memory_rejected.cln`, unit tests in `src/codegen/module_dce.rs`.
+**Regression:** `tests/test_module_exports.rs`, `tests/test_class_member_names.rs`, `tests/cln/bugfixes/*_and_top_level_function_*.cln`, `tests/cln/bugfixes/function_named_like_runtime_helper_rejected.cln`, `tests/cln/bugfixes/function_named_memory_rejected.cln`, unit tests in `src/codegen/module_dce.rs`.
 
 ## 23. Locations of Code Parsed from Plugin Fragments
 

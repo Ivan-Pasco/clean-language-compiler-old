@@ -111,13 +111,25 @@ pub struct MirExternalFunction {
     pub location: SourceLocation,
 }
 
+/// Separates the class name from the member name in the internal name of a
+/// class method or constructor (`Counter::bump`). No source identifier
+/// contains it, so a member never shares a name with a top-level function,
+/// a screen function (`Screen.render`) or a runtime function.
+pub const CLASS_MEMBER_SEPARATOR: &str = "::";
+
+/// The internal name of a class method or constructor.
+pub fn class_member_name(class_name: &str, member_name: &str) -> String {
+    format!("{class_name}{CLASS_MEMBER_SEPARATOR}{member_name}")
+}
+
 /// MIR function representation
 #[derive(Debug, Clone)]
 pub struct MirFunction {
     /// Original symbol ID from TAST
     pub symbol_id: SymbolId,
 
-    /// Function name
+    /// Function name. Class methods and constructors carry their class
+    /// (`class_member_name`); see `source_name` for the name in the source.
     pub name: String,
 
     /// Function parameters
@@ -153,6 +165,17 @@ pub struct MirFunction {
 
     /// Source location for debugging
     pub location: SourceLocation,
+}
+
+impl MirFunction {
+    /// The name the function has in the source: a class member's name
+    /// without its class, any other function's name.
+    pub fn source_name(&self) -> &str {
+        match self.name.rsplit_once(CLASS_MEMBER_SEPARATOR) {
+            Some((_, member)) => member,
+            None => &self.name,
+        }
+    }
 }
 
 /// MIR function parameter

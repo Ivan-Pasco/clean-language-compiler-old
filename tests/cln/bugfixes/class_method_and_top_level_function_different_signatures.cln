@@ -1,0 +1,43 @@
+// Test: bugfixes/class_method_and_top_level_function_different_signatures
+// Grammar: class_declaration, function_declaration_line, method_call, function_call
+// Semantic: 15-classes-and-objects.md — a method and a top-level function
+//   with the same name and different parameters and results each keep
+//   their own signature, whether the call is a statement or a value
+// Fixed in: compiler 0.33.186
+// Expected output:
+//   top-level bump
+//   top-level bump x7
+//   5
+//   12
+//   top-level bump x3
+
+start:
+	Counter c = Counter()
+	bump(1)
+	print(bump(7))
+	print(c.bump(5).toString())
+	c.tick()
+	print(c.bump(6).toString())
+	print(bump(3))
+
+class Counter
+	public:
+		integer count
+
+	constructor()
+		count = 0
+
+	functions:
+		public:
+			integer bump(integer by)
+				count = count + by
+				return count
+
+			tick()
+				count = count + 1
+
+functions:
+	string bump(integer times)
+		if times == 1
+			print("top-level bump")
+		return "top-level bump x" + times.toString()

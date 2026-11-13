@@ -1,0 +1,26 @@
+// Test: bugfixes/class_method_in_module_and_top_level_function_same_name
+// Grammar: import_block, class_declaration, function_declaration_line, method_call, function_call
+// Semantic: 15-classes-and-objects.md — a method of a class from an
+//   imported module and a function of the importing module with the same
+//   name are two functions (the module's own start: runs first)
+// Fixed in: compiler 0.33.186
+// Expected output:
+//   module start
+//   1
+//   top-level bump
+//   2
+//   top-level bump
+
+import:
+	class_method_module_counter
+
+start:
+	Counter c = Counter()
+	print(c.bump().toString())
+	bump()
+	print(c.bump().toString())
+	bump()
+
+functions:
+	void bump()
+		print("top-level bump")

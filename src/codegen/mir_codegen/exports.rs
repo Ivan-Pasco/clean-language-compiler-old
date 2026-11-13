@@ -11,6 +11,10 @@
 //!   its own name: hosts call route handlers, event handlers, callbacks
 //!   (`_frame_callback`) and plugin entry points (`expand_block`) by the
 //!   name the program hands them;
+//! - class methods and constructors under their name in the source when no
+//!   other function has that name (a top-level function owns its name), the
+//!   last-registered member when several classes share it. Their internal
+//!   names (`Counter::bump`) are not exported.
 //! - `handle_event_N` for handlers registered through a `Handler` bridge
 //!   parameter, and `__indirect_function_table` when functions are used as
 //!   values;
@@ -20,6 +24,7 @@
 //! `list.add`, ...) are not exported.
 
 use super::*;
+use crate::mir::mir_types::CLASS_MEMBER_SEPARATOR;
 
 /// Runtime helpers hosts call by their export name.
 const HOST_RUNTIME_EXPORTS: [&str; 4] = ["malloc", "free", "scope_push", "scope_pop"];
@@ -65,7 +70,9 @@ impl MirCodeGenerator<'_> {
         registered_later: &[&str],
     ) -> Result<(), CompilerError> {
         for (_, function) in functions {
-            let name = function.name.as_str();
+            // A class member is checked by its name in the source: its bare
+            // export must not replace a runtime function or export either.
+            let name = function.source_name();
             let from_plugin = function.location.file == crate::ast::PLUGIN_OUTPUT_MARKER
                 || function.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
             let runtime_name = self.wasm_generator.function_map.contains_key(name)
@@ -98,19 +105,39 @@ impl MirCodeGenerator<'_> {
         } else {
             &[]
         };
-        let mut names: Vec<&str> = self
-            .user_defined_function_names
-            .iter()
-            .map(String::as_str)
-            .chain(HOST_RUNTIME_EXPORTS)
-            .chain(probed.iter().copied())
-            .collect();
-        names.sort_unstable();
-        names.dedup();
-        for name in names {
+        // Class members by source name: the one registered last (highest
+        // index) when several classes share a name.
+        let mut members: HashMap<&str, u32> = HashMap::new();
+        for name in &self.user_defined_function_names {
+            let Some((_, member)) = name.rsplit_once(CLASS_MEMBER_SEPARATOR) else {
+                continue;
+            };
             let Some(&index) = self.wasm_generator.function_map.get(name) else {
                 continue;
             };
+            let slot = members.entry(member).or_insert(index);
+            *slot = (*slot).max(index);
+        }
+        let mut exports: Vec<(&str, u32)> = self
+            .user_defined_function_names
+            .iter()
+            .map(String::as_str)
+            .filter(|name| !name.contains(CLASS_MEMBER_SEPARATOR))
+            .chain(HOST_RUNTIME_EXPORTS)
+            .chain(probed.iter().copied())
+            .filter_map(|name| {
+                let index = *self.wasm_generator.function_map.get(name)?;
+                Some((name, index))
+            })
+            .collect();
+        exports.extend(
+            members
+                .into_iter()
+                .filter(|(member, _)| !self.wasm_generator.function_map.contains_key(*member)),
+        );
+        exports.sort_unstable();
+        exports.dedup();
+        for (name, index) in exports {
             if index >= total_functions {
                 tracing::error!(
                     name = %name,

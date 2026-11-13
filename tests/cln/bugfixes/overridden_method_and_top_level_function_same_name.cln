@@ -1,0 +1,45 @@
+// Test: bugfixes/overridden_method_and_top_level_function_same_name
+// Grammar: class_declaration ("is" parent), function_declaration_line, method_call, function_call
+// Semantic: 15-classes-and-objects.md "Method Overriding" — an overridden
+//   method dispatches on the object's class, and a top-level function of
+//   the same name stays a separate function
+// Fixed in: compiler 0.33.186
+// Expected output:
+//   Rex barks
+//   Generic speaks
+//   top-level speak
+//   Rex barks
+
+start:
+	Animal a = Dog("Rex")
+	print(a.speak())
+	Animal b = Animal("Generic")
+	print(b.speak())
+	print(speak())
+	Dog d = Dog("Rex")
+	print(d.speak())
+
+class Animal
+	public:
+		string name
+
+	constructor(string nameParam)
+		name = nameParam
+
+	functions:
+		public:
+			string speak()
+				return name + " speaks"
+
+class Dog is Animal
+	constructor(string nameParam)
+		base(nameParam)
+
+	functions:
+		public:
+			string speak()
+				return name + " barks"
+
+functions:
+	string speak()
+		return "top-level speak"

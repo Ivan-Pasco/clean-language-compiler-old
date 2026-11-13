@@ -1,0 +1,36 @@
+// Test: bugfixes/class_method_and_top_level_function_same_name
+// Grammar: class_declaration, function_declaration_line, method_call, function_call
+// Semantic: 15-classes-and-objects.md — a class method and a top-level
+//   function with the same name are two functions: `c.bump()` runs the
+//   method, `bump()` the top-level function, and the top-level function
+//   keeps the export `bump` (tests/test_class_member_names.rs)
+// Fixed in: compiler 0.33.186
+// Expected output:
+//   method bump
+//   top-level bump
+//   method bump
+//   2
+
+start:
+	Counter c = Counter()
+	c.bump()
+	bump()
+	c.bump()
+	print(c.count.toString())
+
+class Counter
+	public:
+		integer count
+
+	constructor()
+		count = 0
+
+	functions:
+		public:
+			bump()
+				count = count + 1
+				print("method bump")
+
+functions:
+	void bump()
+		print("top-level bump")

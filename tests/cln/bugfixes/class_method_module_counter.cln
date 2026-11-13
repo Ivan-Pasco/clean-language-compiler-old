@@ -1,0 +1,22 @@
+// Test: bugfixes/class_method_module_counter
+// Semantic: module imported by class_method_in_module_and_top_level_function_same_name.cln;
+//   its class has a method named like a function of the importing module
+// Fixed in: compiler 0.33.186
+// Expected output:
+//   module start
+
+start:
+	print("module start")
+
+class Counter
+	public:
+		integer count
+
+	constructor()
+		count = 0
+
+	functions:
+		public:
+			integer bump()
+				count = count + 1
+				return count

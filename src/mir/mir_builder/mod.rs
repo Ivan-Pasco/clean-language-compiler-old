@@ -759,8 +759,11 @@ impl MirBuilder {
             let class_name = class.name.clone();
             match self.build_class(class) {
                 Ok(class_functions) => {
-                    for function in class_functions {
-                        // NOTE: Add class method/constructor names to symbol map
+                    for mut function in class_functions {
+                        // Members are named after their class, so a method and
+                        // a top-level function of the same name stay distinct.
+                        function.name =
+                            crate::mir::mir_types::class_member_name(&class_name, &function.name);
                         mir_program
                             .symbol_name_map
                             .insert(function.symbol_id, function.name.clone());

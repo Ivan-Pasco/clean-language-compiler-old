@@ -1581,10 +1581,11 @@ impl MirCodeGenerator<'_> {
                 // In client mode (browser build), route/page handlers are server-only
                 // and must NOT be seeded — seeding them causes their _db_query /
                 // _http_respond imports to appear in frontend.wasm (CLIENT_MODULE_LEAK).
+                let name = f.source_name();
                 let is_server_handler =
-                    f.name.starts_with("__route_handler_") || f.name.starts_with("__page_handler_");
+                    name.starts_with("__route_handler_") || name.starts_with("__page_handler_");
                 let is_single_underscore_callback =
-                    f.name.starts_with('_') && !f.name.starts_with("__");
+                    name.starts_with('_') && !name.starts_with("__");
                 let is_external_call_target =
                     (!self.client_mode && is_server_handler) || is_single_underscore_callback;
                 // User-defined functions are called directly by the HTTP server runtime
