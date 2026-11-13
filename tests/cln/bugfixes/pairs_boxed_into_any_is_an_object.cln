@@ -1,0 +1,19 @@
+// Test: bugfixes/pairs_boxed_into_any_is_an_object
+// Grammar: variable_declaration (any), function_call (json.encode)
+// Semantic: BOXED_ANY_ABI.md §2, §3.3 — a pairs value stored into an `any`
+//   is a tag-6 (Object) box holding its JSON-tree object
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   {"name":"ab"}
+//   {"code":"xyz","city":"Lima"}
+//
+// Regression: the box got tag 1 (integer), so the `any` read back as the
+// address of the converted object: json.encode printed a number.
+
+start:
+	pairs<string, string> ab = {"name": "ab"}
+	any boxed = ab
+	print(json.encode(boxed))
+	pairs<string, string> place = {"code": "xyz", "city": "Lima"}
+	any other = place
+	print(json.encode(other))

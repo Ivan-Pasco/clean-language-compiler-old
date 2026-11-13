@@ -18,7 +18,11 @@ impl MirBuilder {
             ConcreteType::Boolean => AnyTypeTag::Boolean,
             ConcreteType::String => AnyTypeTag::String,
             ConcreteType::Array(_) | ConcreteType::Matrix(_) => AnyTypeTag::List,
-            ConcreteType::Class { .. } | ConcreteType::Interface { .. } => AnyTypeTag::Object,
+            // A pairs value is boxed as the JSON-tree object
+            // `__json_from_cln_pairs` builds (BOXED_ANY_ABI §3.3).
+            ConcreteType::Class { .. }
+            | ConcreteType::Interface { .. }
+            | ConcreteType::Pairs(_, _) => AnyTypeTag::Object,
             ConcreteType::Null | ConcreteType::Undefined => AnyTypeTag::Null,
             // For any other types, default to Integer (they'll be stored as i32)
             _ => AnyTypeTag::Integer,
