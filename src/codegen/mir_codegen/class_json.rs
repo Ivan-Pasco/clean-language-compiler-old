@@ -6,13 +6,15 @@
 //! unboxes to the same instance; the header tells the runtime which class it
 //! is. The JSON hosts only understand JSON-tree objects (BOXED_ANY_ABI §3.3),
 //! so before a value reaches a JSON bridge the compiler converts every boxed
-//! instance in it with three functions emitted here, after the MIR functions:
+//! instance in it with the functions emitted here, after the MIR functions:
 //!
 //! | Function | Signature | Does |
 //! |---|---|---|
 //! | `__json_tree_instance` | `(instance) -> any` | the JSON object of the instance's own class (switch over the header calling `__json_tree_ClassName`), or a null box for a null instance |
 //! | `__json_normalize` | `(any) -> any` | the same value with every boxed instance inside it replaced by its object; containers are copied only when something in them changed, so the caller's value is never modified |
 //! | `__any_to_instance` | `(any) -> instance` | the instance an `any` holds, 0 (null) for null; any other value raises an error |
+//! | `__instance_text_box` | `(instance) -> any` | the string box of the instance's `toString()` (`__instance_to_string`, a MIR function) |
+//! | `__text_normalize` | `(any) -> any` | `__json_normalize` with every boxed instance replaced by the string of its `toString()`: what the readable text of a collection encodes |
 //!
 //! The functions exist only in programs that declare classes; MIR bodies call
 //! them by name, so `preregister_class_json_runtime` reserves their indices
@@ -26,13 +28,21 @@ use wasm_encoder::MemArg;
 const TREE_INSTANCE: &str = "__json_tree_instance";
 const NORMALIZE: &str = "__json_normalize";
 const ANY_TO_INSTANCE: &str = "__any_to_instance";
+const INSTANCE_TEXT_BOX: &str = "__instance_text_box";
+use crate::mir::mir_types::TEXT_NORMALIZE;
 /// The error `__any_to_instance` raises for a value that is not an instance
 /// (a JSON object, a list, a string, a number): no conversion decodes one
 /// into a class (type-system.md §9 only lets an `any` hold an instance).
 const NOT_AN_INSTANCE_MESSAGE: &str = "value is not a class instance";
 
 /// The runtime functions in emission order.
-pub(super) const RUNTIME_FUNCTIONS: [&str; 3] = [TREE_INSTANCE, NORMALIZE, ANY_TO_INSTANCE];
+pub(super) const RUNTIME_FUNCTIONS: [&str; 5] = [
+    TREE_INSTANCE,
+    NORMALIZE,
+    ANY_TO_INSTANCE,
+    INSTANCE_TEXT_BOX,
+    TEXT_NORMALIZE,
+];
 
 fn mem(offset: u64) -> MemArg {
     MemArg {
@@ -107,9 +117,13 @@ impl MirCodeGenerator<'_> {
         let not_an_instance = self
             .wasm_generator
             .get_or_create_string_offset(NOT_AN_INSTANCE_MESSAGE)?;
+        let instance_to_string =
+            self.runtime_function_index(crate::mir::mir_types::INSTANCE_TO_STRING)?;
         let tree_instance = base;
         let normalize = base + 1;
         let any_to_instance = base + 2;
+        let instance_text_box = base + 3;
+        let text_normalize = base + 4;
 
         let mut dispatch = Vec::new();
         for (class_id, tree_symbol) in &self.class_json_trees {
@@ -144,6 +158,16 @@ impl MirCodeGenerator<'_> {
                 ANY_TO_INSTANCE.to_string(),
                 vec![WasmType::I32],
                 Self::any_to_instance_body(err_raise, not_an_instance),
+            ),
+            (
+                INSTANCE_TEXT_BOX.to_string(),
+                vec![WasmType::I32],
+                Self::instance_text_box_body(malloc, instance_to_string),
+            ),
+            (
+                TEXT_NORMALIZE.to_string(),
+                vec![WasmType::I32; 12],
+                Self::normalize_body(malloc, memcpy, instance_text_box, text_normalize),
             ),
         ];
         for (name, conversion) in self.instance_conversions.clone() {
@@ -233,7 +257,29 @@ impl MirCodeGenerator<'_> {
         code
     }
 
-    /// `__json_normalize(box)`. Locals: 0 box, 1 tag, 2 payload, 3 count,
+    /// `__instance_text_box(instance)`: a string box (tag 4) holding
+    /// `__instance_to_string(instance)`. Locals: 0 instance, 1 box.
+    fn instance_text_box_body(malloc: u32, instance_to_string: u32) -> Vec<Instruction<'static>> {
+        use Instruction::*;
+        vec![
+            I32Const(12),
+            Call(malloc),
+            LocalTee(1),
+            I32Const(AnyTypeTag::String.as_i32()),
+            I32Store(mem(0)),
+            LocalGet(1),
+            LocalGet(0),
+            Call(instance_to_string),
+            I32Store(mem(4)),
+            LocalGet(1),
+            I32Const(0),
+            I32Store(mem(8)),
+            LocalGet(1),
+        ]
+    }
+
+    /// `__json_normalize(box)` (and `__text_normalize`, with
+    /// `__instance_text_box` as `tree_instance`). Locals: 0 box, 1 tag, 2 payload, 3 count,
     /// 4 i, 5 child, 6 normalized child, 7 copy, 8 copy size, 9 slot,
     /// 10 new box, 11 first value offset, 12 stride.
     fn normalize_body(

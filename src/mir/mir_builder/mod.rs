@@ -299,8 +299,10 @@ impl MirBuilder {
     /// class hierarchy that name is the object's own class, also through a
     /// parent-typed value, so every such class gets a compiler-generated
     /// `toString()` returning its name; a call bound to it dispatches like
-    /// any overridden method. A class outside a hierarchy keeps the literal
-    /// name at the call site.
+    /// any overridden method. `__instance_to_string` (the text of an
+    /// instance in `print`, interpolation and collection text) calls the
+    /// `toString()` of every class, so classes outside a hierarchy get one
+    /// too.
     fn add_default_to_string_methods(&mut self, classes: &mut [TastClass]) {
         let declares = |classes: &[TastClass], id: SymbolId| {
             classes
@@ -310,12 +312,6 @@ impl MirBuilder {
         };
         let mut missing = Vec::new();
         for class in classes.iter() {
-            let has_subclass = classes
-                .iter()
-                .any(|c| c.parent_class == Some(class.symbol_id));
-            if class.parent_class.is_none() && !has_subclass {
-                continue;
-            }
             let mut current = Some(class.symbol_id);
             let mut inherits = false;
             while let Some(id) = current {
@@ -818,6 +814,33 @@ impl MirBuilder {
                     mir_program.functions.insert(list_sym_id, list_fn);
                 }
             }
+        }
+
+        // The `toString()` of an instance of any class, run for the
+        // instance's own class (`print`, interpolation, collection text).
+        let mut to_strings: Vec<(SymbolId, Vec<u32>)> = Vec::new();
+        for class in &all_classes_snapshot {
+            let (Some(method), Some(&class_id)) = (
+                self.class_method_by_name(class.symbol_id, "toString"),
+                self.class_ids.get(&class.symbol_id),
+            ) else {
+                continue;
+            };
+            match to_strings.iter_mut().find(|(m, _)| *m == method) {
+                Some((_, ids)) => ids.push(class_id),
+                None => to_strings.push((method, vec![class_id])),
+            }
+        }
+        let null_text = self.get_string_index("null".to_string());
+        let to_string_symbol = SymbolId(self.next_serializer_symbol_id);
+        if let Some(function) =
+            Self::build_instance_to_string(to_string_symbol, to_strings, null_text)
+        {
+            self.next_serializer_symbol_id += 1;
+            mir_program
+                .symbol_name_map
+                .insert(to_string_symbol, function.name.clone());
+            mir_program.functions.insert(to_string_symbol, function);
         }
 
         // Phase 2: build the watch handler function bodies using the registrations

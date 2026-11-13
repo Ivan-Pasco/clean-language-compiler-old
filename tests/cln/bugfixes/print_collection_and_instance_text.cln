@@ -1,0 +1,106 @@
+// Test: bugfixes/print_collection_and_instance_text
+// Grammar: print_statement, string_interpolation, method_call
+// Semantic: print, printl, `"{x}"` and `x.toString()` of a list, matrix,
+//   pairs map or class instance give readable text: a collection is written
+//   as `json.encode` writes it (strings quoted, `number` keeps `.0`, nested
+//   collections recurse), and every class instance — alone or inside a
+//   collection — is its own class's `toString()` (the class name by default)
+//   (developer decision 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   [1,2]
+//   [1,2]
+//   v=[1,2]
+//   [1,2]
+//   [1.0,2.5]
+//   ["x","y\"z"]
+//   {"a":1,"b":2}
+//   p={"a":1,"b":2}
+//   [[1],[2,3]]
+//   {"k":[1,2]}
+//   []
+//   Box
+//   b=Box
+//   Box
+//   ["Box","named"]
+//   ["circle","Square"]
+//   [3,4]
+//   [5,6]
+//   [7]
+//   [[1,2],[3,4]]
+//   [9]
+//   [1,2.0,"t"]
+//
+// Regression: a list printed an empty line, a pairs map or class instance
+// its memory address, and `list.toString()` / `"{list}"` failed in code
+// generation ("Function 'list.toString' not found").
+
+start:
+	list<integer> a = [1, 2]
+	print(a)
+	printl(a)
+	print("v={a}")
+	print(a.toString())
+	list<number> n = [1.0, 2.5]
+	print(n)
+	list<string> s = ["x", "y\"z"]
+	print(s)
+	pairs<string, integer> p = {"a": 1, "b": 2}
+	print(p)
+	print("p={p}")
+	list<list<integer>> nested = [[1], [2, 3]]
+	print(nested)
+	pairs<string, list<integer>> byKey = {"k": a}
+	print(byKey)
+	list<integer> empty = []
+	print(empty)
+
+	Box b = Box()
+	print(b)
+	print("b={b}")
+	print(b.toString())
+	list<Box> boxes = [b, (Named())]
+	print(boxes)
+	list<Draw> shapes = [(Circle()), (Square())]
+	print(shapes)
+
+	list<integer>.unique u = [3, 4]
+	print(u)
+	list<integer>.line q = [5, 6]
+	print(q)
+	list<integer>.pile st = [7]
+	print(st)
+	matrix<integer> m = [[1, 2], [3, 4]]
+	print(m)
+	integer:64 big = 9
+	list<integer:64> bigs = [big]
+	print(bigs)
+	any data = json.textToData("[1, 2.0, \"t\"]")
+	print(data)
+
+can Draw:
+	string draw()
+
+class Box
+	public:
+		integer w = 3
+
+class Named is Box
+	functions:
+		public:
+			string toString()
+				return "named"
+
+class Circle can Draw
+	functions:
+		public:
+			string draw()
+				return "o"
+			string toString()
+				return "circle"
+
+class Square can Draw
+	functions:
+		public:
+			string draw()
+				return "[]"

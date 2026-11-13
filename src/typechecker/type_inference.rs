@@ -2089,7 +2089,11 @@ impl<'a> TypeInference<'a> {
         //   Methods are static. This preserves the earlier fix for the
         //   body_uses_this() false-positive on sibling calls
         //   (CODEGEN_STACK_REMAINING fp df5b8c9b1021).
-        let is_static = !(has_parent || has_fields || has_capabilities);
+        //
+        // `toString()` describes an object and is always an instance method:
+        // `__instance_to_string` calls it on an instance of any class.
+        let is_static =
+            !(has_parent || has_fields || has_capabilities) && method.name != "toString";
 
         Ok(TastFunction {
             symbol_id: method.symbol_id,
@@ -6140,6 +6144,8 @@ impl<'a> TypeInference<'a> {
             }
             (T::Pairs(key, _), "remove") => sig(vec![(**key).clone()], 1, T::Undefined),
             (T::Pairs(_, _), "len" | "size") => none(T::Integer),
+            // The readable text of a collection (as `json.encode` writes it).
+            (T::Pairs(_, _) | T::Matrix(_), "toString") => none(T::String),
 
             _ => None,
         }

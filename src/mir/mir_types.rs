@@ -589,6 +589,15 @@ pub enum MirType {
     Any,
 }
 
+/// The MIR function giving the `toString()` of a class instance of any
+/// class of the program (`MirBuilder::build_instance_to_string`): what
+/// `print`, interpolation and the text of a collection use for an instance.
+pub const INSTANCE_TO_STRING: &str = "__instance_to_string";
+
+/// The codegen runtime function (class_json.rs) replacing every boxed class
+/// instance in an `any` with the string of its `toString()`.
+pub const TEXT_NORMALIZE: &str = "__text_normalize";
+
 /// High half of the word every class instance starts with (the object
 /// header, MEMORY_MODEL.md "Class instance"). The low half is the class-id.
 /// As an `i32` the mark is negative, so a header can never be mistaken for

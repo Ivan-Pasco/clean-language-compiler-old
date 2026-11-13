@@ -983,6 +983,126 @@ impl MirBuilder {
         }
     }
 
+    /// `__instance_to_string(this: i32) -> string` — the `toString()` of a
+    /// class instance, run for the instance's own class (`CallVirtual` over
+    /// every class's `toString`, each class's own or inherited one); `null`
+    /// for a null instance. `methods` pairs each `toString` method with the
+    /// class-ids of the classes that run it.
+    pub(super) fn build_instance_to_string(
+        symbol_id: SymbolId,
+        methods: Vec<(SymbolId, Vec<u32>)>,
+        null_text: usize,
+    ) -> Option<MirFunction> {
+        let (first, _) = methods.first()?.clone();
+        let loc = SourceLocation::default();
+        let local = |name: &str, local_type: MirType| MirLocal {
+            name: Some(name.to_string()),
+            local_type,
+            is_mutable: true,
+            location: SourceLocation::default(),
+        };
+        let text_type = MirType::Ptr(Box::new(MirType::U8));
+        let (this, is_null, text) = (ValueId(0), ValueId(1), ValueId(2));
+        let locals: HashMap<ValueId, MirLocal> = HashMap::from([
+            (this, local("this", MirType::I32)),
+            (is_null, local("is_null", MirType::I32)),
+            (text, local("text", text_type.clone())),
+        ]);
+        let instruction = |dest: Option<ValueId>, operation| MirInstruction {
+            dest,
+            operation,
+            location: SourceLocation::default(),
+        };
+        let (entry_id, null_id, call_id, exit_id) = (
+            BasicBlockId(0),
+            BasicBlockId(1),
+            BasicBlockId(2),
+            BasicBlockId(3),
+        );
+        let to_exit = MirTerminator::Jump { target: exit_id };
+        let mut blocks: HashMap<BasicBlockId, MirBasicBlock> = HashMap::new();
+        for (id, instructions, terminator) in [
+            (
+                entry_id,
+                vec![instruction(
+                    Some(is_null),
+                    MirOperation::BinaryOp {
+                        op: MirBinaryOp::Eq,
+                        left: MirOperand::Value(this),
+                        right: MirOperand::Constant(MirConstant::Integer(0)),
+                    },
+                )],
+                MirTerminator::Branch {
+                    condition: MirOperand::Value(is_null),
+                    true_block: null_id,
+                    false_block: call_id,
+                },
+            ),
+            (
+                null_id,
+                vec![instruction(
+                    Some(text),
+                    MirOperation::Copy {
+                        source: MirOperand::Constant(MirConstant::String(null_text)),
+                    },
+                )],
+                to_exit.clone(),
+            ),
+            (
+                call_id,
+                vec![instruction(
+                    Some(text),
+                    MirOperation::CallVirtual {
+                        method: first,
+                        overrides: methods,
+                        arguments: vec![MirOperand::Value(this)],
+                    },
+                )],
+                to_exit,
+            ),
+            (
+                exit_id,
+                Vec::new(),
+                MirTerminator::Return {
+                    value: Some(MirOperand::Value(text)),
+                },
+            ),
+        ] {
+            blocks.insert(
+                id,
+                MirBasicBlock {
+                    id,
+                    label: None,
+                    instructions,
+                    terminator,
+                    location: loc.clone(),
+                },
+            );
+        }
+        Some(MirFunction {
+            symbol_id,
+            name: crate::mir::mir_types::INSTANCE_TO_STRING.to_string(),
+            parameters: vec![MirParameter {
+                value_id: this,
+                name: "this".to_string(),
+                param_type: MirType::I32,
+                location: loc.clone(),
+            }],
+            return_type: text_type,
+            blocks,
+            entry_block: entry_id,
+            locals,
+            next_value_id: 3,
+            next_block_id: 4,
+            if_merges: HashMap::from([(entry_id, exit_id)]),
+            attributes: MirFunctionAttributes {
+                entry_point: false,
+                exported: false,
+            },
+            location: loc,
+        })
+    }
+
     /// The call that converts a typed list or pairs field into its JSON tree
     /// fragment (`__json_from_cln_list` / `__json_from_cln_pairs`).
     fn collection_tree_call(

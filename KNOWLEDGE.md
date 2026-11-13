@@ -356,6 +356,6 @@ Where it is handled:
 **Watch for:**
 - Every method of a class that has subclasses takes `this` (`type_inference.rs` `in_hierarchy`); otherwise a parent method of a class without fields is lowered static and its overrides cannot take the same call.
 - A new pass over MIR calls (reachability BFS, preamble fixpoint, `onError` checks, liveness) must treat `CallVirtual` as a call of every method it names.
-- Every class of a hierarchy without a `toString()` of its own or of an ancestor gets a generated public `toString()` returning its name (`add_default_to_string_methods`, `mir_builder/mod.rs`), so `obj.toString()` names the object's class through a parent-typed value. A class outside a hierarchy keeps the literal name.
+- Every class without a `toString()` of its own or of an ancestor gets a generated public `toString()` returning its name (`add_default_to_string_methods`, `mir_builder/mod.rs`), so `obj.toString()` names the object's class through a parent-typed value. `toString()` is never a static method. `__instance_to_string` (a generated MIR function, a `CallVirtual` over every class's `toString`) gives the text of an instance for `print`, interpolation and the text of collections; collection text is `__cln_to_any` → `__text_normalize` (instances become their `toString()` strings, `class_json.rs`) → `_json_encode_v2`.
 
 **Regression:** `tests/cln/bugfixes/overridden_method_*.cln`, `overridden_void_and_number_methods_dispatch.cln`, `base_method_call_*.cln`, `override_*.cln`, `default_to_string_is_object_class_name.cln`.

@@ -1543,10 +1543,8 @@ impl MirBuilder {
 
                 // `obj.toString()` on a class that declares no `toString()`
                 // (nor inherits one) is the class name (07-statements.md
-                // "Default Class Behavior"): in a class hierarchy the call
-                // binds to the generated `toString()` of the class
-                // (`add_default_to_string_methods`), elsewhere it is the
-                // name literal.
+                // "Default Class Behavior"): the call binds to the generated
+                // `toString()` of the class (`add_default_to_string_methods`).
                 let mut default_to_string = None;
                 if let ConcreteType::Class {
                     symbol_id: class_symbol,
@@ -1555,27 +1553,6 @@ impl MirBuilder {
                 {
                     if method_name == "toString" && method_symbol.0 == 0 && arguments.is_empty() {
                         default_to_string = self.class_method_by_name(*class_symbol, "toString");
-                    }
-                    if method_name == "toString"
-                        && method_symbol.0 == 0
-                        && arguments.is_empty()
-                        && default_to_string.is_none()
-                    {
-                        if let Some(class_name) = self
-                            .all_classes
-                            .iter()
-                            .find(|c| c.symbol_id == *class_symbol)
-                            .map(|c| c.name.clone())
-                        {
-                            let name_literal = TastExpression {
-                                kind: TastExpressionKind::Literal {
-                                    value: TastLiteral::String(class_name),
-                                },
-                                expr_type: ConcreteType::String,
-                                location: expression.location.clone(),
-                            };
-                            return self.build_expression(context, &name_literal);
-                        }
                     }
                 }
 
@@ -1701,6 +1678,24 @@ impl MirBuilder {
                     self.add_instruction(context, instruction);
 
                     return Ok(result_id);
+                }
+
+                // `toString()` of a list, matrix or pairs map: its readable text.
+                if method_name == "toString"
+                    && arguments.is_empty()
+                    && matches!(
+                        &receiver_actual_type,
+                        ConcreteType::Array(_)
+                            | ConcreteType::Matrix(_)
+                            | ConcreteType::Pairs(_, _)
+                    )
+                {
+                    return Ok(self.emit_value_text(
+                        context,
+                        receiver_id,
+                        &receiver_actual_type,
+                        &expression.location,
+                    ));
                 }
 
                 // SPECIAL CASE: String.toString() is identity operation - just return the receiver

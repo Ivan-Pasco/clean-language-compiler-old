@@ -1267,12 +1267,89 @@ impl MirBuilder {
                     location,
                 )
             }
-            _ => {
-                // For other types (objects, arrays, etc.), use the value as-is for now
-                // In a complete implementation, these would also have toString() methods
-                Ok(value_id)
+            ConcreteType::Array(_)
+            | ConcreteType::Matrix(_)
+            | ConcreteType::Pairs(_, _)
+            | ConcreteType::Class { .. }
+            | ConcreteType::Interface { .. } => {
+                Ok(self.emit_value_text(context, value_id, value_type, location))
             }
+            // `any` is converted by the print function itself (tag dispatch).
+            _ => Ok(value_id),
         }
+    }
+
+    /// The readable text of a list, matrix, pairs map or class instance (what
+    /// `print`, interpolation and `toString()` give). An instance is its
+    /// `toString()`, run for its own class. A collection is the text
+    /// `json.encode` gives, except that every instance in it is the string of
+    /// its `toString()` rather than the object of its fields: the value is
+    /// boxed (`__cln_to_any`), its instances replaced (`__text_normalize`),
+    /// and the box encoded by `_json_encode_v2`.
+    pub(super) fn emit_value_text(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        value_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let text_type = MirType::Ptr(Box::new(MirType::U8));
+        let has_classes = !self.class_json_tree_ids.is_empty();
+        if matches!(
+            value_type,
+            ConcreteType::Class { .. } | ConcreteType::Interface { .. }
+        ) && has_classes
+        {
+            return self.emit_named_call(
+                context,
+                crate::mir::mir_types::INSTANCE_TO_STRING,
+                vec![MirOperand::Value(value_id)],
+                text_type,
+                location,
+            );
+        }
+        // A matrix is a list of rows.
+        let shape = match value_type {
+            ConcreteType::Matrix(element) => {
+                ConcreteType::Array(Box::new(ConcreteType::Array(element.clone())))
+            }
+            other => other.clone(),
+        };
+        let boxed = match Self::cln_to_any_descriptor(&shape) {
+            Some(descriptor) => {
+                let descriptor_index = self.get_string_index(descriptor);
+                self.emit_named_call(
+                    context,
+                    crate::stdlib::json_class::CLN_TO_ANY,
+                    vec![
+                        MirOperand::Value(value_id),
+                        MirOperand::Constant(MirConstant::String(descriptor_index)),
+                        MirOperand::Constant(MirConstant::Integer(0)),
+                    ],
+                    MirType::Any,
+                    location,
+                )
+            }
+            None => self.emit_box_any(context, value_id, value_type, location),
+        };
+        let boxed = if has_classes {
+            self.emit_named_call(
+                context,
+                crate::mir::mir_types::TEXT_NORMALIZE,
+                vec![MirOperand::Value(boxed)],
+                MirType::Any,
+                location,
+            )
+        } else {
+            boxed
+        };
+        self.emit_named_call(
+            context,
+            "_json_encode_v2",
+            vec![MirOperand::Value(boxed)],
+            text_type,
+            location,
+        )
     }
 
     /// Convert MirType back to ConcreteType for type inference
