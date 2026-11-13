@@ -6,7 +6,7 @@
 // Expected output:
 // Expected error:
 //   SYN002
-//   `this` is not used in Clean: refer to the field or method by its name (`count`, `reset()`)
+//   `this` is not used in Clean: refer to the field or method by its name (`count`, `clear()`)
 //   :27:
 //
 // Regression: `this.clear()` compiled as a call of the sibling method.
