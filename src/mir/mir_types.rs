@@ -758,7 +758,8 @@ impl MirType {
                 parameters: parameters.iter().map(Self::from_concrete_type).collect(),
                 return_type: Box::new(Self::from_concrete_type(return_type)),
             },
-            ConcreteType::Class { .. } => {
+            // A capability value is the instance pointer of a conforming class.
+            ConcreteType::Class { .. } | ConcreteType::Interface { .. } => {
                 // NOTE: Classes as i32 pointer in WASM (heap-allocated objects)
                 // Cannot use Ptr(Void) because codegen treats that as void return type
                 MirType::I32

@@ -1,0 +1,69 @@
+// Test: bugfixes/list_literal_of_capability
+// Grammar: list_literal, can_declaration, class_declaration, iterate_statement
+// Semantic: 15-classes-and-objects.md §Using a capability as a type — a list
+//   literal stored as `list<Cap>` (declared, or a `list<Cap>` parameter as in
+//   the spec's `renderAll(list<Draw> things)`) holds instances of every class
+//   that claims `Cap`; a capability method called on an element runs the
+//   element's own class's method, or the capability's default body
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   circle
+//   square
+//   [circle]
+//   <square>
+//   circle
+//   square
+//   circle
+//   square
+//   3
+//
+// Regression: `list<Describe> all = [c, s]` was SEM004: the literal was
+// typed by its first element's class.
+
+start:
+	Circle c = Circle()
+	Square s = Square()
+	list<Describe> all = [c, s]
+	iterate d in all
+		print(d.describe())
+	iterate t in all
+		print(t.tag())
+
+	renderAll([c, s])
+	renderAll([(Circle()), (Square())])
+	list<Draw> more = [s, c, s]
+	print(more.length())
+
+can Draw:
+	draw()
+
+can Describe:
+	string describe()
+	string tag()
+		return "[" + this.describe() + "]"
+
+class Circle can Draw, Describe
+	functions:
+		public:
+			draw()
+				print("circle")
+			string describe()
+				return "circle"
+
+class Square can Draw, Describe
+	functions:
+		public:
+			draw()
+				print("square")
+			string describe()
+				return "square"
+			string tag()
+				return "<square>"
+
+functions:
+	render(Draw thing)
+		thing.draw()
+
+	renderAll(list<Draw> things)
+		iterate item in things
+			render(item)

@@ -6979,8 +6979,10 @@ impl<'a> TypeInference<'a> {
     ///   the slot's type inside the protected region, so a failed conversion
     ///   gives the fallback (14-error-handling.md);
     /// - a list literal of subclasses of the slot's element class is a list
-    ///   of that class (type-system.md §Assignability).
-    fn fit_to_expected_type(&self, value: &mut TastExpression, target: &ConcreteType) {
+    ///   of that class (type-system.md §Assignability), and one of classes
+    ///   conforming to the slot's element capability a list of that
+    ///   capability.
+    fn fit_to_expected_type(&mut self, value: &mut TastExpression, target: &ConcreteType) {
         match (&mut value.kind, target) {
             (TastExpressionKind::OnError { expression, .. }, _)
                 if matches!(expression.expr_type, ConcreteType::Any)
@@ -7001,23 +7003,38 @@ impl<'a> TypeInference<'a> {
                     element_type,
                 },
                 ConcreteType::Array(target_element),
-            ) => {
-                let ConcreteType::Class {
+            ) if !elements.is_empty() => match **target_element {
+                ConcreteType::Class {
                     symbol_id: parent, ..
-                } = **target_element
-                else {
-                    return;
-                };
-                let all_subclasses = !elements.is_empty()
-                    && elements.iter().all(|e| {
+                } => {
+                    let all_subclasses = elements.iter().all(|e| {
                         matches!(e.expr_type, ConcreteType::Class { symbol_id, .. }
                             if self.class_is_subclass_of(symbol_id, parent))
                     });
-                if all_subclasses {
+                    if all_subclasses {
+                        *element_type = (**target_element).clone();
+                        value.expr_type = target.clone();
+                    }
+                }
+                // A list of a capability: every class instance must conform
+                // to it, checked as for a capability-typed parameter (SEM011).
+                ConcreteType::Interface { .. }
+                    if elements
+                        .iter()
+                        .all(|e| matches!(e.expr_type, ConcreteType::Class { .. })) =>
+                {
+                    for element in elements.iter() {
+                        self.add_constraint(TypeConstraint::Subtype {
+                            subtype: element.expr_type.clone(),
+                            supertype: (**target_element).clone(),
+                            location: element.location.clone(),
+                        });
+                    }
                     *element_type = (**target_element).clone();
                     value.expr_type = target.clone();
                 }
-            }
+                _ => {}
+            },
             _ => {}
         }
     }

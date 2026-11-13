@@ -1,0 +1,35 @@
+// Test: bugfixes/list_literal_of_capability_requires_conformance
+// Grammar: list_literal, can_declaration, class_declaration
+// Semantic: SEM011 — every element of a list literal stored as `list<Cap>`
+//   must be an instance of a class that claims `Cap`, as for a
+//   capability-typed parameter
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM011
+//   Rock
+//   Describe
+//
+// Regression: the element types of a `list<Cap>` literal were not checked
+// against the capability once the literal took the declared type.
+
+start:
+	Circle c = Circle()
+	Rock r = Rock()
+	list<Describe> all = [c, r]
+	print(all.length())
+
+can Describe:
+	string describe()
+
+class Circle can Describe
+	functions:
+		public:
+			string describe()
+				return "circle"
+
+class Rock
+	functions:
+		public:
+			string describe()
+				return "rock"
