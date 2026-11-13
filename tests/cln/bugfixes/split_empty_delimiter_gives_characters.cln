@@ -1,0 +1,27 @@
+// Test: bugfixes/split_empty_delimiter_gives_characters
+// Semantic: stdlib-reference.md §4 — text.split("") gives one element per
+//   character, a character being a byte as .length(), .charAt(i) and
+//   iterate count it (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   3
+//   a
+//   b
+//   c
+//   0
+//   3
+//   [x]
+//   []
+//   [y]
+
+start:
+	list<string> letters = "abc".split("")
+	print(letters.length())
+	iterate letter in letters
+		print(letter)
+	list<string> empty = "".split("")
+	print(empty.length())
+	list<string> parts = "x,,y".split(",")
+	print(parts.length())
+	iterate part in parts
+		print("[" + part + "]")

@@ -1220,31 +1220,24 @@ impl WasmPluginAdapter {
             "string.split",
             |mut caller: Caller<'_, PluginState>, str_ptr: i32, delim_ptr: i32| -> i32 {
                 // Read both strings safely.
-                let source = match read_clean_string(&mut caller, str_ptr) {
-                    Some(s) => s,
-                    None => return 0,
+                let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) else {
+                    return 0;
                 };
-                let delimiter = match read_clean_string(&mut caller, delim_ptr) {
-                    Some(s) => s,
-                    None => return 0,
-                };
-
-                // Perform the split.
-                let parts: Vec<&str> = if delimiter.is_empty() {
-                    // Empty delimiter: one part per character (`split("")`
-                    // yields the characters between empty leading and
-                    // trailing parts, which are dropped).
-                    source.split("").filter(|s| !s.is_empty()).collect()
-                } else {
-                    source.split(delimiter.as_str()).collect()
+                let data = memory.data(&caller);
+                let (Some(source), Some(delimiter)) = (
+                    read_lp_from_data(data, str_ptr).map(<[u8]>::to_vec),
+                    read_lp_from_data(data, delim_ptr).map(<[u8]>::to_vec),
+                ) else {
+                    return 0;
                 };
 
+                let parts = split_bytes(&source, &delimiter);
                 let count = parts.len();
 
                 // Write each substring and collect their pointers.
                 let mut part_ptrs: Vec<i32> = Vec::with_capacity(count);
                 for part in &parts {
-                    let p = write_clean_string(&mut caller, part.as_bytes());
+                    let p = write_clean_string(&mut caller, part);
                     if p == 0 && !part.is_empty() {
                         return 0; // memory allocation failure
                     }
@@ -4361,6 +4354,30 @@ fn describe_plugin_trap_with_oom(
               for the durable fix design (per-expand-block arena).",
         base, oom,
     )
+}
+
+/// `text.split(delimiter)` on the bytes of the text. An empty delimiter
+/// gives one part per character, a character being a byte as `.length()`,
+/// `.charAt(i)` and `iterate` count it (stdlib-reference.md §4); an empty
+/// text then gives no parts.
+fn split_bytes<'a>(text: &'a [u8], delimiter: &[u8]) -> Vec<&'a [u8]> {
+    if delimiter.is_empty() {
+        return text.chunks(1).collect();
+    }
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i + delimiter.len() <= text.len() {
+        if text[i..].starts_with(delimiter) {
+            parts.push(&text[start..i]);
+            i += delimiter.len();
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    parts.push(&text[start..]);
+    parts
 }
 
 /// Bounds-checked read of a Clean LP-string from a borrowed memory slice.

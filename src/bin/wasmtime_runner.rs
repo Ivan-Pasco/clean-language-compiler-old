@@ -173,6 +173,30 @@ fn unavailable(name: &str) -> wasmtime::Error {
     ))
 }
 
+/// `text.split(delimiter)` on the bytes of the text. An empty delimiter
+/// gives one part per character, a character being a byte as `.length()`,
+/// `.charAt(i)` and `iterate` count it (stdlib-reference.md §4); an empty
+/// text then gives no parts.
+fn split_bytes<'a>(text: &'a [u8], delimiter: &[u8]) -> Vec<&'a [u8]> {
+    if delimiter.is_empty() {
+        return text.chunks(1).collect();
+    }
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while i + delimiter.len() <= text.len() {
+        if text[i..].starts_with(delimiter) {
+            parts.push(&text[start..i]);
+            i += delimiter.len();
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let usage = format!(
@@ -1700,8 +1724,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(_) => return 0,
                 };
 
-            // Split the string
-            let parts: Vec<&str> = string_content.split(&delimiter).collect();
+            let parts = split_bytes(string_content.as_bytes(), delimiter.as_bytes());
             let num_parts = parts.len();
             eprintln!(
                 "🔍 string_split: string='{}', delimiter='{}', parts={:?}",
@@ -1722,7 +1745,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Now allocate all the string parts
             let mut string_ptrs = Vec::new();
             for part in &parts {
-                let part_bytes = part.as_bytes();
+                let part_bytes: &[u8] = part;
                 let part_total_size = 4 + part_bytes.len();
 
                 let mut next_offset = NEXT_ALLOCATION_OFFSET.lock().unwrap();
@@ -1768,7 +1791,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Write string contents
             for (i, part) in parts.iter().enumerate() {
                 let ptr = string_ptrs[i] as usize;
-                let part_bytes = part.as_bytes();
+                let part_bytes: &[u8] = part;
 
                 // Write length
                 data_mut[ptr..ptr + 4].copy_from_slice(&(part_bytes.len() as u32).to_le_bytes());
@@ -1813,9 +1836,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 data[str_ptr + 3],
             ]) as usize;
             let original_str = if str_ptr + 4 + str_len <= data.len() {
-                String::from_utf8_lossy(&data[str_ptr + 4..str_ptr + 4 + str_len]).to_string()
+                data[str_ptr + 4..str_ptr + 4 + str_len].to_vec()
             } else {
-                String::new()
+                Vec::new()
             };
 
             // Read delimiter
@@ -1831,18 +1854,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 data[delim_ptr + 3],
             ]) as usize;
             let delimiter = if delim_ptr + 4 + delim_len <= data.len() {
-                String::from_utf8_lossy(&data[delim_ptr + 4..delim_ptr + 4 + delim_len]).to_string()
+                data[delim_ptr + 4..delim_ptr + 4 + delim_len].to_vec()
             } else {
-                String::new()
+                Vec::new()
             };
 
             eprintln!(
                 "🔍 string.split: splitting '{}' by '{}'",
-                original_str, delimiter
+                String::from_utf8_lossy(&original_str),
+                String::from_utf8_lossy(&delimiter)
             );
 
-            // Split the string
-            let parts: Vec<&str> = original_str.split(&delimiter).collect();
+            let parts = split_bytes(&original_str, &delimiter);
             let num_parts = parts.len();
             eprintln!("🔍 string.split: found {} parts", num_parts);
 
@@ -1911,7 +1934,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Write string contents
             for (i, part) in parts.iter().enumerate() {
                 let ptr = string_ptrs[i] as usize;
-                let part_bytes = part.as_bytes();
+                let part_bytes: &[u8] = part;
 
                 // Write length
                 data_mut[ptr..ptr + 4].copy_from_slice(&(part_bytes.len() as u32).to_le_bytes());
