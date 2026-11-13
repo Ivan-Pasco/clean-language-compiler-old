@@ -1252,10 +1252,13 @@ impl GlobalSymbolTable {
                 vec![HirType::Integer, HirType::Any],
                 HirType::Integer,
             ),
-            // Required when the field `otherField` is present and not empty.
+            // Required when the field `otherField` is present and not empty,
+            // or with `value` when that field equals it:
+            // requiredIf(v, otherField) / requiredIf(v, otherField, value).
+            // The value may be left out (validator::OPTIONAL_LAST_PARAMETER).
             (
                 "validator.requiredIf",
-                vec![HirType::Integer, HirType::String],
+                vec![HirType::Integer, HirType::String, HirType::Any],
                 HirType::Integer,
             ),
             // The errors of a result per field label.

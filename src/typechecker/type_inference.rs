@@ -843,6 +843,12 @@ impl<'a> TypeInference<'a> {
                                 .iter()
                                 .map(|t| self.hir_type_to_concrete(t))
                                 .collect();
+                            if crate::stdlib::validator::OPTIONAL_LAST_PARAMETER
+                                .contains(&symbol.name.as_str())
+                            {
+                                self.required_param_counts
+                                    .insert(symbol_id, concrete_params.len() - 1);
+                            }
                             let concrete_return = return_type
                                 .as_ref()
                                 .map(|t| Box::new(self.hir_type_to_concrete(t)))
@@ -3968,6 +3974,20 @@ impl<'a> TypeInference<'a> {
                 *function_symbol_id,
                 location,
             )?;
+            // A left-out optional last parameter is null.
+            if let ConcreteType::Function { parameters, .. } = &function_type {
+                if crate::stdlib::validator::OPTIONAL_LAST_PARAMETER.contains(&function)
+                    && tast_arguments.len() + 1 == parameters.len()
+                {
+                    tast_arguments.push(TastExpression {
+                        kind: TastExpressionKind::Literal {
+                            value: TastLiteral::Null,
+                        },
+                        expr_type: ConcreteType::Null,
+                        location: location.clone(),
+                    });
+                }
+            }
         }
 
         // SEM005: a private function or method is called only from its owner.

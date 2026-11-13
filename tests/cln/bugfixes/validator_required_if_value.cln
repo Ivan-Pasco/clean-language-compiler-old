@@ -1,0 +1,45 @@
+// Test: bugfixes/validator_required_if_value
+// Grammar: function_call (validator.requiredIf)
+// Semantic: stdlib-reference §15 (developer decision) —
+//   `validator.requiredIf(v, otherField, value)`: the field is required when
+//   otherField equals `value`, compared as text (an integer as its text, as
+//   `oneOf:` does); `validator.requiredIf(v, otherField)` keeps the two-argument
+//   meaning (required when otherField is present and not empty)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   true
+//   false
+//   vat is required
+//   true
+//   false
+//   card is required
+//   false
+//   true
+//
+// Regression: validator.requiredIf took two arguments only; the three-argument
+// form was FUNC002.
+
+start:
+	integer company = validator.field(validator.create(), "vat")
+	company = validator.requiredIf(company, "accountType", "business")
+	pairs<string, any> person = {"accountType": "personal"}
+	print(validator.isOk(validator.run(company, person)))
+	pairs<string, any> firm = {"accountType": "business"}
+	integer r = validator.run(company, firm)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+	pairs<string, any> firmWithVat = {"accountType": "business", "vat": "GB1"}
+	print(validator.isOk(validator.run(company, firmWithVat)))
+
+	integer payment = validator.field(validator.create(), "card")
+	payment = validator.requiredIf(payment, "method", 2)
+	pairs<string, any> byCard = {"method": 2}
+	r = validator.run(payment, byCard)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+
+	integer shipping = validator.requiredIf(validator.field(validator.create(), "address"), "ship")
+	pairs<string, any> ship = {"ship": "yes"}
+	pairs<string, any> pickup = {"ship": ""}
+	print(validator.isOk(validator.run(shipping, ship)))
+	print(validator.isOk(validator.run(shipping, pickup)))

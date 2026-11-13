@@ -24,7 +24,7 @@ pub const VALIDATION_RULES_TYPE_ID: u32 = 21;
 ///  40:  allowed_values_ptr   (4 bytes, 0=none, ptr to list<string>)
 ///  44:  default_value_ptr    (4 bytes, 0=none; boxed any for a missing value)
 ///  48:  required_if_field_ptr(4 bytes, 0=none; required when this field is present)
-///  52:  unused
+///  52:  required_if_value    (4 bytes, 0 or null box=none; boxed any the other field must equal)
 ///  56:  shape_rules_ptr      (4 bytes, 0=none, ptr to nested ValidationRules)
 ///  60:  each_rules_ptr       (4 bytes, 0=none, ptr to ValidationRules for list items)
 ///  64..80: unused
@@ -139,6 +139,10 @@ pub const RULE_FUNCTIONS: [&str; 15] = [
     "validator.shape",
     "validator.each",
 ];
+
+/// Validator functions whose last parameter may be left out: the call then
+/// passes null (`validator.requiredIf(v, otherField)`).
+pub const OPTIONAL_LAST_PARAMETER: [&str; 1] = ["validator.requiredIf"];
 
 /// `i32.load` / `i32.store` of a 4-aligned word at `offset`.
 const fn word(offset: u64) -> MemArg {
@@ -349,6 +353,8 @@ struct Helpers {
     /// `(entry, box, label, cell) -> box`: check one value against a field
     /// rule; returns the (trimmed) value.
     check_value: u32,
+    /// `(entry, object) -> 1 | 0`: the field's `requiredIf` holds.
+    required_if: u32,
 }
 
 impl Helpers {
@@ -369,6 +375,7 @@ impl Helpers {
             native_pattern: first + 12,
             check_object: first + 13,
             check_value: first + 14,
+            required_if: first + 15,
         }
     }
 }
@@ -404,7 +411,7 @@ impl ValidatorManager {
             Option<WasmType>,
             Vec<WasmType>,
             Vec<Instruction<'static>>,
-        ); 15] = [
+        ); 16] = [
             (
                 h.add_error,
                 "__validator_add_error",
@@ -530,6 +537,14 @@ impl ValidatorManager {
                     I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, F64,
                 ],
                 self.generate_check_value(),
+            ),
+            (
+                h.required_if,
+                "__validator_required_if",
+                vec![I32, I32],
+                Some(I32),
+                vec![I32, I32, I32, I32], // other, expected, other text, expected text
+                self.generate_required_if(),
             ),
         ];
         for (expected, name, params, result, locals, body) in helpers {
@@ -825,7 +840,7 @@ impl ValidatorManager {
         register_stdlib_function_with_locals(
             codegen,
             "validator.requiredIf",
-            &[WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
             &[WasmType::I32], // local: field_entry_ptr
             self.generate_validator_required_if(),
@@ -2122,6 +2137,66 @@ impl ValidatorManager {
         v
     }
 
+    /// `__validator_required_if(entry, object) -> 1 | 0`: the entry's
+    /// `requiredIf` field of `object` is present and not empty or, with a
+    /// value, has the value's text (an integer compares as its text).
+    ///
+    /// Locals: 2 other value, 3 expected value, 4 other text, 5 expected text.
+    fn generate_required_if(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        vec![
+            I::LocalGet(0),
+            load(48),
+            I::I32Eqz,
+            if_empty(),
+            I::I32Const(0),
+            I::Return,
+            I::End,
+            I::LocalGet(1),
+            I::LocalGet(0),
+            load(48),
+            I::Call(self.helpers.object_value),
+            I::LocalSet(2),
+            // a value that is not null: compare the texts
+            I::LocalGet(0),
+            load(52),
+            I::LocalTee(3),
+            if_i32(),
+            I::LocalGet(3),
+            load(0),
+            I::I32Const(0),
+            I::I32Ne,
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            if_empty(),
+            I::LocalGet(2),
+            I::Call(self.helpers.value_text),
+            I::LocalSet(4),
+            I::LocalGet(3),
+            I::Call(self.helpers.value_text),
+            I::LocalSet(5),
+            I::LocalGet(4),
+            I::I32Const(0),
+            I::I32Ne,
+            I::LocalGet(5),
+            I::I32Const(0),
+            I::I32Ne,
+            I::I32And,
+            if_i32(),
+            I::LocalGet(4),
+            I::LocalGet(5),
+            I::Call(self.imports.str_eq),
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            I::Return,
+            I::End,
+            I::LocalGet(2),
+            I::Call(self.helpers.is_present),
+        ]
+    }
+
     /// `__validator_check_object(rules, object, prefix, cell) -> object`:
     /// the field loop of `validator.run` for a nested object (`shape`,
     /// `each`); the errors are named `prefix` + field name.
@@ -2268,17 +2343,9 @@ impl ValidatorManager {
             I::LocalGet(0),
             load(4),
             I::LocalGet(0),
-            load(48),
-            if_i32(),
             I::LocalGet(3),
             load(CELL_OBJECT),
-            I::LocalGet(0),
-            load(48),
-            I::Call(self.helpers.object_value),
-            I::Call(self.helpers.is_present),
-            I::Else,
-            I::I32Const(0),
-            I::End,
+            I::Call(self.helpers.required_if),
             I::I32Or,
             if_empty(),
         ]);
@@ -3392,20 +3459,25 @@ impl ValidatorManager {
         instrs
     }
 
-    /// `validator.requiredIf(rules_ptr, other_field_ptr) -> rules_ptr`
+    /// `validator.requiredIf(rules_ptr, other_field_ptr, value) -> rules_ptr`
     ///
     /// The current field is required when the field `other_field_ptr` of the
-    /// same object is present and not empty: stores the name at offset 48 of
-    /// the last field entry.
+    /// same object is present and not empty or, with a `value` (a boxed
+    /// `any`; null when the call leaves it out), when that field's text equals
+    /// the value's text. Stores the name at offset 48 and the value at
+    /// offset 52 of the last field entry.
     ///
-    /// Params: 0=rules_ptr, 1=other_field_ptr
-    /// Extra locals: 2=field_entry_ptr
+    /// Params: 0=rules_ptr, 1=other_field_ptr, 2=value
+    /// Extra locals: 3=field_entry_ptr
     fn generate_validator_required_if(&self) -> Vec<Instruction<'static>> {
-        let mut instrs = self.last_field_entry_instrs(0, 2);
+        let mut instrs = self.last_field_entry_instrs(0, 3);
         instrs.extend([
-            Instruction::LocalGet(2),
+            Instruction::LocalGet(3),
             Instruction::LocalGet(1),
             store(48),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            store(52),
             Instruction::LocalGet(0),
         ]);
         instrs
