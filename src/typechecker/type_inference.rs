@@ -1548,9 +1548,8 @@ impl<'a> TypeInference<'a> {
     /// `i64::MAX` come only from `integer:64u` itself.
     fn integer_range(hir_type: &HirType) -> Option<(Option<&'static str>, i64, i64)> {
         Some(match hir_type {
-            // A plain `integer` target is not checked (it is not a sized
-            // integer); as a source it is a 32-bit value.
-            HirType::Integer => (None, i32::MIN as i64, i32::MAX as i64),
+            // Plain `integer` is 32-bit (type-system.md §2).
+            HirType::Integer => (Some("integer"), i32::MIN as i64, i32::MAX as i64),
             HirType::Integer32 => (Some("32"), i32::MIN as i64, i32::MAX as i64),
             HirType::Integer8 => (Some("8"), i8::MIN as i64, i8::MAX as i64),
             HirType::Integer8u => (Some("8u"), 0, u8::MAX as i64),
@@ -1561,6 +1560,42 @@ impl<'a> TypeInference<'a> {
             HirType::Integer64u => (Some("64u"), 0, i64::MAX),
             _ => return None,
         })
+    }
+
+    /// The Clean name of the integer type a check suffix stands for.
+    fn integer_type_name(suffix: &str) -> String {
+        if suffix == "integer" {
+            suffix.to_string()
+        } else {
+            format!("integer:{suffix}")
+        }
+    }
+
+    /// An element stored by a list or pairs method (`add`, `push`,
+    /// `insert`, `set`) into a collection whose declared element type is a
+    /// sized integer must fit in it, as a plain store does
+    /// (`fit_into_sized_integer`).
+    fn fit_element_arguments(
+        &mut self,
+        receiver: &TastExpression,
+        method: &str,
+        arguments: &mut [TastExpression],
+    ) {
+        let Some(declared) =
+            Self::value_source_symbol(receiver).and_then(|id| self.declared_hir_type(id))
+        else {
+            return;
+        };
+        let (element, position) = match (&declared, method) {
+            (HirType::List(element), "add" | "push") => (element, 0),
+            (HirType::List(element), "insert" | "set") => (element, 1),
+            (HirType::Pairs(_, value), "set") => (value, 1),
+            _ => return,
+        };
+        let element = (**element).clone();
+        if let Some(argument) = arguments.get_mut(position) {
+            self.fit_into_sized_integer(argument, &element);
+        }
     }
 
     /// The value of an integer constant (`300`, `-5`).
@@ -1589,6 +1624,23 @@ impl<'a> TypeInference<'a> {
     /// The check goes inside `onError` and the optional-primitive box, so
     /// the fallback catches it and the box holds the checked value.
     fn fit_into_sized_integer(&mut self, value: &mut TastExpression, target: &HirType) {
+        // The elements of a list literal and the values of a pairs literal
+        // are stored into the declared element type.
+        match (&mut value.kind, target) {
+            (TastExpressionKind::ArrayLiteral { elements, .. }, HirType::List(element)) => {
+                for item in elements.iter_mut() {
+                    self.fit_into_sized_integer(item, element);
+                }
+                return;
+            }
+            (TastExpressionKind::ObjectLiteral { fields }, HirType::Pairs(_, value_type)) => {
+                for field in fields.iter_mut() {
+                    self.fit_into_sized_integer(&mut field.value, value_type);
+                }
+                return;
+            }
+            _ => {}
+        }
         if let HirType::Optional(inner) = target {
             if let TastExpressionKind::FunctionCall {
                 function,
@@ -1626,6 +1678,9 @@ impl<'a> TypeInference<'a> {
                     unsigned: false, ..
                 } => Some((i64::MIN, i64::MAX)),
                 ConcreteType::IntegerSized { unsigned: true, .. } => Some((0, i64::MAX)),
+                // An `any` converted to a plain `integer` is checked by the
+                // conversion itself (`emit_any_unbox`).
+                ConcreteType::Any if matches!(target, HirType::Integer) => return,
                 ConcreteType::Any => None,
                 _ => return,
             });
@@ -1636,7 +1691,7 @@ impl<'a> TypeInference<'a> {
         }
         if let Some(n) = Self::integer_constant(value) {
             if n < min || n > max {
-                let name = format!("integer:{suffix}");
+                let name = Self::integer_type_name(suffix);
                 self.errors.push(CompilerError::type_error(
                     format!("{n} does not fit in {name} ({min} to {max})"),
                     Some(format!("Use a value from {min} to {max}, or a wider type")),
@@ -4515,6 +4570,7 @@ impl<'a> TypeInference<'a> {
             &mut tast_arguments,
             location,
         );
+        self.fit_element_arguments(&tast_receiver, method, &mut tast_arguments);
         if matches!(resolved_receiver_type, ConcreteType::Any) {
             self.check_any_method_call(method, tast_arguments.len(), location);
         }
@@ -5918,6 +5974,8 @@ impl<'a> TypeInference<'a> {
         match (receiver, method) {
             (T::Integer, "toString") => none(T::String),
             (T::Integer, "abs" | "toInteger") => none(T::Integer),
+            // `integer:64` → `integer` (type-system.md §7).
+            (T::IntegerSized { .. }, "toInteger") => none(T::Integer),
             (T::Integer, "toNumber") => none(T::Number),
             (T::Integer, "toBoolean") => none(T::Boolean),
 

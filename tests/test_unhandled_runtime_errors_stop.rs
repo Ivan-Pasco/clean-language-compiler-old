@@ -115,6 +115,14 @@ fn value_that_does_not_fit_a_sized_integer_stops_with_message() {
 }
 
 #[test]
+fn integer64_into_integer_stops_with_message() {
+    let (output, completed) =
+        run("start:\n\tinteger:64 big = 5000000000\n\tinteger small = big\n\tprintl(\"after\")\n");
+    assert!(!completed, "the program must stop");
+    assert_eq!(output, "5000000000 does not fit in integer\n");
+}
+
+#[test]
 fn negative_value_into_unsigned_sized_integer_stops_with_message() {
     let (output, completed) =
         run("start:\n\tinteger below = -1\n\tinteger:16u count = below\n\tprintl(\"after\")\n");

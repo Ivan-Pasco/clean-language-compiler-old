@@ -845,7 +845,8 @@ pub fn gen_string_to_boolean(raise: u32, invalid: u32) -> Vec<Instruction<'stati
 
 /// The sized integer types a value is checked against when it is stored
 /// into one (`__integer_fit_*`): name suffix, Clean type name, range.
-pub const INTEGER_FIT_TARGETS: [(&str, &str, i64, i64); 7] = [
+pub const INTEGER_FIT_TARGETS: [(&str, &str, i64, i64); 8] = [
+    ("integer", "integer", i32::MIN as i64, i32::MAX as i64),
     ("8", "integer:8", i8::MIN as i64, i8::MAX as i64),
     ("8u", "integer:8u", 0, u8::MAX as i64),
     ("16", "integer:16", i16::MIN as i64, i16::MAX as i64),

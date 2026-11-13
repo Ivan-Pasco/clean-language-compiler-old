@@ -191,10 +191,17 @@ impl MirCodeGenerator<'_> {
         let arms = match target {
             AnyUnboxTarget::I32 => {
                 let string_to_int = self.any_runtime_function("__string_to_int")?;
+                let fit_integer = self.any_runtime_function("__integer_fit_integer")?;
                 vec![
                     (AnyTypeTag::Null, vec![Instruction::I32Const(0)]),
-                    // The low word of the i64 (wraps, like `integer:64` → `integer`).
-                    (AnyTypeTag::Integer, i32_payload(ptr)),
+                    // The i64 must fit in 32 bits ("... does not fit in integer").
+                    (
+                        AnyTypeTag::Integer,
+                        then(
+                            i64_payload(ptr),
+                            &[Instruction::Call(fit_integer), Instruction::I32WrapI64],
+                        ),
+                    ),
                     (AnyTypeTag::Boolean, i32_payload(ptr)),
                     (
                         AnyTypeTag::Number,

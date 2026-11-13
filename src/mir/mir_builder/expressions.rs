@@ -2646,9 +2646,18 @@ impl MirBuilder {
                             return Ok(receiver_id);
                         }
                         // `integer:64` → `integer`: the explicit narrowing
-                        // conversion (type-system.md §7). The Cast wraps i64
-                        // to i32; 8–32-bit sized integers are already i32.
+                        // conversion (type-system.md §7). A value outside the
+                        // 32-bit range raises "... does not fit in integer"
+                        // (`__integer_fit_integer`); 8–32-bit sized integers
+                        // are already i32.
                         (ConcreteType::IntegerSized { .. }, "toInteger") => {
+                            let receiver_id = self.emit_named_call(
+                                context,
+                                &format!("{}integer", crate::typechecker::tast::INTEGER_FIT_PREFIX),
+                                vec![MirOperand::Value(receiver_id)],
+                                MirType::I64,
+                                &expression.location,
+                            );
                             let result_id = ValueId(context.function.next_value_id);
                             context.function.next_value_id += 1;
                             self.register_temp_local(

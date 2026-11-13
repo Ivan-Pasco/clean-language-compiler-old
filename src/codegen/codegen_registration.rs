@@ -783,16 +783,17 @@ impl super::CodeGenerator {
 
         // A wider integer stored into a sized integer (type-system.md §6):
         // `__integer_fit_<type>(value: i64) -> i64` raises "<value> does not
-        // fit in <type>". Only modules that narrow a value call them.
-        if self.has_reachable_prefix("__integer_fit_") {
-            let int64_to_string = required(self, "__int64_to_string")?;
-            for (suffix, type_name, min, max) in
-                native_stdlib::type_conversions::INTEGER_FIT_TARGETS
-            {
+        // fit in <type>". Only modules that narrow a value call them, except
+        // `__integer_fit_integer`, which `any` → `integer` conversions call
+        // (`emit_any_unbox`).
+        let int64_to_string = required(self, "__int64_to_string")?;
+        for (suffix, type_name, min, max) in native_stdlib::type_conversions::INTEGER_FIT_TARGETS {
+            let name = format!("__integer_fit_{suffix}");
+            if suffix == "integer" || self.has_reachable_prefix(&name) {
                 let message =
                     self.get_or_create_string_offset(&format!(" does not fit in {type_name}"))?;
                 self.register_function(
-                    &format!("__integer_fit_{suffix}"),
+                    &name,
                     &[WasmType::I64],
                     Some(WasmType::I64),
                     &native_stdlib::type_conversions::gen_integer_fit(

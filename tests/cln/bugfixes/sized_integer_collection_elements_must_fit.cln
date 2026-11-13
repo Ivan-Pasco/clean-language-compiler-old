@@ -1,0 +1,59 @@
+// Test: bugfixes/sized_integer_collection_elements_must_fit
+// Semantic: type-system.md §6 — an element stored into a list or pairs
+//   whose element type is a sized integer (literal elements, add, insert,
+//   set, pairs values) must fit or raise a catchable error (developer
+//   decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   3
+//   -3
+//   -2
+//   -3
+//   -4
+//   -5
+//   -6
+//   caught: 300 does not fit in integer:8
+//   4
+//   100
+
+start:
+	integer big = 300
+	integer ok = 100
+	list<integer:8> small = [1, 2, ok]
+	print(small.length())
+	list<integer:8> a = [1, big] onError []
+	print(a.length() - 1 - 2)
+	integer r = addTo(small, big) onError -2
+	print(r)
+	integer s = insertInto(small, big) onError -3
+	print(s)
+	integer t = setIn(small, big) onError -4
+	print(t)
+	pairs<string, integer:8u> counts = {"a": 1}
+	integer u = putIn(counts, big) onError -5
+	print(u)
+	integer below = -1
+	integer v = putIn(counts, below) onError -6
+	print(v)
+	small.add(big) onError:
+		print("caught: " + error)
+	small.add(ok)
+	print(small.length())
+	print(small.get(3))
+
+functions:
+	integer addTo(list<integer:8> items, integer value)
+		items.add(value)
+		return 0
+
+	integer insertInto(list<integer:8> items, integer value)
+		items.insert(0, value)
+		return 0
+
+	integer setIn(list<integer:8> items, integer value)
+		items.set(0, value)
+		return 0
+
+	integer putIn(pairs<string, integer:8u> map, integer value)
+		map.set("b", value)
+		return 0

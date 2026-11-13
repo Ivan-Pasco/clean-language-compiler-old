@@ -1,0 +1,40 @@
+// Test: bugfixes/integer64_into_integer_raises_when_value_does_not_fit
+// Semantic: type-system.md §2 — plain `integer` is 32-bit; an `integer:64`
+//   value stored into one, converted with .toInteger(), or held in an `any`
+//   converted to integer, must fit or raise a catchable error (developer
+//   decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   123
+//   -1
+//   -2
+//   -3
+//   -4
+//   caught: 5000000000 does not fit in integer
+//   77
+//   -5
+
+start:
+	integer:64 small = 123
+	integer:64 big = 5000000000
+	integer a = small
+	print(a)
+	integer b = big onError -1
+	print(b)
+	integer c = big.toInteger() onError -2
+	print(c)
+	integer d = takeInteger(big) onError -3
+	print(d)
+	any data = json.textToData("{\"n\": 5000000000, \"m\": 77}")
+	integer e = data.n.toInteger() onError -4
+	print(e)
+	integer f = big onError:
+		print("caught: " + error)
+	integer g = data.m
+	print(g)
+	integer h = data.n onError -5
+	print(h)
+
+functions:
+	integer takeInteger(integer value)
+		return value
