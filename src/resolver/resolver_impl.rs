@@ -101,7 +101,15 @@ impl NameResolver {
     }
 
     /// Resolve the entire HIR program
-    fn resolve_program(&mut self, hir: HirProgram) -> Result<ResolvedHirProgram, ()> {
+    fn resolve_program(&mut self, mut hir: HirProgram) -> Result<ResolvedHirProgram, ()> {
+        // A class claiming a capability gets the capability's default bodies
+        // it does not override as methods of its own.
+        if let Err(error) = crate::hir::capability_defaults::check_defaults(&hir.capabilities) {
+            self.errors.push(error);
+            return Err(());
+        }
+        crate::hir::capability_defaults::inherit_defaults(&mut hir.classes, &hir.capabilities);
+
         // First pass: Register all top-level symbols (includes builtins)
         self.register_top_level_symbols(&hir)?;
 
@@ -496,11 +504,6 @@ impl NameResolver {
                     {
                         continue;
                     }
-                    // Skip if capability provides a default (Stage 8 handles it).
-                    if cap_method.default_body.is_some() {
-                        continue;
-                    }
-
                     // Try to find a field of a user-class type whose class
                     // provides a matching forwarder `m(class_type, args...) -> R`.
                     let synthesized_method =
@@ -709,10 +712,8 @@ impl NameResolver {
     /// For each class `C` and each capability `Cap` in `C.transitive_capabilities`:
     ///   for each method slot `s` in `Cap.methods` (source order):
     ///     - if `C` (or an ancestor) defines a method with the slot's name
-    ///       AND parameters/return type match → record its SymbolId
-    ///     - else if the capability method has a default body → record `None`
-    ///       here (codegen synthesises a shared default-thunk function at
-    ///       Stage 8 and patches the slot at emit time)
+    ///       AND parameters/return type match → record its SymbolId (a
+    ///       default body the class inherits is one of its methods by now)
     ///     - else → emit SEM011 (missing method); leave the slot as `None`
     ///
     /// Signature mismatches emit SEM013. Missing capability names were
@@ -823,31 +824,26 @@ impl NameResolver {
                                 slots.push(None);
                             }
                         }
+                        // A default body was already added to the class as a
+                        // method (`capability_defaults::inherit_defaults`).
                         None => {
-                            if cap_method.default_body.is_some() {
-                                // Class inherits the capability's default —
-                                // codegen synthesises the thunk. Leave slot
-                                // unresolved here; Stage 8 patches it.
-                                slots.push(None);
-                            } else {
-                                self.error_with_code(
-                                    &format!(
-                                        "Class '{}' claims capability '{}' but does not implement required method '{}({})'",
-                                        class.name,
-                                        cap_name,
-                                        cap_method.name,
-                                        cap_method
-                                            .parameters
-                                            .iter()
-                                            .map(|p| format!("{:?}", p.param_type))
-                                            .collect::<Vec<_>>()
-                                            .join(", "),
-                                    ),
-                                    "SEM011",
-                                    class.location.clone(),
-                                );
-                                slots.push(None);
-                            }
+                            self.error_with_code(
+                                &format!(
+                                    "Class '{}' claims capability '{}' but does not implement required method '{}({})'",
+                                    class.name,
+                                    cap_name,
+                                    cap_method.name,
+                                    cap_method
+                                        .parameters
+                                        .iter()
+                                        .map(|p| format!("{:?}", p.param_type))
+                                        .collect::<Vec<_>>()
+                                        .join(", "),
+                                ),
+                                "SEM011",
+                                class.location.clone(),
+                            );
+                            slots.push(None);
                         }
                     }
                 }
@@ -1043,7 +1039,6 @@ impl NameResolver {
                     name: m.name.clone(),
                     parameters: m.parameters.iter().map(|p| p.param_type.clone()).collect(),
                     return_type: m.return_type.clone(),
-                    has_default: m.default_body.is_some(),
                 })
                 .collect();
             let _cap_symbol_id = self.symbol_table.create_symbol(

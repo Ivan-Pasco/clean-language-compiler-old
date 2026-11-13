@@ -1,0 +1,81 @@
+// Test: bugfixes/capability_default_body_is_inherited
+// Grammar: can_declaration, can_body_item, can_default_body, class_declaration
+// Semantic: a capability method with a body is a default: a class that
+//   claims the capability inherits the body unless it overrides it
+//   (15-classes-and-objects.md §Capabilities). The capability and Circle
+//   are the spec's examples; the default is reached through the class type,
+//   a capability-typed parameter and a capability-typed variable; Ring
+//   inherits Circle's copy, whose `this.describe()` runs Ring's override.
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   [circle]
+//   <square>
+//   [circle]
+//   circle
+//   [circle]
+//   <square>
+//   [ring]
+//
+// Regression: `c.tag()` was FUNC001 "Method 'tag' not found on class
+// 'Circle'"; a call through a capability-typed value trapped at run time
+// (the default had no vtable slot); `Describe d = c` was SEM004.
+
+start:
+	Circle c = Circle()
+	Square s = Square()
+	print(c.tag())
+	print(s.tag())
+	print(label(c))
+	render(c)
+	Describe d = c
+	print(d.tag())
+	d = s
+	print(d.tag())
+	print(label(Ring()))
+
+can Draw:
+	draw()
+
+can Describe:
+	string describe()
+	string tag()
+		return "[" + this.describe() + "]"   // default body
+
+class Shape
+	functions:
+		public:
+			number area()
+				return 0.0
+
+class Circle is Shape can Draw, Describe
+	public:
+		number radius
+
+	functions:
+		public:
+			draw()
+				print("circle")
+			string describe()
+				return "circle"
+			// tag() not written — Circle inherits Describe's default
+
+class Square can Describe
+	functions:
+		public:
+			string describe()
+				return "square"
+			string tag()
+				return "<square>"
+
+class Ring is Circle
+	functions:
+		public:
+			string describe()
+				return "ring"
+
+functions:
+	string label(Describe thing)
+		return thing.tag()
+
+	render(Draw thing)
+		thing.draw()

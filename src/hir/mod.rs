@@ -11,6 +11,7 @@ use crate::ast::{SourceLocation, Value};
 use crate::error::CompilerError;
 // HashMap import removed - not needed in HIR definitions
 
+pub mod capability_defaults;
 pub mod hir_builder;
 pub mod validation;
 

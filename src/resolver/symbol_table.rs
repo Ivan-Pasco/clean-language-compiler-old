@@ -98,17 +98,11 @@ pub struct ScopeId(pub usize);
 /// One method entry inside a capability contract, as stored on
 /// `SymbolKind::Capability`. Slot index in the containing vec is the
 /// stable dispatch slot used by codegen vtables (Stage 8).
-///
-/// `has_default` is `true` when the capability declaration itself provided
-/// a body (`default_body: Some(_)` in HIR). A conforming class may inherit
-/// the default or override it; missing implementation of a non-default
-/// method is SEM011.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapabilityMethodEntry {
     pub name: String,
     pub parameters: Vec<HirType>,
     pub return_type: HirType,
-    pub has_default: bool,
 }
 
 /// Symbol kinds for type checking and usage validation

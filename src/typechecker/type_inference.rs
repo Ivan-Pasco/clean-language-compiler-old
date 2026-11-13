@@ -2826,6 +2826,9 @@ impl<'a> TypeInference<'a> {
                                     ..
                                 },
                             ) => self.class_is_subclass_of(*child_id, *parent_id),
+                            // A class value in a capability-typed variable: the
+                            // constraint solver checks conformance (SEM011).
+                            (ConcreteType::Class { .. }, ConcreteType::Interface { .. }) => true,
                             _ => false,
                         };
                         if types_are_concrete
