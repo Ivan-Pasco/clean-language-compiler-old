@@ -1,16 +1,25 @@
 // Spec Section: 18 - Plugin System
-// Tests: Custom DSL block definition
+// Tests: Custom DSL block definition (frame.data `data` models)
+// Changed in 0.33.184: rewritten to frame.data `data Model:` blocks (was a
+//   `schema:` block with `table` / `field` lines, which is not in the spec;
+//   frame.data declares tables as `data` models)
 
-schema:
-	table users
-		field id: integer
-		field name: string
-		field email: string
+plugins:
+	frame.data
 
-	table posts
-		field id: integer
-		field userId: integer
-		field title: string
+data User:
+	table "users"
+	fields:
+		integer id primary generated
+		string name
+		string email
+
+data Post:
+	table "posts"
+	fields:
+		integer id primary generated
+		integer userId
+		string title
 
 start:
 	print("Custom DSL schema test completed")

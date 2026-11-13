@@ -8,24 +8,33 @@
 //           so adjacent comments leaked into the block body the plugin
 //           received.
 //
-// The comment line below the insert: block ends with `= 1` — if it leaks
-// into Session.insert: as a field assignment, the plugin produces invalid
-// SQL and compilation fails. With the fix, the comment is excluded and
-// compilation succeeds.
+// The comment line below the count: block follows its last content line at
+// a lower indent and ends with `= 1`; with the fix it is not part of the
+// block body the plugin receives, and compilation succeeds.
 //
-// Expected: compilation succeeds (runtime needs a server to actually insert).
+// Changed in 0.33.184: rewritten to frame.data v2 syntax (was a
+// `Session.insert:` block on a bare-field `data Session`; v2 removed
+// block-form mutations, so the block is now a `Session.count:` query whose
+// where: clause is the last content line). The v1 insert: block read a
+// leaked `x = 1` as a column assignment and failed; frame.data v2 skips
+// comment lines in a query body, so a leak no longer fails this compile.
+// Expected output:
+// Expected compile: success
+// (runtime needs a server to actually query)
 
 plugins:
 	frame.data
 
-data Session
-	id: integer pk auto
-	token: string
+data Session:
+	fields:
+		integer id primary generated
+		string token
 
 functions:
-	void make_session()
-		Session.insert:
-			token = "sample"
+	void count_sessions()
+		integer total = Session.count:
+			where:
+				token == "sample"
 
 	// Adjacent comment with embedded equals: x = 1
 	void other_function()

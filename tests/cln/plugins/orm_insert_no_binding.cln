@@ -1,17 +1,28 @@
 // Test: plugins/orm_insert_no_binding
-// Grammar: framework_block (ORM insert verb without variable binding)
-// Semantic: SYN001 — insert: block used as statement, not as expression binding
+// Grammar: frame-data.ebnf transaction_block, database_service_expression
+//   (a write used as a statement, not as an expression binding)
+// Semantic: SYN001 — a framework block and a write call used as statements,
+//   with no variable binding, compile
+// Changed in 0.33.184: rewritten to frame.data v2 syntax (was a
+//   `User.insert:` block statement on a bare-field `data User`; v2 removed
+//   block-form mutations: a write is `Database.save(entity)`, grouped in a
+//   `transaction:` block statement)
 // Expected output:
-//   inserted
+// Expected compile: success
+// (runtime needs a server to actually insert; under the server, `start:`
+// prints "inserted")
 
 plugins:
 	frame.data
 
-data User
-	integer id
-	string name
+data User:
+	fields:
+		integer id primary generated
+		string name
 
 start:
-	User.insert:
-		name = "Alice"
+	User user = User()
+	user.name = "Alice"
+	transaction:
+		Database.save(user)
 	print("inserted")

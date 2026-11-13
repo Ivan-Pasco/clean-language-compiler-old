@@ -1,20 +1,28 @@
 // Test: plugins/orm_insert_id_binding
-// Grammar: foundation/spec/plugins/frame-data.ebnf — typed insert_id expression
-// Semantic: SEM007 regression — `<type> <name> = Model.insert_id: ...` must
+// Grammar: foundation/spec/framework/grammar/frame-data.ebnf — query_expression (count verb)
+// Semantic: SEM007 regression — `<type> <name> = Model.<verb>: ...` must
 //           preserve the LHS binding across plugin dispatch even when the verb
 //           is not in any hardcoded compiler whitelist. The fix replaces the
 //           old hardcoded ORM-verb dispatch list with a uniform generic
 //           expand_block path that strips and re-attaches the binding header.
-// Expected: compilation succeeds (runtime needs a server to actually insert).
+// Changed in 0.33.184: rewritten to frame.data v2 syntax (was
+//   `integer new_id = Widget.insert_id:` on a bare-field `data Widget`;
+//   v2 removed block-form mutations, so the binding now uses the `count`
+//   verb, which also returns an integer)
+// Expected output:
+// Expected compile: success
+// (runtime needs a server to actually query)
 
 plugins:
 	frame.data
 
-data Widget
-	id: integer pk auto
-	name: string
+data Widget:
+	fields:
+		integer id primary generated
+		string name
 
 start:
-	integer new_id = Widget.insert_id:
-		name = "test"
-	print(new_id)
+	integer total = Widget.count:
+		where:
+			name == "test"
+	print(total)

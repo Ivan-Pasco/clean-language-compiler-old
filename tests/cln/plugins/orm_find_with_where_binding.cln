@@ -1,5 +1,5 @@
 // Test: plugins/orm_find_with_where_binding
-// Grammar: foundation/spec/plugins/frame-data.ebnf — typed find expression with where
+// Grammar: foundation/spec/framework/grammar/frame-data.ebnf — query_expression with where_clause
 // Semantic: SEM007 regression — `<type> <name> = Model.find:` with a `where:`
 //           condition (which the plugin lowers to inline SQL containing
 //           `column = value`) must preserve the LHS binding across plugin
@@ -12,22 +12,26 @@
 //           SEM007: Undefined variable 'result'.
 // Reported by: error #6a754781d652 (open against compiler)
 // Regression first surfaced on: cln 0.30.370 (commit a6a63953)
-// Expected: compilation succeeds (runtime needs a server to actually query).
+// Changed in 0.33.184: rewritten to frame.data v2 syntax (was a bare-field
+//   `data Language` block and `string result = Language.find:`; v2 declares
+//   fields in a `fields:` sub-block and `find` returns list<Language>)
+// Expected output:
+// Expected compile: success
+// (runtime needs a server to actually query)
 
 plugins:
 	frame.data
 
-data Language
-	id: integer pk auto
-	name: string
-	is_default: boolean
-	is_active: boolean
+data Language:
+	fields:
+		integer id primary generated
+		string name
+		boolean is_default
+		boolean is_active
 
 start:
-	string result = Language.find:
+	list<Language> result = Language.find:
 		where:
 			is_active == true
-		order:
-			is_default desc
-			name asc
-	print(result)
+		order: is_default desc
+	print(result.size())
