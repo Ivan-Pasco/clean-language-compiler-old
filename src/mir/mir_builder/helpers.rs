@@ -10,7 +10,8 @@ impl MirBuilder {
         instruction: MirInstruction,
     ) {
         // A call to a Clean function (or `error(...)`, a conversion or
-        // `.length()` of an `any`, a text-to-number conversion, or
+        // `.length()` of an `any`, a text conversion, a value narrowed into a
+        // sized integer, or
         // `json.textToData`) and an integer division may raise: follow it
         // with the `onError` unwinding check (removed again when the program
         // has no `onError` region).
@@ -23,6 +24,7 @@ impl MirBuilder {
             MirOperation::UnboxAnyToI32 { .. }
             | MirOperation::UnboxAnyToI64 { .. }
             | MirOperation::UnboxAnyToF64 { .. }
+            | MirOperation::UnboxAnyToBoolean { .. }
             | MirOperation::OptionalConvert {
                 conversion: crate::mir::mir_types::OptionalConversion::FromAny { .. },
                 ..
@@ -41,12 +43,14 @@ impl MirBuilder {
                     "__err_raise"
                         | "string.toInteger"
                         | "string.toNumber"
+                        | "string.toBoolean"
                         | "__json_decode_v2_or_raise"
                         | crate::stdlib::json_class::JSON_TO_CLN_LIST
                         | crate::stdlib::json_class::ANY_ITERABLE
                         | crate::stdlib::json_class::ANY_LENGTH
                         | crate::stdlib::json_class::ANY_CONVERT
                 ) || name.starts_with("__any_to_instance")
+                    || name.starts_with(crate::typechecker::tast::INTEGER_FIT_PREFIX)
             }
             _ => false,
         };
@@ -1121,6 +1125,7 @@ impl MirBuilder {
                 &function.kind,
                 TastExpressionKind::Variable { name, .. }
                     if name == crate::typechecker::tast::OPTIONAL_BOX
+                        || name.starts_with(crate::typechecker::tast::INTEGER_FIT_PREFIX)
             ),
             TastExpressionKind::MethodCall {
                 receiver,

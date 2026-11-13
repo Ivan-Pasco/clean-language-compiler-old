@@ -913,6 +913,22 @@ impl MirBuilder {
                     );
                 }
 
+                // A value stored into a sized integer it may not fit in:
+                // the type checker wrapped it in this check.
+                if let Some(check) = function_name_opt
+                    .as_deref()
+                    .filter(|name| name.starts_with(crate::typechecker::tast::INTEGER_FIT_PREFIX))
+                    .filter(|_| arguments.len() == 1)
+                {
+                    return self.build_integer_fit(
+                        context,
+                        check,
+                        &arguments[0],
+                        &expression.expr_type,
+                        &expression.location,
+                    );
+                }
+
                 // A `list<integer>` stored where a `list<number>` is
                 // expected: the type checker wrapped it in this call, which
                 // copies it into a new list of 8-byte elements.

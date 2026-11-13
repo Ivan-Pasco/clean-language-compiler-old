@@ -54,6 +54,15 @@ pub const LIST_WIDEN_F64: &str = "__list_widen_f64";
 /// has the target `T?` as its type.
 pub const OPTIONAL_BOX: &str = "__optional_box";
 
+/// The name prefix of the checks the type checker wraps around a value
+/// stored into a sized integer whose range does not contain every value of
+/// the value's type (`integer:8 small = count` is
+/// `small = __integer_fit_8(count)`). The MIR builder lowers the call to the
+/// runtime check of the same name
+/// (`src/codegen/native_stdlib/type_conversions.rs`, `INTEGER_FIT_TARGETS`),
+/// which raises "<value> does not fit in <type>".
+pub const INTEGER_FIT_PREFIX: &str = "__integer_fit_";
+
 /// Type-checked program representation
 #[derive(Debug, Clone)]
 pub struct TastProgram {

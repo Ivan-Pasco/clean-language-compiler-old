@@ -516,6 +516,69 @@ impl MirBuilder {
         )
     }
 
+    /// Lower the sized-integer check `check(value)` of type `target`
+    /// (`tast::INTEGER_FIT_PREFIX`): the value as an i64 (an `any` is
+    /// converted to `integer:64` first), checked by the runtime function of
+    /// the same name, which raises "<value> does not fit in <type>", then
+    /// narrowed to the target's representation.
+    pub(super) fn build_integer_fit(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        check: &str,
+        value: &TastExpression,
+        target: &ConcreteType,
+        location: &SourceLocation,
+    ) -> Result<ValueId, Vec<CompilerError>> {
+        let value_id = self.build_expression(context, value)?;
+        let wide_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, wide_id, MirType::I64, location.clone());
+        let operation = if matches!(value.expr_type, ConcreteType::Any) {
+            MirOperation::UnboxAnyToI64 {
+                value: MirOperand::Value(value_id),
+            }
+        } else {
+            MirOperation::Cast {
+                value: MirOperand::Value(value_id),
+                target_type: MirType::I64,
+            }
+        };
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(wide_id),
+                operation,
+                location: location.clone(),
+            },
+        );
+        let checked_id = self.emit_named_call(
+            context,
+            check,
+            vec![MirOperand::Value(wide_id)],
+            MirType::I64,
+            location,
+        );
+        let target_mir = self.convert_concrete_type(target);
+        if matches!(target_mir, MirType::I64 | MirType::U64) {
+            return Ok(checked_id);
+        }
+        let narrow_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        self.register_temp_local(context, narrow_id, target_mir.clone(), location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(narrow_id),
+                operation: MirOperation::Cast {
+                    value: MirOperand::Value(checked_id),
+                    target_type: target_mir,
+                },
+                location: location.clone(),
+            },
+        );
+        Ok(narrow_id)
+    }
+
     /// Emit a call to the function or bridge named `name` into a fresh
     /// temporary of type `result_type`.
     pub(super) fn emit_named_call(

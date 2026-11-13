@@ -765,6 +765,43 @@ impl super::CodeGenerator {
             &gen_string_to_number(string_to_float_idx, number_errors),
         )?;
         self.add_function_alias("string.toNumber", to_number);
+
+        // `.toBoolean()` of a string, and an `any` holding text converted
+        // to `boolean`.
+        let invalid_boolean = self.get_or_create_string_offset("' is not a valid boolean")?;
+        self.register_function_with_locals(
+            "string.toBoolean",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &[WasmType::I32], // 1: len
+            &native_stdlib::type_conversions::gen_string_to_boolean(raise, invalid_boolean),
+        )?;
+
+        // A wider integer stored into a sized integer (type-system.md §6):
+        // `__integer_fit_<type>(value: i64) -> i64` raises "<value> does not
+        // fit in <type>". Only modules that narrow a value call them.
+        if self.has_reachable_prefix("__integer_fit_") {
+            let int64_to_string = required(self, "__int64_to_string")?;
+            for (suffix, type_name, min, max) in
+                native_stdlib::type_conversions::INTEGER_FIT_TARGETS
+            {
+                let message =
+                    self.get_or_create_string_offset(&format!(" does not fit in {type_name}"))?;
+                self.register_function(
+                    &format!("__integer_fit_{suffix}"),
+                    &[WasmType::I64],
+                    Some(WasmType::I64),
+                    &native_stdlib::type_conversions::gen_integer_fit(
+                        min,
+                        max,
+                        int64_to_string,
+                        concat_idx,
+                        err_raise_idx,
+                        message,
+                    ),
+                )?;
+            }
+        }
         Ok(())
     }
 

@@ -8,7 +8,8 @@ use super::tast::{
     BinaryOperator, ConcreteType, TastBlock, TastClass, TastComputedDeclaration, TastExpression,
     TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
     TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStatement,
-    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility, LIST_WIDEN_F64, OPTIONAL_BOX,
+    TastWatchBlock, TypeConstraint, UnaryOperator, Visibility, INTEGER_FIT_PREFIX, LIST_WIDEN_F64,
+    OPTIONAL_BOX,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
@@ -60,6 +61,9 @@ pub struct TypeInference<'a> {
     current_function: Option<SymbolId>,
     current_class: Option<SymbolId>,
     current_return_type: Option<ConcreteType>,
+    /// The declared return type of the function being checked, for the
+    /// sized-integer check of returned values (`fit_into_sized_integer`).
+    current_return_hir_type: Option<HirType>,
 
     /// Errors encountered during inference
     errors: Vec<CompilerError>,
@@ -105,6 +109,7 @@ impl<'a> TypeInference<'a> {
             current_function: None,
             current_class: None,
             current_return_type: None,
+            current_return_hir_type: None,
             errors: Vec::new(),
             warnings: Vec::new(),
             recursion_depth: 0,
@@ -1365,7 +1370,7 @@ impl<'a> TypeInference<'a> {
         &mut self,
         callee: SymbolId,
         callee_name: &str,
-        arguments: &[TastExpression],
+        arguments: &mut [TastExpression],
         location: &SourceLocation,
     ) {
         let declared = match self.symbol_table.get_symbol(callee).map(|s| &s.kind) {
@@ -1376,7 +1381,7 @@ impl<'a> TypeInference<'a> {
             ) => parameters.clone(),
             _ => return,
         };
-        for (index, (param_type, arg)) in declared.iter().zip(arguments).enumerate() {
+        for (index, (param_type, arg)) in declared.iter().zip(arguments.iter_mut()).enumerate() {
             let arg_location = Self::argument_location(arg, location);
             self.check_sized_conversion(
                 param_type,
@@ -1384,6 +1389,7 @@ impl<'a> TypeInference<'a> {
                 &format!("argument {} of '{}'", index + 1, callee_name),
                 &arg_location,
             );
+            self.fit_into_sized_integer(arg, param_type);
         }
     }
 
@@ -1488,6 +1494,142 @@ impl<'a> TypeInference<'a> {
             supertype: target.clone(),
             location: location.clone(),
         });
+    }
+
+    /// The values an integer type holds, and for a sized target the suffix
+    /// of its runtime check (`__integer_fit_<suffix>`). `integer:64` needs
+    /// no check: it holds every integer value. `integer:64u` values above
+    /// `i64::MAX` come only from `integer:64u` itself.
+    fn integer_range(hir_type: &HirType) -> Option<(Option<&'static str>, i64, i64)> {
+        Some(match hir_type {
+            // A plain `integer` target is not checked (it is not a sized
+            // integer); as a source it is a 32-bit value.
+            HirType::Integer => (None, i32::MIN as i64, i32::MAX as i64),
+            HirType::Integer32 => (Some("32"), i32::MIN as i64, i32::MAX as i64),
+            HirType::Integer8 => (Some("8"), i8::MIN as i64, i8::MAX as i64),
+            HirType::Integer8u => (Some("8u"), 0, u8::MAX as i64),
+            HirType::Integer16 => (Some("16"), i16::MIN as i64, i16::MAX as i64),
+            HirType::Integer16u => (Some("16u"), 0, u16::MAX as i64),
+            HirType::Integer32u => (Some("32u"), 0, u32::MAX as i64),
+            HirType::Integer64 => (None, i64::MIN, i64::MAX),
+            HirType::Integer64u => (Some("64u"), 0, i64::MAX),
+            _ => return None,
+        })
+    }
+
+    /// The value of an integer constant (`300`, `-5`).
+    fn integer_constant(expression: &TastExpression) -> Option<i64> {
+        match &expression.kind {
+            TastExpressionKind::Literal {
+                value: TastLiteral::Integer(n),
+            } => Some(*n),
+            TastExpressionKind::UnaryOperation {
+                operator: UnaryOperator::Negate,
+                operand,
+            } => Self::integer_constant(operand).and_then(i64::checked_neg),
+            _ => None,
+        }
+    }
+
+    /// A value stored into a sized integer (`integer:8 small = count`, an
+    /// argument, a return value, a field) must fit in it (type-system.md §6,
+    /// developer decision for 0.33.184). 8–32-bit integers share the
+    /// concrete type `integer`, so the declared HIR types decide: where the
+    /// value can hold numbers the target cannot — an `integer`, a sum of
+    /// `integer:8` values, an `any` stored into an `integer:8` — the value is
+    /// wrapped in its runtime check `__integer_fit_<suffix>`
+    /// ([`INTEGER_FIT_PREFIX`]), which raises "300 does not fit in
+    /// integer:8". A constant that does not fit is a compile-time error.
+    /// The check goes inside `onError` and the optional-primitive box, so
+    /// the fallback catches it and the box holds the checked value.
+    fn fit_into_sized_integer(&mut self, value: &mut TastExpression, target: &HirType) {
+        if let HirType::Optional(inner) = target {
+            if let TastExpressionKind::FunctionCall {
+                function,
+                arguments,
+                ..
+            } = &mut value.kind
+            {
+                if matches!(&function.kind, TastExpressionKind::Variable { name, .. } if name == OPTIONAL_BOX)
+                    && arguments.len() == 1
+                {
+                    self.fit_into_sized_integer(&mut arguments[0], inner);
+                }
+            }
+            return;
+        }
+        if let TastExpressionKind::OnError {
+            expression,
+            fallback,
+        } = &mut value.kind
+        {
+            self.fit_into_sized_integer(expression, target);
+            self.fit_into_sized_integer(fallback, target);
+            return;
+        }
+        let Some((Some(suffix), min, max)) = Self::integer_range(target) else {
+            return;
+        };
+        let source = Self::value_source_symbol(value)
+            .and_then(|id| self.declared_hir_type(id))
+            .and_then(|declared| Self::integer_range(&declared))
+            .map(|(_, low, high)| (low, high))
+            .or(match &value.expr_type {
+                ConcreteType::Integer => Some((i32::MIN as i64, i32::MAX as i64)),
+                ConcreteType::IntegerSized {
+                    unsigned: false, ..
+                } => Some((i64::MIN, i64::MAX)),
+                ConcreteType::IntegerSized { unsigned: true, .. } => Some((0, i64::MAX)),
+                ConcreteType::Any => None,
+                _ => return,
+            });
+        if let Some((low, high)) = source {
+            if low >= min && high <= max {
+                return;
+            }
+        }
+        if let Some(n) = Self::integer_constant(value) {
+            if n < min || n > max {
+                let name = format!("integer:{suffix}");
+                self.errors.push(CompilerError::type_error(
+                    format!("{n} does not fit in {name} ({min} to {max})"),
+                    Some(format!("Use a value from {min} to {max}, or a wider type")),
+                    Some(value.location.clone()),
+                ));
+            }
+            return;
+        }
+        let location = value.location.clone();
+        let expr_type = match &value.expr_type {
+            ConcreteType::Any => self.hir_type_to_concrete(target),
+            other => other.clone(),
+        };
+        let inner = std::mem::replace(
+            value,
+            TastExpression {
+                kind: TastExpressionKind::Literal {
+                    value: TastLiteral::Null,
+                },
+                expr_type: ConcreteType::Null,
+                location: location.clone(),
+            },
+        );
+        *value = TastExpression {
+            kind: TastExpressionKind::FunctionCall {
+                function: Box::new(TastExpression {
+                    kind: TastExpressionKind::Variable {
+                        symbol_id: SymbolId(0),
+                        name: format!("{INTEGER_FIT_PREFIX}{suffix}"),
+                    },
+                    expr_type: ConcreteType::Unknown,
+                    location: location.clone(),
+                }),
+                arguments: vec![inner],
+                type_args: Vec::new(),
+            },
+            expr_type,
+            location,
+        };
     }
 
     /// The condition of an `if` or `while` is a boolean. A `T?` is not one,
@@ -1633,6 +1775,7 @@ impl<'a> TypeInference<'a> {
             .return_type
             .as_ref()
             .map(|return_type| self.hir_type_to_concrete(return_type));
+        self.current_return_hir_type = function.return_type.clone();
 
         // Add parameters to type environment
         let mut tast_parameters = Vec::new();
@@ -1707,6 +1850,7 @@ impl<'a> TypeInference<'a> {
 
         self.current_function = None;
         self.current_return_type = None;
+        self.current_return_hir_type = None;
 
         let return_debug = format!("{:?}", final_return_type);
         if return_debug.contains("Pairs") || return_debug.contains("Matrix") {
@@ -1746,6 +1890,7 @@ impl<'a> TypeInference<'a> {
             type_args: Vec::new(),
         };
         self.current_return_type = Some(return_type.clone());
+        self.current_return_hir_type = None;
 
         // Add parameters to type environment
         let mut tast_parameters = Vec::new();
@@ -1790,6 +1935,7 @@ impl<'a> TypeInference<'a> {
     ) -> Result<TastFunction, CompilerError> {
         self.current_function = Some(method.symbol_id);
         self.current_return_type = Some(self.hir_type_to_concrete(&method.return_type));
+        self.current_return_hir_type = Some(method.return_type.clone());
 
         // Add parameters to type environment
         let mut tast_parameters = Vec::new();
@@ -2783,6 +2929,7 @@ impl<'a> TypeInference<'a> {
                             });
                         } else {
                             self.require_assignable(&mut tast_init, &declared_type, location);
+                            self.fit_into_sized_integer(&mut tast_init, var_type);
                         }
 
                         tast_init
@@ -2854,6 +3001,9 @@ impl<'a> TypeInference<'a> {
                                 &expected_return_type,
                                 location,
                             );
+                            if let Some(declared) = self.current_return_hir_type.clone() {
+                                self.fit_into_sized_integer(&mut tast_expr, &declared);
+                            }
                         }
                         None => {}
                     }
@@ -3113,6 +3263,7 @@ impl<'a> TypeInference<'a> {
                                 &format!("variable '{}'", name),
                                 location,
                             );
+                            self.fit_into_sized_integer(&mut tast_value, &declared);
                         }
 
                         TastExpression {
@@ -3194,6 +3345,7 @@ impl<'a> TypeInference<'a> {
                                 &format!("field '{}'", field),
                                 location,
                             );
+                            self.fit_into_sized_integer(&mut tast_value, &declared);
                         }
 
                         TastExpression {

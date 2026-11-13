@@ -1,0 +1,87 @@
+// Test: bugfixes/sized_integer_store_raises_when_value_does_not_fit
+// Semantic: type-system.md §6 — a value stored into a sized integer
+//   (declaration, assignment, argument, return, field, conversion) must fit
+//   in it; otherwise a catchable error is raised (developer decision,
+//   compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   100
+//   -128
+//   255
+//   -1
+//   200
+//   -3
+//   -4
+//   -5
+//   -6
+//   -7
+//   caught: 300 does not fit in integer:8
+//   -8
+//   65535
+//   9
+//   7
+//   -10
+//   12
+
+start:
+	integer hundred = 100
+	integer big = 300
+	integer negative = -1
+	integer:8 a = hundred
+	print(a)
+	integer low = -128
+	integer:8 b = low
+	print(b)
+	integer top = 255
+	integer:8u c = top
+	print(c)
+	integer:8 d = big onError -1
+	print(d)
+	integer:8u e = negative onError 200
+	print(e)
+	integer:8 f = 0
+	f = big onError -3
+	print(f)
+	integer g = takeSmall(big) onError -4
+	print(g)
+	integer h = giveSmall(big) onError -5
+	print(h)
+	integer:8 t = "300".toInteger() onError -6
+	print(t)
+	Box box = Box()
+	integer i = storeInBox(box, big) onError -7
+	print(i)
+	integer:8 j = big onError:
+		print("caught: " + error)
+	integer:16 k = 70000 - 4465 - 1 onError -8
+	print(k)
+	integer wide = 65535
+	integer:16u l = wide
+	print(l)
+	integer:32u m = negative onError 9
+	print(m)
+	integer:8 n = 7
+	print(n)
+	any data = json.textToData("{\"n\": 300, \"m\": 12}")
+	integer:8 z = data.n onError -10
+	print(z)
+	integer:8 y = data.m
+	print(y)
+
+class Box
+	public:
+		integer:8 small
+
+	constructor()
+		small = 0
+
+functions:
+	integer takeSmall(integer:8 value)
+		return value
+
+	integer:8 giveSmall(integer value)
+		return value
+
+	integer storeInBox(Box box, integer value)
+		box.small = value
+		return box.small

@@ -1,11 +1,14 @@
 //! Runtime errors without an `onError` handler stop the program with their
 //! message (14-error-handling.md; developer decision for 0.33.184).
 //!
-//! `.toInteger()` / `.toNumber()` of text that is not a number in range and
-//! an integer division by zero raise an error. Inside an `onError` region
-//! the handler runs (`tests/cln/bugfixes/string_to_integer_raises_on_invalid_text.cln`,
+//! `.toInteger()` / `.toNumber()` / `.toBoolean()` of text that is not a
+//! valid value, an integer division by zero, and a value stored into a sized
+//! integer it does not fit in raise an error. Inside an `onError` region the
+//! handler runs (`tests/cln/bugfixes/string_to_integer_raises_on_invalid_text.cln`,
 //! `string_to_number_raises_on_invalid_text.cln`,
-//! `integer_division_by_zero_raises.cln`); outside one the message is printed
+//! `string_to_boolean_raises_on_invalid_text.cln`,
+//! `integer_division_by_zero_raises.cln`,
+//! `sized_integer_store_raises_when_value_does_not_fit.cln`); outside one the message is printed
 //! and execution traps. A trap cannot be expressed by the `.cln` pins
 //! (stdout comparison), so these tests run `_start` and check both.
 
@@ -92,4 +95,29 @@ fn integer_remainder_by_zero_without_on_error_stops_with_message() {
         run("start:\n\tinteger zero = 0\n\tinteger n = 7 % zero\n\tprintl(\"after\")\n");
     assert!(!completed, "the program must stop");
     assert_eq!(output, "division by zero\n");
+}
+
+#[test]
+fn invalid_boolean_text_without_on_error_stops_with_message() {
+    let (output, completed) = run(
+        "start:\n\tstring text = \"yes\"\n\tboolean b = text.toBoolean()\n\tprintl(\"after\")\n",
+    );
+    assert!(!completed, "the program must stop");
+    assert_eq!(output, "'yes' is not a valid boolean\n");
+}
+
+#[test]
+fn value_that_does_not_fit_a_sized_integer_stops_with_message() {
+    let (output, completed) =
+        run("start:\n\tinteger big = 300\n\tinteger:8 small = big\n\tprintl(\"after\")\n");
+    assert!(!completed, "the program must stop");
+    assert_eq!(output, "300 does not fit in integer:8\n");
+}
+
+#[test]
+fn negative_value_into_unsigned_sized_integer_stops_with_message() {
+    let (output, completed) =
+        run("start:\n\tinteger below = -1\n\tinteger:16u count = below\n\tprintl(\"after\")\n");
+    assert!(!completed, "the program must stop");
+    assert_eq!(output, "-1 does not fit in integer:16u\n");
 }

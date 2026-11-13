@@ -87,8 +87,8 @@ impl MethodStyleManager {
     ///
     /// Each body works on the receiver's own representation: integers and
     /// booleans arrive as i32 values, numbers as f64. `integer.toString`,
-    /// `boolean.toString`, `string.toInteger` and `string.toNumber` are
-    /// aliases to the native converters, registered with the memory
+    /// `boolean.toString`, `string.toInteger`, `string.toNumber` and
+    /// `string.toBoolean` are native converters registered with the memory
     /// operations.
     fn register_conversion_methods(
         &self,
@@ -130,16 +130,6 @@ impl MethodStyleManager {
         for (name, param, result, body) in conversions {
             register_stdlib_function(codegen, name, &[param], Some(result), body)?;
         }
-
-        // string.toBoolean: "true" and "1" are true; "false", "0" and any
-        // other text are false (stdlib-reference.md, conversion error semantics).
-        register_stdlib_function(
-            codegen,
-            "string.toBoolean",
-            &[WasmType::I32],    // string pointer (length-prefixed)
-            Some(WasmType::I32), // boolean value
-            self.generate_string_to_boolean(),
-        )?;
 
         // number.toString is the host float formatter.
         if let Some(float_to_string) = codegen.get_function_index("float_to_string") {
@@ -315,54 +305,6 @@ impl MethodStyleManager {
             }),
             Instruction::I32Const(0),
             Instruction::I32GtU, // Check if length > 0
-            Instruction::End,
-        ]
-    }
-
-    /// Generate WASM for string.toBoolean(): compares the length-prefixed
-    /// text with "true" (4 bytes) and "1" (1 byte).
-    fn generate_string_to_boolean(&self) -> Vec<Instruction> {
-        let len_at = MemArg {
-            offset: 0,
-            align: 2,
-            memory_index: 0,
-        };
-        let bytes_at = MemArg {
-            offset: 4,
-            align: 0,
-            memory_index: 0,
-        };
-        // Little-endian i32 of the bytes "true".
-        let true_bytes = i32::from_le_bytes(*b"true");
-        vec![
-            Instruction::LocalGet(0),
-            Instruction::I32Eqz,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::I32Const(0),
-            Instruction::Else,
-            Instruction::LocalGet(0),
-            Instruction::I32Load(len_at),
-            Instruction::I32Const(4),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::LocalGet(0),
-            Instruction::I32Load(bytes_at),
-            Instruction::I32Const(true_bytes),
-            Instruction::I32Eq,
-            Instruction::Else,
-            Instruction::LocalGet(0),
-            Instruction::I32Load(len_at),
-            Instruction::I32Const(1),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Result(ValType::I32)),
-            Instruction::LocalGet(0),
-            Instruction::I32Load8U(bytes_at),
-            Instruction::I32Const(b'1' as i32),
-            Instruction::I32Eq,
-            Instruction::Else,
-            Instruction::I32Const(0),
-            Instruction::End,
-            Instruction::End,
             Instruction::End,
         ]
     }

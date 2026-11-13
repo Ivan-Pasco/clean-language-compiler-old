@@ -757,3 +757,132 @@ pub fn gen_string_to_number(
     ]);
     v
 }
+
+/// `string.toBoolean(text) -> i32` (stdlib-reference.md §3): `"true"` and
+/// `"1"` are true, `"false"` and `"0"` are false. Other text raises
+/// `'<text>' is not a valid boolean` through `__conversion_error` (index
+/// `raise`, suffix `invalid`) and returns false.
+///
+/// Locals: 0 text (parameter), 1 len.
+pub fn gen_string_to_boolean(raise: u32, invalid: u32) -> Vec<Instruction<'static>> {
+    let word = |offset: u64| MemArg {
+        offset,
+        align: 0,
+        memory_index: 0,
+    };
+    // `if len == n && <test> { return value }`
+    let accept = |n: i32, test: Vec<Instruction<'static>>, value: i32| {
+        let mut v = vec![
+            Instruction::LocalGet(1),
+            Instruction::I32Const(n),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Empty),
+        ];
+        v.extend(test);
+        v.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::I32Const(value),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::End,
+        ]);
+        v
+    };
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Load(MemArg {
+            offset: 0,
+            align: 2,
+            memory_index: 0,
+        }),
+        Instruction::LocalSet(1),
+    ];
+    v.extend(accept(
+        4,
+        vec![
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(4)),
+            Instruction::I32Const(i32::from_le_bytes(*b"true")),
+            Instruction::I32Eq,
+        ],
+        1,
+    ));
+    v.extend(accept(
+        5,
+        vec![
+            Instruction::LocalGet(0),
+            Instruction::I32Load(word(4)),
+            Instruction::I32Const(i32::from_le_bytes(*b"fals")),
+            Instruction::I32Eq,
+            Instruction::LocalGet(0),
+            Instruction::I32Load8U(word(8)),
+            Instruction::I32Const(b'e' as i32),
+            Instruction::I32Eq,
+            Instruction::I32And,
+        ],
+        0,
+    ));
+    for (byte, value) in [(b'1', 1), (b'0', 0)] {
+        v.extend(accept(
+            1,
+            vec![
+                Instruction::LocalGet(0),
+                Instruction::I32Load8U(word(4)),
+                Instruction::I32Const(byte as i32),
+                Instruction::I32Eq,
+            ],
+            value,
+        ));
+    }
+    v.extend([
+        Instruction::LocalGet(0),
+        Instruction::I32Const(invalid as i32),
+        Instruction::Call(raise),
+        Instruction::I32Const(0),
+    ]);
+    v
+}
+
+/// The sized integer types a value is checked against when it is stored
+/// into one (`__integer_fit_*`): name suffix, Clean type name, range.
+pub const INTEGER_FIT_TARGETS: [(&str, &str, i64, i64); 7] = [
+    ("8", "integer:8", i8::MIN as i64, i8::MAX as i64),
+    ("8u", "integer:8u", 0, u8::MAX as i64),
+    ("16", "integer:16", i16::MIN as i64, i16::MAX as i64),
+    ("16u", "integer:16u", 0, u16::MAX as i64),
+    ("32", "integer:32", i32::MIN as i64, i32::MAX as i64),
+    ("32u", "integer:32u", 0, u32::MAX as i64),
+    ("64u", "integer:64u", 0, i64::MAX),
+];
+
+/// `__integer_fit_<suffix>(value: i64) -> i64`: the value when it lies in
+/// `min..=max`; otherwise raise `<value> does not fit in <type>` (`suffix_ptr`
+/// is the length-prefixed ` does not fit in <type>`) and return 0.
+pub fn gen_integer_fit(
+    min: i64,
+    max: i64,
+    int64_to_string: u32,
+    concat: u32,
+    err_raise: u32,
+    suffix_ptr: u32,
+) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::LocalGet(0),
+        Instruction::I64Const(min),
+        Instruction::I64LtS,
+        Instruction::LocalGet(0),
+        Instruction::I64Const(max),
+        Instruction::I64GtS,
+        Instruction::I32Or,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(0),
+        Instruction::Call(int64_to_string),
+        Instruction::I32Const(suffix_ptr as i32),
+        Instruction::Call(concat),
+        Instruction::Call(err_raise),
+        Instruction::I64Const(0),
+        Instruction::Return,
+        Instruction::End,
+        Instruction::LocalGet(0),
+    ]
+}

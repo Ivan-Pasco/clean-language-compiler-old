@@ -1,0 +1,20 @@
+// Test: bugfixes/sized_integer_constant_that_does_not_fit_rejected
+// Semantic: type-system.md §6 — a constant stored into a sized integer it
+//   does not fit in is a compile-time error (developer decision, compiler
+//   0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   300 does not fit in integer:8 (-128 to 127)
+//   -1 does not fit in integer:16u (0 to 65535)
+//   256 does not fit in integer:8u (0 to 255)
+
+start:
+	integer:8 a = 300
+	integer:16u b = 0
+	b = -1
+	print(takeByte(256))
+
+functions:
+	integer takeByte(integer:8u value)
+		return value

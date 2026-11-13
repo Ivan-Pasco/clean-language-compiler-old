@@ -1,0 +1,40 @@
+// Test: bugfixes/string_to_boolean_raises_on_invalid_text
+// Semantic: stdlib-reference.md §3 — .toBoolean() of a string accepts
+//   "true", "false", "1" and "0"; other text raises an error that onError
+//   catches, also when an `any` holding text is converted to boolean
+//   (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   true
+//   false
+//   true
+//   false
+//   fallback 1
+//   fallback 2
+//   fallback 3
+//   caught: 'yes' is not a valid boolean
+//   true
+//   fallback 4
+
+start:
+	print("true".toBoolean())
+	print("false".toBoolean())
+	print("1".toBoolean())
+	print("0".toBoolean())
+	boolean a = "yes".toBoolean() onError false
+	if not a
+		print("fallback 1")
+	boolean b = "True".toBoolean() onError false
+	if not b
+		print("fallback 2")
+	boolean c = "".toBoolean() onError false
+	if not c
+		print("fallback 3")
+	string text = "yes"
+	boolean d = text.toBoolean() onError:
+		print("caught: " + error)
+	any data = json.textToData("{\"on\": \"true\", \"word\": \"maybe\"}")
+	print(data.on.toBoolean())
+	boolean e = data.word.toBoolean() onError false
+	if not e
+		print("fallback 4")
