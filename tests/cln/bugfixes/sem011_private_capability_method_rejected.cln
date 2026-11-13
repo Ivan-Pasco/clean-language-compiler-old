@@ -1,0 +1,30 @@
+// Test: bugfixes/sem011_private_capability_method_rejected
+// Grammar: capability_decl, class_decl.can_clause, public_functions_section
+// Semantic: SEM011 — the method that fulfils a capability must be under
+//   `functions: public:`, even when it is only called through the capability
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   SEM011
+//   Method 'area' on class 'Square' fulfils capability 'Shape' but is private
+//   capability methods belong under `functions: public:`
+//
+// Regression: a private implementation was accepted when every call went
+// through the capability type (`describe(Shape s)`), so the capability
+// exposed a method its class kept private (developer decision 0.33.184).
+
+start:
+	Square sq = Square()
+	print(describe(sq))
+
+can Shape:
+	integer area()
+
+class Square can Shape
+	functions:
+		integer area()
+			return 4
+
+functions:
+	integer describe(Shape s)
+		return s.area()

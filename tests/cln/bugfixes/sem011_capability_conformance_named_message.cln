@@ -51,7 +51,10 @@ class Registry
 
 class Session can Persist
 	functions:
-		boolean save()
-			return true
-		boolean delete()
-			return true
+		// Changed in 0.33.184: the capability methods were private, which is
+		// SEM011 per developer decision
+		public:
+			boolean save()
+				return true
+			boolean delete()
+				return true

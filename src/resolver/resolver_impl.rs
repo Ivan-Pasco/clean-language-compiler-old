@@ -775,6 +775,31 @@ impl NameResolver {
                 for cap_method in &cap_decl.methods {
                     let matching = self.find_class_method(class, classes, &cap_method.name);
                     match matching {
+                        // A capability method is called through the
+                        // capability from anywhere, so it must be public.
+                        Some((method_sym_id, _, _))
+                            if self
+                                .symbol_table
+                                .get_symbol(method_sym_id)
+                                .is_some_and(|s| s.is_private) =>
+                        {
+                            self.errors.push(CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!(
+                                            "Method '{}' on class '{}' fulfils capability '{}' but is private",
+                                            cap_method.name, class.name, cap_name
+                                        ),
+                                        None,
+                                        crate::error::ErrorType::Validation,
+                                        Some(class.location.clone()),
+                                    )
+                                    .with_help("capability methods belong under `functions: public:`")
+                                    .with_error_code("SEM011"),
+                                ),
+                            });
+                            slots.push(None);
+                        }
                         Some((method_sym_id, params, ret)) => {
                             // Signature check: parameter types (excluding
                             // implicit receiver) and return type must match

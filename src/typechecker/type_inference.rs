@@ -4139,7 +4139,7 @@ impl<'a> TypeInference<'a> {
             }
             _ => None,
         };
-        let mut help = match inherited_into {
+        let help = match inherited_into {
             Some(child) => format!(
                 "Private members are not inherited: `{child}` cannot use `{owner}`'s private \
                  {kind} `{member_name}`. Move `{member_name}` under {section}."
@@ -4155,16 +4155,6 @@ impl<'a> TypeInference<'a> {
                  under {section}."
             ),
         };
-        if is_method {
-            if let Some(capability) =
-                owner_class.and_then(|owner_id| self.capability_requiring(owner_id, member_name))
-            {
-                help.push_str(&format!(
-                    " `{member_name}` implements capability `{capability}`; capability methods \
-                     belong under `functions: public:`."
-                ));
-            }
-        }
         self.push_access_violation(member_name, &owner, help, location);
     }
 
@@ -4227,23 +4217,6 @@ impl<'a> TypeInference<'a> {
             )
         };
         self.push_access_violation(member_name, &module, help, location);
-    }
-
-    /// The capability of `class_id` (or one it inherits) that declares a
-    /// method named `method`.
-    fn capability_requiring(&self, class_id: SymbolId, method: &str) -> Option<String> {
-        let capabilities = self.class_conformance.get(&class_id)?;
-        let mut names: Vec<String> = capabilities
-            .iter()
-            .filter_map(|cap| self.symbol_table.get_symbol(*cap))
-            .filter(|sym| match &sym.kind {
-                SymbolKind::Capability { methods } => methods.iter().any(|m| m.name == method),
-                _ => false,
-            })
-            .map(|sym| sym.name.clone())
-            .collect();
-        names.sort();
-        names.into_iter().next()
     }
 
     fn push_access_violation(

@@ -1,14 +1,18 @@
 // Test: bugfixes/sem005_private_capability_method_help
 // Grammar: capability_decl, class_decl.can_clause, public_functions_section
-// Semantic: SEM005 — a capability method implemented outside `public:` is
-//   private; the error says capability methods belong under
-//   `functions: public:` (spec 15-classes-and-objects.md, SEM011 fix text)
+// Semantic: SEM011 — a capability method implemented outside `public:` is
+//   private, which a capability method may not be; the error says
+//   capability methods belong under `functions: public:` (spec
+//   15-classes-and-objects.md, SEM011 fix text)
 // Fixed in: compiler 0.33.184
 // Expected output:
 // Expected error:
-//   SEM005
-//   'draw' is private and cannot be accessed from outside 'Circle'
-//   `draw` implements capability `Draw`; capability methods belong under `functions: public:`
+//   SEM011
+//   Method 'draw' on class 'Circle' fulfils capability 'Draw' but is private
+//   capability methods belong under `functions: public:`
+//
+// Changed in 0.33.184: a private capability method is SEM011 at the class,
+// not SEM005 at the call (developer decision)
 
 start:
 	Circle c = Circle()
