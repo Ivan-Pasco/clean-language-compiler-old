@@ -996,12 +996,14 @@ impl MirCodeGenerator<'_> {
             // variants (`math.abs.i32`): each argument converts to the
             // parameter type the callee is registered with. (A user function
             // named `number...` is not a runtime function and takes the
-            // generic path below.)
+            // generic path below.) So do the `number` bounds of
+            // `validator.range` (stdlib-reference.md §15).
             Some(name)
                 if (name.starts_with("math.")
                     || name.starts_with("number")
                     || name == "float_to_string"
-                    || name == "integer.toNumber")
+                    || name == "integer.toNumber"
+                    || name == "validator.range")
                     && self.wasm_generator.function_param_types(name).is_some() =>
             {
                 let params = self

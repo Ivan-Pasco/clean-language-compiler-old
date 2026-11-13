@@ -104,6 +104,11 @@ pub struct CodeGenerator {
 
     // Track imported function names to avoid exporting them
     imported_functions: HashSet<String>,
+
+    // A runtime helper calls through `__indirect_function_table`
+    // (`call_indirect`), so the module needs the table even when no user
+    // code takes a function reference.
+    pub(crate) requires_function_table: bool,
 }
 
 impl Default for CodeGenerator {
@@ -156,6 +161,8 @@ impl CodeGenerator {
 
             // Track imported function names to avoid exporting them
             imported_functions: HashSet::new(),
+
+            requires_function_table: false,
         }
     }
 

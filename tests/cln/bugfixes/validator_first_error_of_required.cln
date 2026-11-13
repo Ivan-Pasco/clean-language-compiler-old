@@ -1,0 +1,32 @@
+// Test: bugfixes/validator_first_error_of_required
+// Grammar: function_call (validator.getFirstError, validator.getErrors)
+// Semantic: stdlib-validator.md — a failing required field reports
+//   "<field> is required"; `validator.getFirstError` returns the first error
+//   message, and on an ok result an empty string (`getErrors` an empty list)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   true
+//   email is required
+//   1
+//   email is required
+//   0
+//   0
+//   email is required
+//
+// Regression: `validator.getFirstError(r)` returned "" for a failed required
+// field: `validator.run` recorded no error messages.
+
+start:
+	integer v = validator.required(validator.field(validator.create(), "email"))
+	pairs<string, any> missing = {"name": "Ada"}
+	integer r = validator.run(v, missing)
+	print(validator.isError(r))
+	print(validator.getFirstError(r))
+	print(validator.getErrors(r).size())
+	pairs<string, any> blank = {"email": ""}
+	print(validator.getFirstError(validator.run(v, blank)))
+	pairs<string, any> present = {"email": "ada@example.com"}
+	integer fine = validator.run(v, present)
+	print(validator.getFirstError(fine).length())
+	print(validator.getErrors(fine).size())
+	print(validator.getFirstError(validator.runField(v, "email", "")))

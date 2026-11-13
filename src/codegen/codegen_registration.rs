@@ -23,13 +23,14 @@ impl super::CodeGenerator {
 
     /// Register validator operation functions (validator.create, validator.ok, validator.isOk, etc.)
     pub fn register_validator_operations(&mut self) -> Result<(), CompilerError> {
-        use crate::stdlib::validator::{ValidatorImports, ValidatorManager};
+        use crate::stdlib::validator::{ValidatorImports, ValidatorManager, ValidatorStrings};
 
-        // Validators allocate through the module's own `__malloc` and compare
-        // names with `__pairs_str_eq`, so they are registered after
-        // `register_memory_operations` and `register_pairs_operations`.
-        let index_of = |name: &str| {
-            self.get_function_index(name).ok_or_else(|| {
+        // Validators call the module's memory, string, list and pairs
+        // functions, so they are registered after `register_memory_operations`,
+        // `register_string_trim_imports`, `register_list_operations` and
+        // `register_pairs_operations`.
+        let index_of = |this: &Self, name: &str| {
+            this.get_function_index(name).ok_or_else(|| {
                 CompilerError::codegen_error(
                     format!("register_validator_operations: {name} is not registered yet"),
                     None,
@@ -37,9 +38,30 @@ impl super::CodeGenerator {
                 )
             })
         };
+        // A `validator.custom` rule calls its check function
+        // `boolean fn(string value)` through the function table.
+        let custom_check_type = if self.has_reachable_prefix("validator.custom") {
+            self.requires_function_table = true;
+            Some(self.add_function_type(&[WasmType::I32], Some(WasmType::I32))?)
+        } else {
+            None
+        };
         let imports = ValidatorImports {
-            malloc: index_of("__malloc")?,
-            str_eq: index_of("__pairs_str_eq")?,
+            malloc: index_of(self, "__malloc")?,
+            str_eq: index_of(self, "__pairs_str_eq")?,
+            memcpy: index_of(self, "__memcpy")?,
+            concat: index_of(self, "__string_concat")?,
+            trim: index_of(self, "__string_trim")?,
+            list_allocate: index_of(self, "list.allocate")?,
+            list_add: index_of(self, "list.add")?,
+            int_to_string: index_of(self, "__int_to_string")?,
+            int64_to_string: index_of(self, "__int64_to_string")?,
+            float_to_string: index_of(self, "float_to_string")?,
+            // Registered when a `validator.match` rule is reachable.
+            string_matches: self.get_function_index("string_matches"),
+            custom_check_type,
+            first_helper: self.next_function_index(),
+            strings: ValidatorStrings::pool(self)?,
         };
         ValidatorManager::new(imports).register_functions(self)?;
 

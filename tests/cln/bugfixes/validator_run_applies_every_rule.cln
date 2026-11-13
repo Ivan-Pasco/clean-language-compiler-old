@@ -1,0 +1,76 @@
+// Test: bugfixes/validator_run_applies_every_rule
+// Grammar: function_call (validator.field, validator.trim, validator.type,
+//   validator.range, validator.match, validator.custom, validator.run)
+// Semantic: stdlib-reference §15 — `validator.run` applies every rule of a
+//   field: `trim` first (the result holds the trimmed value), `required`,
+//   `type` (checked first; when it fails the field's other rules are
+//   skipped), the lengths, `range`, `match` and `custom`; each failed rule
+//   adds a message and `validator.getErrors` lists them in order
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   false
+//   name must be at least 3 characters
+//   true
+//   {"name":"Ada"}
+//   false
+//   age must be a whole number
+//   true
+//   false
+//   age must be between 13 and 120
+//   false
+//   email must be a valid email address
+//   false
+//   code is invalid
+//   true
+//
+// Regression: `validator.run` checked only `required` and the lengths, and
+// recorded no messages: `" a "` with trim + minLength 3 passed, type
+// "integer" with "x" passed, and range, match and custom were never checked.
+
+start:
+	integer name = validator.field(validator.create(), "name")
+	name = validator.required(name)
+	name = validator.trim(name)
+	name = validator.minLength(name, 3)
+	pairs<string, any> spaced = {"name": " a "}
+	integer r = validator.run(name, spaced)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+	pairs<string, any> padded = {"name": "  Ada  "}
+	r = validator.run(name, padded)
+	print(validator.isOk(r))
+	print(json.encode(validator.getValue(r)))
+
+	integer age = validator.field(validator.create(), "age")
+	age = validator.type(age, "integer")
+	age = validator.range(age, 13, 120)
+	pairs<string, any> notNumber = {"age": "x"}
+	r = validator.run(age, notNumber)
+	print(validator.isOk(r))
+	// a failed type skips the field's other rules: one message
+	iterate message in validator.getErrors(r)
+		print(message)
+	pairs<string, any> adult = {"age": 36}
+	print(validator.isOk(validator.run(age, adult)))
+	pairs<string, any> old = {"age": "130"}
+	r = validator.run(age, old)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+
+	integer email = validator.match(validator.field(validator.create(), "email"), "email")
+	pairs<string, any> badEmail = {"email": "ada"}
+	r = validator.run(email, badEmail)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+
+	integer code = validator.custom(validator.field(validator.create(), "code"), isCode)
+	pairs<string, any> wrongCode = {"code": "x-1"}
+	r = validator.run(code, wrongCode)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+	pairs<string, any> goodCode = {"code": "AB12"}
+	print(validator.isOk(validator.run(code, goodCode)))
+
+functions:
+	boolean isCode(string value)
+		return value.length() == 4

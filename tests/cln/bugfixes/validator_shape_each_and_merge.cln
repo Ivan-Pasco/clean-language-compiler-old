@@ -1,0 +1,74 @@
+// Test: bugfixes/validator_shape_each_and_merge
+// Grammar: function_call (validator.shape, validator.each, validator.merge)
+// Semantic: stdlib-reference §15 — `validator.shape(v, rules)`: the field holds
+//   a nested pairs value checked with `rules`, its errors prefixed with the
+//   field name; `validator.each(v, rules)`: every element of the list field is
+//   checked with `rules`, errors per index; `validator.merge(a, b)`: a new
+//   handle with the fields of a then b, b's field winning for the same name
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   false
+//   address.street is required
+//   false
+//   homes[1].street is required
+//   false
+//   homes must be a list
+//   true
+//   {"name":"Ada","address":{"street":"Main","city":"Lima"}}
+//   true
+//   false
+//   name is required
+//
+// Regression: `validator.shape` and `validator.each` only stored their rules;
+// `validator.run` never checked a nested value or a list element, and
+// `validator.merge` kept both fields of the same name.
+
+start:
+	integer address = validator.field(validator.create(), "street")
+	address = validator.required(address)
+	address = validator.field(address, "city")
+	address = validator.required(address)
+	address = validator.trim(address)
+
+	integer user = validator.field(validator.createWithName("user"), "name")
+	user = validator.required(user)
+	user = validator.field(user, "address")
+	user = validator.shape(user, address)
+	user = validator.field(user, "homes")
+	user = validator.each(user, address)
+
+	pairs<string, any> noStreet = {"name": "Ada", "address": {"city": "Lima"}}
+	integer r = validator.run(user, noStreet)
+	print(validator.isOk(r))
+	iterate message in validator.getErrors(r)
+		print(message)
+
+	pairs<string, any> first = {"street": "A", "city": "B"}
+	pairs<string, any> second = {"city": "C"}
+	list<any> places = [first, second]
+	pairs<string, any> homes = {"name": "Ada", "homes": places}
+	r = validator.run(user, homes)
+	print(validator.isOk(r))
+	iterate message in validator.getErrors(r)
+		print(message)
+
+	pairs<string, any> notList = {"name": "Ada", "homes": "x"}
+	r = validator.run(user, notList)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+
+	// the result holds the trimmed nested value
+	pairs<string, any> good = {"name": "Ada", "address": {"street": "Main", "city": "  Lima  "}}
+	r = validator.run(user, good)
+	print(validator.isOk(r))
+	print(json.encode(validator.getValue(r)))
+
+	// b's optional "name" replaces a's required one; a is unchanged
+	integer relaxed = validator.optional(validator.field(validator.create(), "name"))
+	integer merged = validator.merge(user, relaxed)
+	list<any> nothing = []
+	pairs<string, any> nameless = {"homes": nothing}
+	print(validator.isOk(validator.run(merged, nameless)))
+	r = validator.run(user, nameless)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))

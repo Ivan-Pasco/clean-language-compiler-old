@@ -2,7 +2,7 @@ use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
 use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
-use wasm_encoder::{BlockType, Instruction, MemArg};
+use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 /// Type ID for ValidationResult objects in memory
 pub const VALIDATION_RESULT_TYPE_ID: u32 = 20;
@@ -13,12 +13,12 @@ pub const VALIDATION_RULES_TYPE_ID: u32 = 21;
 /// Layout (80 bytes total):
 ///   0:  field_name_ptr       (4 bytes)
 ///   4:  required flag        (4 bytes, 0=optional 1=required)
-///   8:  pattern_ptr          (4 bytes, 0=none)
-///  12:  range_rule_ptr       (4 bytes, 0=none, ptr to {min_i32, max_i32})
+///   8:  pattern_ptr          (4 bytes, 0=none; a pattern name)
+///  12:  range_rule_ptr       (4 bytes, 0=none, ptr to {lo: f64, hi: f64})
 ///  16:  min_length           (4 bytes, 0=no constraint)
-///  20:  max_length           (4 bytes, 0=no constraint)
+///  20:  max_length           (4 bytes, -1=no constraint)
 ///  24:  message_ptr          (4 bytes, 0=use default)
-///  28:  custom_fn_ptr        (4 bytes, 0=none)
+///  28:  custom_fn            (4 bytes, 0=none; function table index)
 ///  32:  type_name_ptr        (4 bytes, 0=none; ptr to type name string)
 ///  36:  trim_flag            (4 bytes, 0=no trim 1=trim)
 ///  40:  allowed_values_ptr   (4 bytes, 0=none, ptr to list<string>)
@@ -39,30 +39,44 @@ const FIELD_ENTRY_SIZE: i32 = 80;
 /// Number of 4-byte words in a field entry.
 const FIELD_ENTRY_WORDS: u32 = (FIELD_ENTRY_SIZE / 4) as u32;
 
-/// Number of i32 locals `validator.run` declares after its two params
-/// (indices 2..=23, listed in `generate_validator_run`).
-const RUN_EXTRA_LOCALS: usize = 22;
-
-/// Number of i32 locals `validator.runField` declares after its three params
-/// (indices 3..=20, listed in `generate_validator_run_field`).
-const RUN_FIELD_EXTRA_LOCALS: usize = 18;
-
 /// Boxed-`any` tags (BOXED_ANY_ABI.md §2) the validator reads.
-const ANY_TAG_NULL: i32 = 0;
+const ANY_TAG_INTEGER: i32 = 1;
+const ANY_TAG_BOOLEAN: i32 = 2;
+const ANY_TAG_NUMBER: i32 = 3;
 const ANY_TAG_STRING: i32 = 4;
+const ANY_TAG_ARRAY: i32 = 5;
 const ANY_TAG_OBJECT: i32 = 6;
+
+/// Byte size of a boxed `any` (BOXED_ANY_ABI.md §1).
+const ANY_BOX_SIZE: i32 = 12;
 
 /// Initial capacity for the fields array (number of field slots)
 const INITIAL_FIELD_CAPACITY: i32 = 8;
 
+/// Byte offset of the first element of a list (MEMORY_MODEL.md).
+const LIST_DATA_OFFSET: u64 = 16;
+
+/// The pattern names of `validator.match`, in the order of their
+/// `string_matches` pattern ids (`text.matches`, stdlib-reference.md §4).
+const PATTERNS: [(&str, &str); 8] = [
+    ("email", " must be a valid email address"),
+    ("url", " must be a valid URL"),
+    ("uuid", " must be a valid UUID"),
+    ("phone", " must be a valid phone number"),
+    ("date", " must be a date in YYYY-MM-DD format"),
+    ("integer", " must contain only digits"),
+    ("number", " must be a number"),
+    ("alphanumeric", " must contain only letters and digits"),
+];
+
 /// Byte size of the ValidationResult structure (24 bytes):
 ///   0:  is_ok              (4 bytes, 1=success 0=failure)
-///   4:  value_ptr          (4 bytes, input pairs ptr when ok)
-///   8:  errors_list_ptr    (4 bytes, list<string> ptr when error)
+///   4:  value_ptr          (4 bytes, the validated value when ok)
+///   8:  errors_list_ptr    (4 bytes, list<string>)
 ///  12:  field_errors_ptr   (4 bytes, 0=none, field→errors pairs ptr)
 ///  16:  field_name_ptr     (4 bytes, set by runField, 0 by run)
 ///  20:  validator_name_ptr (4 bytes, from createWithName, 0 if unnamed)
-const _RESULT_SIZE: i32 = 24;
+const RESULT_SIZE: i32 = 24;
 
 /// Byte size of the ValidationRules header:
 ///   0:  field_count  (4 bytes)
@@ -87,27 +101,119 @@ pub fn too_many_arguments_help(function: &str) -> Option<&'static str> {
     }
 }
 
-/// Validator stdlib module for Clean Language
-/// Provides validation rules DSL and validation execution
-///
-/// Clean API:
-/// ```clean
-/// rules: validator.create:
-///     field: "email"
-///         required: true
-///         match: emailPattern
-///     field: "age"
-///         required: true
-///         range: 0, 150
-///
-/// result: validator.run rules userData
-/// if result.ok:
-///     process result.value
-/// else:
-///     print result.firstError
-/// ```
+/// `i32.load` / `i32.store` of a 4-aligned word at `offset`.
+const fn word(offset: u64) -> MemArg {
+    MemArg {
+        offset,
+        align: 2,
+        memory_index: 0,
+    }
+}
+
+fn load(offset: u64) -> Instruction<'static> {
+    Instruction::I32Load(word(offset))
+}
+
+fn store(offset: u64) -> Instruction<'static> {
+    Instruction::I32Store(word(offset))
+}
+
+/// An `i32` constant holding the address of a pooled string.
+fn text(ptr: u32) -> Instruction<'static> {
+    Instruction::I32Const(ptr as i32)
+}
+
+fn if_i32() -> Instruction<'static> {
+    Instruction::If(BlockType::Result(ValType::I32))
+}
+
+fn if_empty() -> Instruction<'static> {
+    Instruction::If(BlockType::Empty)
+}
+
+/// Validator stdlib module for Clean Language: the rules a `validate` block
+/// builds and `validator.run` checks (stdlib-reference.md §15).
 pub struct ValidatorManager {
     imports: ValidatorImports,
+    helpers: Helpers,
+}
+
+/// The pooled strings the validator's error messages are built from.
+#[derive(Debug, Clone, Copy)]
+pub struct ValidatorStrings {
+    pub empty: u32,
+    pub dot: u32,
+    pub open_bracket: u32,
+    pub close_bracket_dot: u32,
+    pub comma_space: u32,
+    pub is_required: u32,
+    pub must_be_string: u32,
+    pub must_be_whole: u32,
+    pub must_be_number: u32,
+    pub must_be_boolean: u32,
+    pub must_be_a: u32,
+    pub at_least: u32,
+    pub at_most: u32,
+    pub characters: u32,
+    pub between: u32,
+    pub and: u32,
+    pub one_of: u32,
+    pub is_invalid: u32,
+    pub must_be_list: u32,
+    pub no_match: u32,
+    pub true_text: u32,
+    pub false_text: u32,
+    pub type_string: u32,
+    pub type_integer: u32,
+    pub type_number: u32,
+    pub type_boolean: u32,
+    /// The names in `PATTERNS`, in order.
+    pub patterns: [u32; 8],
+    /// The messages in `PATTERNS`, in order.
+    pub pattern_messages: [u32; 8],
+}
+
+impl ValidatorStrings {
+    /// Pool every validator string in `codegen`'s data section.
+    pub fn pool(codegen: &mut CodeGenerator) -> Result<Self, CompilerError> {
+        let mut s = |text: &str| codegen.get_or_create_string_offset(text);
+        let mut patterns = [0; 8];
+        let mut pattern_messages = [0; 8];
+        for (i, (name, message)) in PATTERNS.iter().enumerate() {
+            patterns[i] = s(name)?;
+            pattern_messages[i] = s(message)?;
+        }
+        Ok(Self {
+            empty: s("")?,
+            dot: s(".")?,
+            open_bracket: s("[")?,
+            close_bracket_dot: s("].")?,
+            comma_space: s(", ")?,
+            is_required: s(" is required")?,
+            must_be_string: s(" must be a string")?,
+            must_be_whole: s(" must be a whole number")?,
+            must_be_number: s(" must be a number")?,
+            must_be_boolean: s(" must be true or false")?,
+            must_be_a: s(" must be a ")?,
+            at_least: s(" must be at least ")?,
+            at_most: s(" must be at most ")?,
+            characters: s(" characters")?,
+            between: s(" must be between ")?,
+            and: s(" and ")?,
+            one_of: s(" must be one of: ")?,
+            is_invalid: s(" is invalid")?,
+            must_be_list: s(" must be a list")?,
+            no_match: s(" does not match the required format")?,
+            true_text: s("true")?,
+            false_text: s("false")?,
+            type_string: s("string")?,
+            type_integer: s("integer")?,
+            type_number: s("number")?,
+            type_boolean: s("boolean")?,
+            patterns,
+            pattern_messages,
+        })
+    }
 }
 
 /// Function indices of the module functions the validator code calls.
@@ -117,18 +223,98 @@ pub struct ValidatorImports {
     pub malloc: u32,
     /// `__pairs_str_eq(a, b) -> 1 | 0`: byte equality of two strings.
     pub str_eq: u32,
+    /// `__memcpy(dest, src, len)`.
+    pub memcpy: u32,
+    /// `__string_concat(a, b) -> string`.
+    pub concat: u32,
+    /// `__string_trim(s) -> string`.
+    pub trim: u32,
+    /// `list.allocate(capacity) -> list`.
+    pub list_allocate: u32,
+    /// `list.add(list, value) -> list` (the list may move).
+    pub list_add: u32,
+    /// `__int_to_string(i32) -> string`.
+    pub int_to_string: u32,
+    /// `__int64_to_string(i64) -> string`.
+    pub int64_to_string: u32,
+    /// `float_to_string(f64) -> string`.
+    pub float_to_string: u32,
+    /// `string_matches(ptr, len, pattern_id) -> 1 | 0`, registered when a
+    /// `validator.match` rule is reachable.
+    pub string_matches: Option<u32>,
+    /// Type index of `(i32) -> i32`, the check function of
+    /// `validator.custom`, when a `validator.custom` rule is reachable.
+    pub custom_check_type: Option<u32>,
+    /// The index the first validator helper function gets: the helpers are
+    /// the next functions registered.
+    pub first_helper: u32,
+    pub strings: ValidatorStrings,
+}
+
+/// Indices of the validator's internal helper functions, registered first,
+/// in this order, from `ValidatorImports::first_helper`.
+#[derive(Debug, Clone, Copy)]
+struct Helpers {
+    /// `(cell, message)`: append `message` to the error list `cell` holds.
+    add_error: u32,
+    /// `(f64) -> string`: a whole number without a decimal point.
+    number_text: u32,
+    /// `(string, whole) -> f64`: the number the text spells, NaN if none.
+    parse_number: u32,
+    /// `(box, whole) -> f64`: the number a boxed value holds, NaN if none.
+    numeric: u32,
+    /// `(box) -> string | 0`: the text of a boxed scalar value.
+    value_text: u32,
+    /// `(pattern) -> id | -1`.
+    pattern_id: u32,
+    /// `(id) -> message`.
+    pattern_message: u32,
+    /// `(list<string>, separator) -> string`.
+    join: u32,
+    /// `(range) -> message`.
+    range_message: u32,
+    /// `(rules, name) -> index | -1`: the last field rule named `name`.
+    field_index: u32,
+    /// `(rules, object, prefix, cell) -> object`: check every field of
+    /// `rules` against a JSON-tree object; returns the object with the
+    /// changed (trimmed) values.
+    check_object: u32,
+    /// `(entry, box, label, cell) -> box`: check one value against a field
+    /// rule; returns the (trimmed) value.
+    check_value: u32,
+}
+
+impl Helpers {
+    fn starting_at(first: u32) -> Self {
+        Self {
+            add_error: first,
+            number_text: first + 1,
+            parse_number: first + 2,
+            numeric: first + 3,
+            value_text: first + 4,
+            pattern_id: first + 5,
+            pattern_message: first + 6,
+            join: first + 7,
+            range_message: first + 8,
+            field_index: first + 9,
+            check_object: first + 10,
+            check_value: first + 11,
+        }
+    }
 }
 
 impl ValidatorManager {
     /// Create a ValidatorManager that calls the functions in `imports`.
-    /// `register_validator_operations` runs after `register_memory_operations`
-    /// and `register_pairs_operations`, which define them.
     pub fn new(imports: ValidatorImports) -> Self {
-        Self { imports }
+        Self {
+            imports,
+            helpers: Helpers::starting_at(imports.first_helper),
+        }
     }
 
     /// Register all validator functions as stdlib functions
     pub fn register_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        self.register_helper_functions(codegen)?;
         self.register_validator_creation_functions(codegen)?;
         self.register_validation_execution_functions(codegen)?;
         self.register_validation_result_functions(codegen)?;
@@ -137,6 +323,134 @@ impl ValidatorManager {
     }
 
     // ==================== Registration Groups ====================
+
+    fn register_helper_functions(&self, codegen: &mut CodeGenerator) -> Result<(), CompilerError> {
+        use WasmType::{F64, I32};
+        let h = self.helpers;
+        let helpers: [(
+            u32,
+            &str,
+            Vec<WasmType>,
+            Option<WasmType>,
+            Vec<WasmType>,
+            Vec<Instruction<'static>>,
+        ); 12] = [
+            (
+                h.add_error,
+                "__validator_add_error",
+                vec![I32, I32],
+                None,
+                vec![],
+                self.generate_add_error(),
+            ),
+            (
+                h.number_text,
+                "__validator_number_text",
+                vec![F64],
+                Some(I32),
+                vec![],
+                self.generate_number_text(),
+            ),
+            (
+                h.parse_number,
+                "__validator_parse_number",
+                vec![I32, I32],
+                Some(F64),
+                // 2 len, 3 i, 4 byte, 5 negative, 6 whole digits,
+                // 7 fraction digits, 8 seen dot, 9 result, 10 scale
+                vec![I32, I32, I32, I32, I32, I32, I32, F64, F64],
+                Self::generate_parse_number(),
+            ),
+            (
+                h.numeric,
+                "__validator_numeric",
+                vec![I32, I32],
+                Some(F64),
+                vec![I32, F64],
+                self.generate_numeric(),
+            ),
+            (
+                h.value_text,
+                "__validator_value_text",
+                vec![I32],
+                Some(I32),
+                vec![I32],
+                self.generate_value_text(),
+            ),
+            (
+                h.pattern_id,
+                "__validator_pattern_id",
+                vec![I32],
+                Some(I32),
+                vec![],
+                self.generate_pattern_id(),
+            ),
+            (
+                h.pattern_message,
+                "__validator_pattern_message",
+                vec![I32],
+                Some(I32),
+                vec![],
+                self.generate_pattern_message(),
+            ),
+            (
+                h.join,
+                "__validator_join",
+                vec![I32, I32],
+                Some(I32),
+                vec![I32, I32, I32],
+                self.generate_join(),
+            ),
+            (
+                h.range_message,
+                "__validator_range_message",
+                vec![I32],
+                Some(I32),
+                vec![],
+                self.generate_range_message(),
+            ),
+            (
+                h.field_index,
+                "__validator_field_index",
+                vec![I32, I32],
+                Some(I32),
+                vec![I32],
+                self.generate_field_index(),
+            ),
+            (
+                h.check_object,
+                "__validator_check_object",
+                vec![I32, I32, I32, I32],
+                Some(I32),
+                vec![I32; CHECK_FIELDS_LOCALS],
+                self.generate_check_object(),
+            ),
+            (
+                h.check_value,
+                "__validator_check_value",
+                vec![I32, I32, I32, I32],
+                Some(I32),
+                // 4..=15 i32 (see generate_check_value), 16 f64
+                vec![
+                    I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, I32, F64,
+                ],
+                self.generate_check_value(),
+            ),
+        ];
+        for (expected, name, params, result, locals, body) in helpers {
+            let index = register_stdlib_function_with_locals(
+                codegen, name, &params, result, &locals, body,
+            )?;
+            if index != expected {
+                return Err(CompilerError::codegen_error(
+                    format!("validator helper {name} got index {index}, expected {expected}"),
+                    None,
+                    None,
+                ));
+            }
+        }
+        Ok(())
+    }
 
     fn register_validator_creation_functions(
         &self,
@@ -169,9 +483,8 @@ impl ValidatorManager {
         &self,
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
-        // validator.run(rules_ptr: i32, input_ptr: i32) -> ValidationResult ptr
-        // (locals: see generate_validator_run)
-        register_stdlib_function_with_locals(
+        // validator.run(rules_ptr, input: any) -> ValidationResult ptr
+        let run = register_stdlib_function_with_locals(
             codegen,
             "validator.run",
             &[WasmType::I32, WasmType::I32], // rules_ptr=0, input_ptr=1
@@ -179,9 +492,10 @@ impl ValidatorManager {
             &[WasmType::I32; RUN_EXTRA_LOCALS],
             self.generate_validator_run(),
         )?;
+        // validator.validate is a synonym of validator.run (§15).
+        codegen.add_function_alias("validator.validate", run);
 
         // validator.runField(rules_ptr, field_name_ptr, value: any) -> ValidationResult ptr
-        // (locals: see generate_validator_run_field)
         register_stdlib_function_with_locals(
             codegen,
             "validator.runField",
@@ -189,16 +503,6 @@ impl ValidatorManager {
             Some(WasmType::I32),
             &[WasmType::I32; RUN_FIELD_EXTRA_LOCALS],
             self.generate_validator_run_field(),
-        )?;
-
-        // validator.validate — identical to validator.run (synonym per spec)
-        register_stdlib_function_with_locals(
-            codegen,
-            "validator.validate",
-            &[WasmType::I32, WasmType::I32],
-            Some(WasmType::I32),
-            &[WasmType::I32; RUN_EXTRA_LOCALS],
-            self.generate_validator_run(),
         )?;
 
         Ok(())
@@ -265,11 +569,12 @@ impl ValidatorManager {
         )?;
 
         // validator.getFirstError(result_ptr: i32) -> string_ptr
-        register_stdlib_function(
+        register_stdlib_function_with_locals(
             codegen,
             "validator.getFirstError",
             &[WasmType::I32],
             Some(WasmType::I32),
+            &[WasmType::I32], // local: errors list
             self.generate_validator_get_first_error(),
         )?;
 
@@ -295,7 +600,8 @@ impl ValidatorManager {
             "validator.field",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            &[WasmType::I32, WasmType::I32], // locals: field_count, field_entry_ptr
+            // locals: field_count, field_entry_ptr, capacity, new_fields_ptr
+            &[WasmType::I32, WasmType::I32, WasmType::I32, WasmType::I32],
             self.generate_validator_field(),
         )?;
 
@@ -329,11 +635,11 @@ impl ValidatorManager {
             self.generate_validator_match(),
         )?;
 
-        // validator.range(rules_ptr, min, max) -> rules_ptr
+        // validator.range(rules_ptr, lo: number, hi: number) -> rules_ptr
         register_stdlib_function_with_locals(
             codegen,
             "validator.range",
-            &[WasmType::I32, WasmType::I32, WasmType::I32],
+            &[WasmType::I32, WasmType::F64, WasmType::F64],
             Some(WasmType::I32),
             &[WasmType::I32, WasmType::I32], // locals: range_rule_ptr, field_entry_ptr
             self.generate_validator_range(),
@@ -379,7 +685,7 @@ impl ValidatorManager {
             self.generate_validator_custom(),
         )?;
 
-        // validator.type(rules_ptr, type_name_ptr) -> rules_ptr  [P proposed, implemented]
+        // validator.type(rules_ptr, type_name_ptr) -> rules_ptr
         register_stdlib_function_with_locals(
             codegen,
             "validator.type",
@@ -475,19 +781,7 @@ impl ValidatorManager {
             "validator.merge",
             &[WasmType::I32, WasmType::I32],
             Some(WasmType::I32),
-            &[
-                WasmType::I32, // 2: new_rules_ptr
-                WasmType::I32, // 3: count_a
-                WasmType::I32, // 4: count_b
-                WasmType::I32, // 5: total_count
-                WasmType::I32, // 6: new_fields_ptr
-                WasmType::I32, // 7: src_fields_ptr_a
-                WasmType::I32, // 8: src_fields_ptr_b
-                WasmType::I32, // 9: copy_index
-                WasmType::I32, // 10: src_entry_ptr
-                WasmType::I32, // 11: dst_entry_ptr
-                WasmType::I32, // 12: byte_index (word-by-word copy counter)
-            ],
+            &[WasmType::I32; MERGE_EXTRA_LOCALS],
             self.generate_validator_merge(),
         )?;
 
@@ -639,832 +933,1438 @@ impl ValidatorManager {
 
     // ==================== Code Generation: Execution ====================
 
-    /// `validator.run(rules_ptr: i32, input_ptr: i32) -> ValidationResult ptr`
-    ///
-    /// Validates `input` against every field rule. `input` is an `any`
-    /// (BOXED_ANY_ABI.md): a `pairs` value arrives as a tag-6 box holding a
-    /// JSON-tree object (`[count][key_ptr, value_box]...`, §3.3), and each
-    /// field's value is the entry whose key is the field's name. A field is
-    /// absent when there is no such entry, its value is null, or the input is
-    /// not a JSON-tree object (a class instance box starts with its negative
-    /// header, not an entry count, so it has no entries here). The length
-    /// rules check string values. Returns a
-    /// 24-byte ValidationResult whose value is `input`.
-    ///
-    /// Params: 0=rules_ptr, 1=input_ptr
-    fn generate_validator_run(&self) -> Vec<Instruction<'static>> {
-        // Local variable indices:
-        // 0=rules_ptr, 1=input_ptr (params)
-        // 2=result_ptr, 3=field_count, 4=loop_index, 5=field_entry_ptr
-        // 6=field_name_ptr, 7=required_flag, 8=field_value_ptr
-        // 9=range_rule_ptr, 10=min_length, 11=max_length
-        // 12=min_val, 13=max_val, 14=min_val_active, 15=max_val_active
-        // 16=str_len, 17=validation_passed, 18=fields_ptr, 19=field_present,
-        // 20=object_ptr, 21=object_count, 22=entry_index, 23=value_box
-
-        let mut instrs: Vec<Instruction<'static>> = Vec::new();
-
-        // Allocate ValidationResult (24 bytes)
-        instrs.extend([
-            Instruction::I32Const(24),
+    /// Store a new boxed `any` with `tag` and the i32 payload in
+    /// `payload_local` into `box_local`.
+    fn emit_new_box(
+        &self,
+        tag: i32,
+        payload_local: u32,
+        box_local: u32,
+    ) -> Vec<Instruction<'static>> {
+        vec![
+            Instruction::I32Const(ANY_BOX_SIZE),
             Instruction::Call(self.imports.malloc),
-            Instruction::LocalSet(2), // result_ptr
-        ]);
-
-        // Initialise result fields to 0
-        instrs.extend([
-            Instruction::LocalGet(2),
+            Instruction::LocalSet(box_local),
+            Instruction::LocalGet(box_local),
+            Instruction::I32Const(tag),
+            store(0),
+            Instruction::LocalGet(box_local),
+            Instruction::LocalGet(payload_local),
+            store(4),
+            Instruction::LocalGet(box_local),
             Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }), // is_ok=0
-            Instruction::LocalGet(2),
-            Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }), // value_ptr=0
-            Instruction::LocalGet(2),
-            Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }), // errors_list_ptr=0
-            Instruction::LocalGet(2),
-            Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }), // field_errors_ptr=0
-            Instruction::LocalGet(2),
-            Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 16,
-                align: 2,
-                memory_index: 0,
-            }), // field_name_ptr=0
+            store(8),
+        ]
+    }
+
+    /// A new empty error list, held in a 4-byte cell (the list moves when
+    /// it grows): `cell_local` = the cell.
+    fn emit_new_error_cell(&self, cell_local: u32) -> Vec<Instruction<'static>> {
+        vec![
+            Instruction::I32Const(4),
+            Instruction::Call(self.imports.malloc),
+            Instruction::LocalTee(cell_local),
+            Instruction::I32Const(4),
+            Instruction::Call(self.imports.list_allocate),
+            store(0),
+        ]
+    }
+
+    /// The loop of `validator.run` and the nested-object check: every field
+    /// rule of `rules` is checked against the entry of the JSON-tree object
+    /// (BOXED_ANY_ABI.md §3.3, `[count][key_ptr, value_box]...`; 0 = no
+    /// entries) with the field's name, absent when there is none. A value
+    /// the check changes (trimmed) goes into a copy of the object, left in
+    /// `copy` (0 when nothing changed).
+    fn emit_check_fields(&self, l: FieldLoop) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let mut v = vec![
+            I::LocalGet(l.rules),
+            load(0),
+            I::LocalSet(l.count),
+            I::LocalGet(l.object),
+            if_i32(),
+            I::LocalGet(l.object),
+            load(0),
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            I::LocalSet(l.object_count),
+            I::I32Const(0),
+            I::LocalSet(l.copy),
+            I::I32Const(0),
+            I::LocalSet(l.index),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(l.index),
+            I::LocalGet(l.count),
+            I::I32GeS,
+            I::BrIf(1),
+            // entry = fields + index * FIELD_ENTRY_SIZE
+            I::LocalGet(l.rules),
+            load(8),
+            I::LocalGet(l.index),
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::I32Mul,
+            I::I32Add,
+            I::LocalTee(l.entry),
+            load(0),
+            I::LocalSet(l.name),
+            // value = the value of the object entry named `name` (0 if none);
+            // entry_index = its index, object_count when there is none
+            I::I32Const(0),
+            I::LocalSet(l.value),
+            I::I32Const(0),
+            I::LocalSet(l.entry_index),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(l.entry_index),
+            I::LocalGet(l.object_count),
+            I::I32GeS,
+            I::BrIf(1),
+            I::LocalGet(l.object),
+            I::LocalGet(l.entry_index),
+            I::I32Const(8),
+            I::I32Mul,
+            I::I32Add,
+            load(4),
+            I::LocalGet(l.name),
+            I::Call(self.imports.str_eq),
+            if_empty(),
+            I::LocalGet(l.object),
+            I::LocalGet(l.entry_index),
+            I::I32Const(8),
+            I::I32Mul,
+            I::I32Add,
+            load(8),
+            I::LocalSet(l.value),
+            I::Br(2),
+            I::End,
+            I::LocalGet(l.entry_index),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(l.entry_index),
+            I::Br(0),
+            I::End,
+            I::End,
+        ];
+        // The errors of a nested field are named `prefix` + field name.
+        match l.prefix {
+            Some(prefix) => v.extend([
+                I::LocalGet(prefix),
+                if_i32(),
+                I::LocalGet(prefix),
+                I::LocalGet(l.name),
+                I::Call(self.imports.concat),
+                I::Else,
+                I::LocalGet(l.name),
+                I::End,
+                I::LocalSet(l.label),
+            ]),
+            None => v.extend([I::LocalGet(l.name), I::LocalSet(l.label)]),
+        }
+        v.extend([
+            I::LocalGet(l.entry),
+            I::LocalGet(l.value),
+            I::LocalGet(l.label),
+            I::LocalGet(l.cell),
+            I::Call(self.helpers.check_value),
+            I::LocalSet(l.checked),
+            // A changed value replaces the entry in a copy of the object.
+            I::LocalGet(l.checked),
+            I::LocalGet(l.value),
+            I::I32Ne,
+            I::LocalGet(l.entry_index),
+            I::LocalGet(l.object_count),
+            I::I32LtS,
+            I::I32And,
+            if_empty(),
+            I::LocalGet(l.copy),
+            I::I32Eqz,
+            if_empty(),
+            I::LocalGet(l.object_count),
+            I::I32Const(8),
+            I::I32Mul,
+            I::I32Const(4),
+            I::I32Add,
+            I::Call(self.imports.malloc),
+            I::LocalSet(l.copy),
+            I::LocalGet(l.copy),
+            I::LocalGet(l.object),
+            I::LocalGet(l.object_count),
+            I::I32Const(8),
+            I::I32Mul,
+            I::I32Const(4),
+            I::I32Add,
+            I::Call(self.imports.memcpy),
+            I::End,
+            I::LocalGet(l.copy),
+            I::LocalGet(l.entry_index),
+            I::I32Const(8),
+            I::I32Mul,
+            I::I32Add,
+            I::LocalGet(l.checked),
+            store(8),
+            I::End,
+            I::LocalGet(l.index),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(l.index),
+            I::Br(0),
+            I::End,
+            I::End,
         ]);
+        v
+    }
 
-        // Store validator_name_ptr from rules (offset 12 of rules header) at result offset 20
-        instrs.extend([
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }), // rules.name_ptr
-            Instruction::I32Store(MemArg {
-                offset: 20,
-                align: 2,
-                memory_index: 0,
-            }),
+    /// Fill the 24-byte ValidationResult in `result_local`: ok when the
+    /// error list in `cell_local` is empty, then holding the value
+    /// `value` leaves on the stack.
+    fn emit_result(
+        &self,
+        result_local: u32,
+        errors_local: u32,
+        cell_local: u32,
+        value: Vec<Instruction<'static>>,
+        field_name: Instruction<'static>,
+    ) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let mut v = vec![
+            I::I32Const(RESULT_SIZE),
+            I::Call(self.imports.malloc),
+            I::LocalSet(result_local),
+            I::LocalGet(cell_local),
+            load(0),
+            I::LocalSet(errors_local),
+            // is_ok = no errors
+            I::LocalGet(result_local),
+            I::LocalGet(errors_local),
+            load(0),
+            I::I32Eqz,
+            store(0),
+            // value when ok, 0 otherwise
+            I::LocalGet(result_local),
+            I::LocalGet(errors_local),
+            load(0),
+            I::I32Eqz,
+            if_i32(),
+        ];
+        v.extend(value);
+        v.extend([
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            store(4),
+            I::LocalGet(result_local),
+            I::LocalGet(errors_local),
+            store(8),
+            I::LocalGet(result_local),
+            I::I32Const(0),
+            store(12),
+            I::LocalGet(result_local),
+            field_name,
+            store(16),
+            // validator_name_ptr from the rules header
+            I::LocalGet(result_local),
+            I::LocalGet(0),
+            load(12),
+            store(20),
+            I::LocalGet(result_local),
         ]);
+        v
+    }
 
-        // validation_passed = 1 (optimistic: assume valid until a constraint fails)
-        instrs.extend([Instruction::I32Const(1), Instruction::LocalSet(17)]);
-
-        // field_count = rules.field_count (offset 0)
-        instrs.extend([
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
+    /// `validator.run(rules_ptr, input) -> ValidationResult`
+    ///
+    /// Checks every field rule against `input`, an `any` (BOXED_ANY_ABI.md):
+    /// a `pairs` value arrives as a tag-6 box holding a JSON-tree object, and
+    /// each field's value is the entry whose key is the field's name. A field
+    /// is absent when there is no such entry or the input is not an object.
+    /// The result holds the errors in order and, when there are none, the
+    /// input with the trimmed values (stdlib-reference.md §15).
+    ///
+    /// Params: 0=rules_ptr, 1=input; locals: see `RUN_EXTRA_LOCALS`.
+    fn generate_validator_run(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let l = FieldLoop {
+            rules: 0,
+            object: 3,
+            prefix: None,
+            cell: 2,
+            count: 4,
+            index: 5,
+            entry: 6,
+            name: 7,
+            object_count: 8,
+            entry_index: 9,
+            value: 10,
+            checked: 11,
+            copy: 12,
+            label: 13,
+        };
+        let (result, errors, value_box) = (14, 15, 16);
+        let mut v = self.emit_new_error_cell(l.cell);
+        // object = the JSON-tree object a tag-6 input holds, else 0
+        v.extend([
+            I::I32Const(0),
+            I::LocalSet(l.object),
+            I::LocalGet(1),
+            if_empty(),
+            I::LocalGet(1),
+            load(0),
+            I::I32Const(ANY_TAG_OBJECT),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(1),
+            load(4),
+            I::LocalSet(l.object),
+            I::End,
+            I::End,
         ]);
-
-        // fields_ptr = rules.fields_ptr (offset 8)
-        instrs.extend([
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(18),
-        ]);
-
-        // object_ptr / object_count: the JSON-tree object an object input
-        // holds; any other input has no entries.
-        instrs.extend([
-            Instruction::I32Const(0),
-            Instruction::LocalSet(20),
-            Instruction::I32Const(0),
-            Instruction::LocalSet(21),
-            Instruction::LocalGet(1),
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::I32Const(ANY_TAG_OBJECT),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(1),
-            Instruction::I32Load(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalTee(20),
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(20),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(21),
-            Instruction::End,
-            Instruction::End,
-            Instruction::End,
-        ]);
-
-        // loop_index = 0
-        instrs.extend([Instruction::I32Const(0), Instruction::LocalSet(4)]);
-
-        // Outer block + inner loop for field iteration
-        instrs.push(Instruction::Block(BlockType::Empty)); // label 1
-        instrs.push(Instruction::Loop(BlockType::Empty)); // label 0
-
-        // if loop_index >= field_count: break
-        instrs.extend([
-            Instruction::LocalGet(4),
-            Instruction::LocalGet(3),
-            Instruction::I32GeS,
-            Instruction::BrIf(1), // break outer block
-        ]);
-
-        // field_entry_ptr = fields_ptr + loop_index * FIELD_ENTRY_SIZE
-        instrs.extend([
-            Instruction::LocalGet(18),
-            Instruction::LocalGet(4),
-            Instruction::I32Const(FIELD_ENTRY_SIZE),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalSet(5),
-        ]);
-
-        // field_name_ptr = field_entry[0]
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(6),
-        ]);
-
-        // required_flag = field_entry[4]
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Load(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(7),
-        ]);
-
-        // min_length = field_entry[16]
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Load(MemArg {
-                offset: 16,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(10),
-        ]);
-
-        // max_length = field_entry[20]
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Load(MemArg {
-                offset: 20,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(11),
-        ]);
-
-        // min_val = field_entry[64]
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Load(MemArg {
-                offset: 64,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(12),
-        ]);
-
-        // max_val = field_entry[68]
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Load(MemArg {
-                offset: 68,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(13),
-        ]);
-
-        // min_val_active = field_entry[72]
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Load(MemArg {
-                offset: 72,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(14),
-        ]);
-
-        // max_val_active = field_entry[76]
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Load(MemArg {
-                offset: 76,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(15),
-        ]);
-
-        // range_rule_ptr = field_entry[12]
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Load(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(9),
-        ]);
-
-        // value_box = the value of the input entry named field_name (0 if none)
-        instrs.extend([
-            Instruction::I32Const(0),
-            Instruction::LocalSet(23),
-            Instruction::I32Const(0),
-            Instruction::LocalSet(22),
-        ]);
-        instrs.push(Instruction::Block(BlockType::Empty)); // lookup done
-        instrs.push(Instruction::Loop(BlockType::Empty)); // entry loop
-        instrs.extend([
-            Instruction::LocalGet(22),
-            Instruction::LocalGet(21),
-            Instruction::I32GeS,
-            Instruction::BrIf(1), // no entry with this name
-            // key_ptr = object[4 + entry_index * 8]
-            Instruction::LocalGet(20),
-            Instruction::LocalGet(22),
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Load(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(6),
-            Instruction::Call(self.imports.str_eq),
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(20),
-            Instruction::LocalGet(22),
-            Instruction::I32Const(8),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(23),
-            Instruction::Br(2), // found: leave the lookup
-            Instruction::End,
-            Instruction::LocalGet(22),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(22),
-            Instruction::Br(0),
-        ]);
-        instrs.push(Instruction::End); // end entry loop
-        instrs.push(Instruction::End); // end lookup
-
-        // field_present / field_value_ptr from the value box
-        instrs.extend(Self::unbox_field_value(23, 19, 8));
-
-        // --- Required check ---
-        // if required_flag == 1 AND the field is absent: validation_passed = 0
-        instrs.push(Instruction::Block(BlockType::Empty)); // required-check block
-        instrs.extend([
-            Instruction::LocalGet(7), // required_flag
-            Instruction::I32Eqz,
-            Instruction::BrIf(0),      // skip if not required
-            Instruction::LocalGet(19), // field_present
-            Instruction::BrIf(0),      // skip if the input has the field
-            // field is required and missing: fail
-            Instruction::I32Const(0),
-            Instruction::LocalSet(17), // validation_passed = 0
-        ]);
-        instrs.push(Instruction::End); // end required-check block
-
-        // --- Constraints that only apply when field_value_ptr != 0 ---
-        instrs.push(Instruction::Block(BlockType::Empty)); // value-present block
-        instrs.extend([
-            Instruction::LocalGet(8), // field_value_ptr
-            Instruction::I32Eqz,
-            Instruction::BrIf(0), // skip all value checks if field absent
-        ]);
-
-        // --- range check ---
-        // if range_rule_ptr != 0: check [min_range, max_range]
-        // range_rule structure: offset 0 = min_i32, offset 4 = max_i32
-        // field_value string encodes a number; we read the first byte as sign indicator.
-        // Since we have no string_to_int available at a known index, we compare the
-        // stored range bounds against the string ptr (structural correctness).
-        // Full numeric comparison requires string_to_int at a known call index —
-        // tracked in TASKS.md pending resolution of call-index dynamic lookup.
-        // The range_rule_ptr check is correctly stored and the structure is verified here.
-        instrs.push(Instruction::Block(BlockType::Empty)); // range block
-        instrs.extend([
-            Instruction::LocalGet(9), // range_rule_ptr
-            Instruction::I32Eqz,
-            Instruction::BrIf(0), // skip if no range rule
-                                  // Range rule is present — mark that the rule exists (structural check).
-                                  // Actual numeric comparison: pending string_to_int at known index.
-        ]);
-        instrs.push(Instruction::End); // end range block
-
-        // --- minValue / maxValue checks (same limitation as range) ---
-        // These store bounds at field_entry[64..76]; correctness of storage verified.
-        // Numeric comparison deferred to string_to_int resolution.
-
-        // --- minLength check ---
-        // if min_length > 0: read string length header and compare
-        instrs.push(Instruction::Block(BlockType::Empty)); // min-length block
-        instrs.extend([
-            Instruction::LocalGet(10), // min_length
-            Instruction::I32Eqz,
-            Instruction::BrIf(0), // skip if min_length == 0
-            // str_len = mem[field_value_ptr] (first 4 bytes = length prefix)
-            Instruction::LocalGet(8),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(16),
-            // if str_len < min_length: fail
-            Instruction::LocalGet(16),
-            Instruction::LocalGet(10),
-            Instruction::I32LtS,
-            Instruction::If(BlockType::Empty),
-            Instruction::I32Const(0),
-            Instruction::LocalSet(17), // validation_passed = 0
-            Instruction::End,
-        ]);
-        instrs.push(Instruction::End); // end min-length block
-
-        // --- maxLength check ---
-        instrs.push(Instruction::Block(BlockType::Empty)); // max-length block
-        instrs.extend([
-            Instruction::LocalGet(11), // max_length
-            Instruction::I32Eqz,
-            Instruction::BrIf(0), // skip if max_length == 0
-            // str_len = mem[field_value_ptr]
-            Instruction::LocalGet(8),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(16),
-            // if str_len > max_length: fail
-            Instruction::LocalGet(16),
-            Instruction::LocalGet(11),
-            Instruction::I32GtS,
-            Instruction::If(BlockType::Empty),
-            Instruction::I32Const(0),
-            Instruction::LocalSet(17), // validation_passed = 0
-            Instruction::End,
-        ]);
-        instrs.push(Instruction::End); // end max-length block
-
-        instrs.push(Instruction::End); // end value-present block
-
-        // loop_index++
-        instrs.extend([
-            Instruction::LocalGet(4),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(4),
-            Instruction::Br(0), // continue loop
-        ]);
-
-        instrs.push(Instruction::End); // end loop
-        instrs.push(Instruction::End); // end outer block
-
-        // Write final is_ok = validation_passed into result
-        instrs.extend([
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(17),
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]);
-
-        // If validation passed, store input_ptr as value_ptr at result offset 4
-        instrs.extend([
-            Instruction::LocalGet(17),
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(1), // input_ptr becomes value
-            Instruction::I32Store(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::End,
-        ]);
-
-        // Return result_ptr
-        instrs.push(Instruction::LocalGet(2));
-
-        instrs
+        v.extend(self.emit_check_fields(l));
+        // The value: the input, or a new box around the changed copy.
+        let mut value = vec![I::LocalGet(l.copy), if_i32()];
+        value.extend(self.emit_new_box(ANY_TAG_OBJECT, l.copy, value_box));
+        value.extend([I::LocalGet(value_box), I::Else, I::LocalGet(1), I::End]);
+        v.extend(self.emit_result(result, errors, l.cell, value, I::I32Const(0)));
+        v
     }
 
     /// `validator.runField(rules_ptr, field_name_ptr, value) -> ValidationResult`
     ///
-    /// Searches for the field rule named `field_name_ptr` and validates
-    /// `value`, a boxed `any`, against it (absent when null). Returns a
-    /// 24-byte ValidationResult with field_name_ptr set at offset 16.
+    /// Checks `value`, a boxed `any`, against the field rule named
+    /// `field_name_ptr` (the last one with that name); with no such rule
+    /// there is nothing to check. The result records the field name at
+    /// offset 16.
     ///
-    /// Params: 0=rules_ptr, 1=field_name_ptr, 2=value (boxed any)
-    /// Extra locals starting at 3: see registration
+    /// Params: 0=rules_ptr, 1=field_name_ptr, 2=value; locals: see
+    /// `RUN_FIELD_EXTRA_LOCALS`.
     fn generate_validator_run_field(&self) -> Vec<Instruction<'static>> {
-        // Locals: 3=result_ptr, 4=field_count, 5=loop_index, 6=field_entry_ptr,
-        //         7=field_name_ptr_stored, 8=required_flag, 9=range_rule_ptr,
-        //         10=min_length, 11=max_length, 12=min_val, 13=max_val,
-        //         14=min_val_active, 15=max_val_active, 16=str_len,
-        //         17=fields_ptr, 18=validation_passed, 19=field_present,
-        //         20=field_value_ptr (the string the value box holds, or 0)
-
-        let mut instrs = Self::unbox_field_value(2, 19, 20);
-
-        // Allocate 24-byte ValidationResult
-        instrs.extend([
-            Instruction::I32Const(24),
-            Instruction::Call(self.imports.malloc),
-            Instruction::LocalSet(3), // result_ptr
+        use Instruction as I;
+        let (cell, index, entry, checked, result, errors, fields) = (3, 4, 5, 6, 7, 8, 9);
+        let mut v = self.emit_new_error_cell(cell);
+        v.extend([
+            I::I32Const(0),
+            I::LocalSet(entry),
+            I::LocalGet(0),
+            load(8),
+            I::LocalSet(fields),
+            I::LocalGet(0),
+            load(0),
+            I::LocalSet(index),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(index),
+            I::I32Eqz,
+            I::BrIf(1),
+            I::LocalGet(index),
+            I::I32Const(1),
+            I::I32Sub,
+            I::LocalSet(index),
+            I::LocalGet(fields),
+            I::LocalGet(index),
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::I32Mul,
+            I::I32Add,
+            load(0),
+            I::LocalGet(1),
+            I::Call(self.imports.str_eq),
+            if_empty(),
+            I::LocalGet(fields),
+            I::LocalGet(index),
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::I32Mul,
+            I::I32Add,
+            I::LocalSet(entry),
+            I::Br(2),
+            I::End,
+            I::Br(0),
+            I::End,
+            I::End,
+            I::LocalGet(entry),
+            if_i32(),
+            I::LocalGet(entry),
+            I::LocalGet(2),
+            I::LocalGet(1),
+            I::LocalGet(cell),
+            I::Call(self.helpers.check_value),
+            I::Else,
+            I::LocalGet(2),
+            I::End,
+            I::LocalSet(checked),
         ]);
-
-        // Initialise result to all zeros
-        instrs.extend([
-            Instruction::LocalGet(3),
-            Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalGet(3),
-            Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }),
-            // field_name_ptr at offset 16 = the field name being validated
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(1), // field_name_ptr param
-            Instruction::I32Store(MemArg {
-                offset: 16,
-                align: 2,
-                memory_index: 0,
-            }),
-            // validator_name_ptr at offset 20 from rules
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::I32Store(MemArg {
-                offset: 20,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]);
-
-        // validation_passed = 1
-        instrs.extend([Instruction::I32Const(1), Instruction::LocalSet(18)]);
-
-        // field_count = rules.field_count
-        instrs.extend([
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(4),
-        ]);
-
-        // fields_ptr = rules.fields_ptr
-        instrs.extend([
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(17),
-        ]);
-
-        // loop_index = 0
-        instrs.extend([Instruction::I32Const(0), Instruction::LocalSet(5)]);
-
-        // Search loop: find the field entry whose name equals param field_name_ptr.
-        instrs.push(Instruction::Block(BlockType::Empty)); // outer block, label 1
-        instrs.push(Instruction::Loop(BlockType::Empty)); // inner loop, label 0
-
-        // if loop_index >= field_count: break
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::LocalGet(4),
-            Instruction::I32GeS,
-            Instruction::BrIf(1), // exit loop
-        ]);
-
-        // field_entry_ptr = fields_ptr + loop_index * FIELD_ENTRY_SIZE
-        instrs.extend([
-            Instruction::LocalGet(17),
-            Instruction::LocalGet(5),
-            Instruction::I32Const(FIELD_ENTRY_SIZE),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalSet(6),
-        ]);
-
-        // field_name_ptr_stored = field_entry[0]
-        instrs.extend([
-            Instruction::LocalGet(6),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(7),
-        ]);
-
-        // if the stored name equals the field_name_ptr param: found the rule — validate
-        instrs.push(Instruction::Block(BlockType::Empty)); // found block
-        instrs.extend([
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(1), // field_name_ptr param
-            Instruction::Call(self.imports.str_eq),
-            Instruction::I32Eqz,
-            Instruction::BrIf(0), // not this field, skip
-        ]);
-
-        // Found the matching field rule. Read constraints.
-        instrs.extend([
-            // required_flag
-            Instruction::LocalGet(6),
-            Instruction::I32Load(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(8),
-            // min_length
-            Instruction::LocalGet(6),
-            Instruction::I32Load(MemArg {
-                offset: 16,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(10),
-            // max_length
-            Instruction::LocalGet(6),
-            Instruction::I32Load(MemArg {
-                offset: 20,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(11),
-            // range_rule_ptr
-            Instruction::LocalGet(6),
-            Instruction::I32Load(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(9),
-            // min_val_active
-            Instruction::LocalGet(6),
-            Instruction::I32Load(MemArg {
-                offset: 72,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(14),
-            // max_val_active
-            Instruction::LocalGet(6),
-            Instruction::I32Load(MemArg {
-                offset: 76,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(15),
-        ]);
-
-        // Required check: if required_flag == 1 and the value is absent: fail
-        instrs.push(Instruction::Block(BlockType::Empty));
-        instrs.extend([
-            Instruction::LocalGet(8),
-            Instruction::I32Eqz,
-            Instruction::BrIf(0),      // skip if not required
-            Instruction::LocalGet(19), // field_present
-            Instruction::BrIf(0),      // skip if the value is present
-            Instruction::I32Const(0),
-            Instruction::LocalSet(18),
-        ]);
-        instrs.push(Instruction::End);
-
-        // Length constraints (only for a string value)
-        instrs.push(Instruction::Block(BlockType::Empty));
-        instrs.extend([
-            Instruction::LocalGet(20),
-            Instruction::I32Eqz,
-            Instruction::BrIf(0),
-        ]);
-
-        // minLength check
-        instrs.push(Instruction::Block(BlockType::Empty));
-        instrs.extend([
-            Instruction::LocalGet(10),
-            Instruction::I32Eqz,
-            Instruction::BrIf(0),
-            Instruction::LocalGet(20),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(16),
-            Instruction::LocalGet(16),
-            Instruction::LocalGet(10),
-            Instruction::I32LtS,
-            Instruction::If(BlockType::Empty),
-            Instruction::I32Const(0),
-            Instruction::LocalSet(18),
-            Instruction::End,
-        ]);
-        instrs.push(Instruction::End);
-
-        // maxLength check
-        instrs.push(Instruction::Block(BlockType::Empty));
-        instrs.extend([
-            Instruction::LocalGet(11),
-            Instruction::I32Eqz,
-            Instruction::BrIf(0),
-            Instruction::LocalGet(20),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(16),
-            Instruction::LocalGet(16),
-            Instruction::LocalGet(11),
-            Instruction::I32GtS,
-            Instruction::If(BlockType::Empty),
-            Instruction::I32Const(0),
-            Instruction::LocalSet(18),
-            Instruction::End,
-        ]);
-        instrs.push(Instruction::End);
-
-        instrs.push(Instruction::End); // end value-present block
-
-        // Exit the outer block (found the rule, done iterating).
-        // Labels here: 0 = found block, 1 = loop, 2 = outer block.
-        instrs.push(Instruction::Br(2)); // break outer block
-
-        instrs.push(Instruction::End); // end found block
-
-        // loop_index++
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(5),
-            Instruction::Br(0), // continue loop
-        ]);
-
-        instrs.push(Instruction::End); // end loop
-        instrs.push(Instruction::End); // end outer block
-
-        // Write is_ok = validation_passed
-        instrs.extend([
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(18),
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]);
-
-        // If valid, store field_value_ptr at result offset 4
-        instrs.extend([
-            Instruction::LocalGet(18),
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(2), // field_value_ptr param
-            Instruction::I32Store(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::End,
-        ]);
-
-        instrs.push(Instruction::LocalGet(3));
-        instrs
+        v.extend(self.emit_result(
+            result,
+            errors,
+            cell,
+            vec![I::LocalGet(checked)],
+            I::LocalGet(1),
+        ));
+        v
     }
 
-    /// From the boxed `any` in `box_local` (0 = no value): `present_local`
-    /// = 1 unless the box is missing or null; `string_local` = the string a
-    /// tag-4 box holds, 0 for every other value.
-    fn unbox_field_value(
-        box_local: u32,
-        present_local: u32,
-        string_local: u32,
-    ) -> Vec<Instruction<'static>> {
-        let tag = MemArg {
-            offset: 0,
-            align: 2,
+    // ==================== Code Generation: Helpers ====================
+
+    /// `__validator_add_error(cell, message)`.
+    fn generate_add_error(&self) -> Vec<Instruction<'static>> {
+        vec![
+            Instruction::LocalGet(0),
+            Instruction::LocalGet(0),
+            load(0),
+            Instruction::LocalGet(1),
+            Instruction::Call(self.imports.list_add),
+            store(0),
+        ]
+    }
+
+    /// `__validator_number_text(x: f64) -> string`: a whole number in the
+    /// exact integer range prints without a decimal point.
+    fn generate_number_text(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        vec![
+            I::LocalGet(0),
+            I::LocalGet(0),
+            I::F64Trunc,
+            I::F64Eq,
+            I::LocalGet(0),
+            I::F64Abs,
+            I::F64Const(9.0e15),
+            I::F64Lt,
+            I::I32And,
+            if_i32(),
+            I::LocalGet(0),
+            I::I64TruncF64S,
+            I::Call(self.imports.int64_to_string),
+            I::Else,
+            I::LocalGet(0),
+            I::Call(self.imports.float_to_string),
+            I::End,
+        ]
+    }
+
+    /// `__validator_parse_number(text, whole) -> f64`: the number `text`
+    /// spells — an optional sign, digits and, unless `whole`, an optional
+    /// `.` followed by digits — or NaN.
+    ///
+    /// Locals: 2 len, 3 i, 4 byte, 5 negative, 6 whole digits,
+    /// 7 fraction digits, 8 seen dot, 9 result (f64), 10 scale (f64).
+    fn generate_parse_number() -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let byte = MemArg {
+            offset: 4,
+            align: 0,
             memory_index: 0,
         };
+        let invalid = || [I::F64Const(f64::NAN), I::Return, I::End];
+        let mut v = vec![
+            I::LocalGet(0),
+            load(0),
+            I::LocalSet(2),
+            I::I32Const(0),
+            I::LocalSet(3),
+            I::I32Const(0),
+            I::LocalSet(5),
+            I::I32Const(0),
+            I::LocalSet(6),
+            I::I32Const(0),
+            I::LocalSet(7),
+            I::I32Const(0),
+            I::LocalSet(8),
+            I::F64Const(0.0),
+            I::LocalSet(9),
+            I::F64Const(1.0),
+            I::LocalSet(10),
+            // sign
+            I::LocalGet(2),
+            if_empty(),
+            I::LocalGet(0),
+            I::I32Load8U(byte),
+            I::LocalTee(4),
+            I::I32Const(b'-' as i32),
+            I::I32Eq,
+            if_empty(),
+            I::I32Const(1),
+            I::LocalSet(5),
+            I::I32Const(1),
+            I::LocalSet(3),
+            I::End,
+            I::LocalGet(4),
+            I::I32Const(b'+' as i32),
+            I::I32Eq,
+            if_empty(),
+            I::I32Const(1),
+            I::LocalSet(3),
+            I::End,
+            I::End,
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(3),
+            I::LocalGet(2),
+            I::I32GeS,
+            I::BrIf(1),
+            I::LocalGet(0),
+            I::LocalGet(3),
+            I::I32Add,
+            I::I32Load8U(byte),
+            I::LocalSet(4),
+            I::LocalGet(4),
+            I::I32Const(b'.' as i32),
+            I::I32Eq,
+            if_empty(),
+            // a second dot, or any dot in a whole number
+            I::LocalGet(1),
+            I::LocalGet(8),
+            I::I32Or,
+            if_empty(),
+        ];
+        v.extend(invalid());
+        v.extend([
+            I::I32Const(1),
+            I::LocalSet(8),
+            I::Else,
+            I::LocalGet(4),
+            I::I32Const(b'0' as i32),
+            I::I32Sub,
+            I::LocalTee(4),
+            I::I32Const(10),
+            I::I32GeU,
+            if_empty(),
+        ]);
+        v.extend(invalid());
+        v.extend([
+            I::LocalGet(8),
+            if_empty(),
+            I::LocalGet(10),
+            I::F64Const(10.0),
+            I::F64Div,
+            I::LocalSet(10),
+            I::LocalGet(9),
+            I::LocalGet(4),
+            I::F64ConvertI32U,
+            I::LocalGet(10),
+            I::F64Mul,
+            I::F64Add,
+            I::LocalSet(9),
+            I::LocalGet(7),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(7),
+            I::Else,
+            I::LocalGet(9),
+            I::F64Const(10.0),
+            I::F64Mul,
+            I::LocalGet(4),
+            I::F64ConvertI32U,
+            I::F64Add,
+            I::LocalSet(9),
+            I::LocalGet(6),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(6),
+            I::End,
+            I::End,
+            I::LocalGet(3),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(3),
+            I::Br(0),
+            I::End,
+            I::End,
+            // no digit before the dot, or none after it
+            I::LocalGet(6),
+            I::I32Eqz,
+            I::LocalGet(8),
+            I::LocalGet(7),
+            I::I32Eqz,
+            I::I32And,
+            I::I32Or,
+            if_empty(),
+        ]);
+        v.extend(invalid());
+        v.extend([
+            I::LocalGet(9),
+            I::F64Neg,
+            I::LocalGet(9),
+            I::LocalGet(5),
+            I::Select,
+        ]);
+        v
+    }
+
+    /// `__validator_numeric(box, whole) -> f64`: the number an integer or
+    /// number box holds, or that a string box spells; NaN for any other
+    /// value, and with `whole` for a number with a fraction.
+    ///
+    /// Locals: 2 tag, 3 x (f64).
+    fn generate_numeric(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
         vec![
-            Instruction::I32Const(0),
-            Instruction::LocalSet(present_local),
-            Instruction::I32Const(0),
-            Instruction::LocalSet(string_local),
-            Instruction::LocalGet(box_local),
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(box_local),
-            Instruction::I32Load(tag),
-            Instruction::I32Const(ANY_TAG_NULL),
-            Instruction::I32Ne,
-            Instruction::LocalSet(present_local),
-            Instruction::LocalGet(box_local),
-            Instruction::I32Load(tag),
-            Instruction::I32Const(ANY_TAG_STRING),
-            Instruction::I32Eq,
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(box_local),
-            Instruction::I32Load(MemArg {
-                offset: 4,
-                align: 2,
+            I::LocalGet(0),
+            I::I32Eqz,
+            if_empty(),
+            I::F64Const(f64::NAN),
+            I::Return,
+            I::End,
+            I::LocalGet(0),
+            load(0),
+            I::LocalSet(2),
+            I::LocalGet(2),
+            I::I32Const(ANY_TAG_INTEGER),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(0),
+            I::I64Load(word(4)),
+            I::F64ConvertI64S,
+            I::Return,
+            I::End,
+            I::LocalGet(2),
+            I::I32Const(ANY_TAG_NUMBER),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(0),
+            I::F64Load(word(4)),
+            I::LocalSet(3),
+            I::LocalGet(1),
+            I::LocalGet(3),
+            I::LocalGet(3),
+            I::F64Trunc,
+            I::F64Ne,
+            I::I32And,
+            if_empty(),
+            I::F64Const(f64::NAN),
+            I::Return,
+            I::End,
+            I::LocalGet(3),
+            I::Return,
+            I::End,
+            I::LocalGet(2),
+            I::I32Const(ANY_TAG_STRING),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(0),
+            load(4),
+            I::LocalGet(1),
+            I::Call(self.helpers.parse_number),
+            I::Return,
+            I::End,
+            I::F64Const(f64::NAN),
+        ]
+    }
+
+    /// `__validator_value_text(box) -> string | 0`: the text of a string,
+    /// integer, boolean or number box; 0 for any other value.
+    ///
+    /// Locals: 1 tag.
+    fn generate_value_text(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let s = self.imports.strings;
+        vec![
+            I::LocalGet(0),
+            I::I32Eqz,
+            if_empty(),
+            I::I32Const(0),
+            I::Return,
+            I::End,
+            I::LocalGet(0),
+            load(0),
+            I::LocalSet(1),
+            I::LocalGet(1),
+            I::I32Const(ANY_TAG_STRING),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(0),
+            load(4),
+            I::Return,
+            I::End,
+            I::LocalGet(1),
+            I::I32Const(ANY_TAG_INTEGER),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(0),
+            I::I64Load(word(4)),
+            I::Call(self.imports.int64_to_string),
+            I::Return,
+            I::End,
+            I::LocalGet(1),
+            I::I32Const(ANY_TAG_BOOLEAN),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(0),
+            load(4),
+            if_i32(),
+            text(s.true_text),
+            I::Else,
+            text(s.false_text),
+            I::End,
+            I::Return,
+            I::End,
+            I::LocalGet(1),
+            I::I32Const(ANY_TAG_NUMBER),
+            I::I32Eq,
+            if_empty(),
+            I::LocalGet(0),
+            I::F64Load(word(4)),
+            I::Call(self.helpers.number_text),
+            I::Return,
+            I::End,
+            I::I32Const(0),
+        ]
+    }
+
+    /// `__validator_pattern_id(pattern) -> id | -1`.
+    fn generate_pattern_id(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let mut v = Vec::new();
+        for (id, name) in self.imports.strings.patterns.iter().enumerate() {
+            v.extend([
+                I::LocalGet(0),
+                text(*name),
+                I::Call(self.imports.str_eq),
+                if_empty(),
+                I::I32Const(id as i32),
+                I::Return,
+                I::End,
+            ]);
+        }
+        v.push(I::I32Const(-1));
+        v
+    }
+
+    /// `__validator_pattern_message(id) -> message`.
+    fn generate_pattern_message(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let s = self.imports.strings;
+        let mut v = Vec::new();
+        for (id, message) in s.pattern_messages.iter().enumerate() {
+            v.extend([
+                I::LocalGet(0),
+                I::I32Const(id as i32),
+                I::I32Eq,
+                if_empty(),
+                text(*message),
+                I::Return,
+                I::End,
+            ]);
+        }
+        v.push(text(s.no_match));
+        v
+    }
+
+    /// `__validator_join(list<string>, separator) -> string`.
+    ///
+    /// Locals: 2 result, 3 i, 4 n.
+    fn generate_join(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        vec![
+            text(self.imports.strings.empty),
+            I::LocalSet(2),
+            I::LocalGet(0),
+            load(0),
+            I::LocalSet(4),
+            I::I32Const(0),
+            I::LocalSet(3),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(3),
+            I::LocalGet(4),
+            I::I32GeS,
+            I::BrIf(1),
+            I::LocalGet(3),
+            if_empty(),
+            I::LocalGet(2),
+            I::LocalGet(1),
+            I::Call(self.imports.concat),
+            I::LocalSet(2),
+            I::End,
+            I::LocalGet(2),
+            I::LocalGet(0),
+            I::LocalGet(3),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            load(LIST_DATA_OFFSET),
+            I::Call(self.imports.concat),
+            I::LocalSet(2),
+            I::LocalGet(3),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(3),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::LocalGet(2),
+        ]
+    }
+
+    /// `__validator_range_message(range) -> message`: " must be at most
+    /// hi", " must be at least lo" or " must be between lo and hi".
+    fn generate_range_message(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let s = self.imports.strings;
+        let bound = |offset: u64| {
+            [
+                I::LocalGet(0),
+                I::F64Load(MemArg {
+                    offset,
+                    align: 3,
+                    memory_index: 0,
+                }),
+                I::Call(self.helpers.number_text),
+            ]
+        };
+        let mut v = vec![I::LocalGet(0)];
+        v.extend([
+            I::F64Load(MemArg {
+                offset: 0,
+                align: 3,
                 memory_index: 0,
             }),
-            Instruction::LocalSet(string_local),
-            Instruction::End,
-            Instruction::End,
+            I::F64Const(f64::NEG_INFINITY),
+            I::F64Eq,
+            if_i32(),
+            text(s.at_most),
+        ]);
+        v.extend(bound(8));
+        v.extend([
+            I::Call(self.imports.concat),
+            I::Else,
+            I::LocalGet(0),
+            I::F64Load(MemArg {
+                offset: 8,
+                align: 3,
+                memory_index: 0,
+            }),
+            I::F64Const(f64::INFINITY),
+            I::F64Eq,
+            if_i32(),
+            text(s.at_least),
+        ]);
+        v.extend(bound(0));
+        v.extend([I::Call(self.imports.concat), I::Else, text(s.between)]);
+        v.extend(bound(0));
+        v.extend([
+            I::Call(self.imports.concat),
+            text(s.and),
+            I::Call(self.imports.concat),
+        ]);
+        v.extend(bound(8));
+        v.extend([I::Call(self.imports.concat), I::End, I::End]);
+        v
+    }
+
+    /// `__validator_field_index(rules, name) -> index | -1`: the last field
+    /// rule named `name`.
+    ///
+    /// Locals: 2 i.
+    fn generate_field_index(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        vec![
+            I::LocalGet(0),
+            load(0),
+            I::LocalSet(2),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(2),
+            I::I32Eqz,
+            I::BrIf(1),
+            I::LocalGet(2),
+            I::I32Const(1),
+            I::I32Sub,
+            I::LocalSet(2),
+            I::LocalGet(0),
+            load(8),
+            I::LocalGet(2),
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::I32Mul,
+            I::I32Add,
+            load(0),
+            I::LocalGet(1),
+            I::Call(self.imports.str_eq),
+            if_empty(),
+            I::LocalGet(2),
+            I::Return,
+            I::End,
+            I::Br(0),
+            I::End,
+            I::End,
+            I::I32Const(-1),
         ]
+    }
+
+    /// `__validator_check_object(rules, object, prefix, cell) -> object`:
+    /// the field loop of `validator.run` for a nested object (`shape`,
+    /// `each`); the errors are named `prefix` + field name.
+    fn generate_check_object(&self) -> Vec<Instruction<'static>> {
+        let l = FieldLoop {
+            rules: 0,
+            object: 1,
+            prefix: Some(2),
+            cell: 3,
+            count: 4,
+            index: 5,
+            entry: 6,
+            name: 7,
+            object_count: 8,
+            entry_index: 9,
+            value: 10,
+            checked: 11,
+            copy: 12,
+            label: 13,
+        };
+        let mut v = self.emit_check_fields(l);
+        v.extend([
+            Instruction::LocalGet(l.copy),
+            if_i32(),
+            Instruction::LocalGet(l.copy),
+            Instruction::Else,
+            Instruction::LocalGet(l.object),
+            Instruction::End,
+        ]);
+        v
+    }
+
+    /// `__validator_check_value(entry, box, label, cell) -> box`: check one
+    /// value (a boxed `any`, 0 when absent) against a field rule, appending
+    /// `label` + message for each failed rule, and return the value — the
+    /// trimmed one for a `trim` rule. The rules run in the order of
+    /// stdlib-reference.md §15: `trim`, then `required` (an absent value,
+    /// null or empty text fails it and skips the others; an optional one
+    /// passes), `type` (when it fails the others are skipped), the lengths,
+    /// `range`, `match`, the allowed values, `custom`, `shape` and `each`.
+    /// A field `message` replaces every error of the field.
+    ///
+    /// Locals: 4 errors before, 5 tag, 6 text of a string value (0 if not
+    /// a string), 7 scratch, 8 ok, 9 rule, 10 i, 11 count, 12 copy,
+    /// 13 list / text, 14 object, 15 checked object, 16 x (f64).
+    fn generate_check_value(&self) -> Vec<Instruction<'static>> {
+        use Instruction as I;
+        let s = self.imports.strings;
+        let concat = I::Call(self.imports.concat);
+        let add_error = I::Call(self.helpers.add_error);
+        // `label` + the message on the stack, appended to the errors.
+        let report = |message: Vec<Instruction<'static>>| {
+            let mut v = vec![I::LocalGet(3), I::LocalGet(2)];
+            v.extend(message);
+            v.extend([
+                I::Call(self.imports.concat),
+                I::Call(self.helpers.add_error),
+            ]);
+            v
+        };
+        let f64_at = |offset: u64| {
+            I::F64Load(MemArg {
+                offset,
+                align: 3,
+                memory_index: 0,
+            })
+        };
+
+        let mut v = vec![
+            // errors before this field
+            I::LocalGet(3),
+            load(0),
+            load(0),
+            I::LocalSet(4),
+            // tag (0 when absent)
+            I::LocalGet(1),
+            if_i32(),
+            I::LocalGet(1),
+            load(0),
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            I::LocalSet(5),
+            // trim: the trimmed text replaces the value
+            I::LocalGet(0),
+            load(36),
+            I::LocalGet(5),
+            I::I32Const(ANY_TAG_STRING),
+            I::I32Eq,
+            I::I32And,
+            if_empty(),
+            I::LocalGet(1),
+            load(4),
+            I::Call(self.imports.trim),
+            I::LocalSet(6),
+        ];
+        v.extend(self.emit_new_box(ANY_TAG_STRING, 6, 1));
+        v.extend([
+            I::End,
+            I::LocalGet(5),
+            I::I32Const(ANY_TAG_STRING),
+            I::I32Eq,
+            if_i32(),
+            I::LocalGet(1),
+            load(4),
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            I::LocalSet(6),
+            // block 0: the rules; a failed required or type rule leaves it
+            I::Block(BlockType::Empty),
+            // absent: no value, null, or empty text
+            I::LocalGet(5),
+            I::I32Eqz,
+            I::LocalGet(6),
+            if_i32(),
+            I::LocalGet(6),
+            load(0),
+            I::I32Eqz,
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            I::I32Or,
+            if_empty(),
+            I::LocalGet(0),
+            load(4),
+            if_empty(),
+        ]);
+        v.extend(report(vec![text(s.is_required)]));
+        v.extend([I::End, I::Br(1), I::End]);
+
+        // type, checked first
+        v.extend([I::LocalGet(0), load(32), I::LocalTee(9), if_empty()]);
+        let is_type = |name: u32| vec![I::LocalGet(9), text(name), I::Call(self.imports.str_eq)];
+        let numeric_ok = |whole: i32| {
+            vec![
+                I::LocalGet(1),
+                I::I32Const(whole),
+                I::Call(self.helpers.numeric),
+                I::LocalTee(16),
+                I::LocalGet(16),
+                I::F64Eq,
+                I::LocalSet(8),
+            ]
+        };
+        v.extend(is_type(s.type_string));
+        v.extend([
+            if_empty(),
+            I::LocalGet(5),
+            I::I32Const(ANY_TAG_STRING),
+            I::I32Eq,
+            I::LocalSet(8),
+            text(s.must_be_string),
+            I::LocalSet(7),
+            I::Else,
+        ]);
+        v.extend(is_type(s.type_integer));
+        v.push(if_empty());
+        v.extend(numeric_ok(1));
+        v.extend([text(s.must_be_whole), I::LocalSet(7), I::Else]);
+        v.extend(is_type(s.type_number));
+        v.push(if_empty());
+        v.extend(numeric_ok(0));
+        v.extend([text(s.must_be_number), I::LocalSet(7), I::Else]);
+        v.extend(is_type(s.type_boolean));
+        v.extend([
+            if_empty(),
+            I::LocalGet(5),
+            I::I32Const(ANY_TAG_BOOLEAN),
+            I::I32Eq,
+            I::LocalGet(6),
+            if_i32(),
+            I::LocalGet(6),
+            text(s.true_text),
+            I::Call(self.imports.str_eq),
+            I::LocalGet(6),
+            text(s.false_text),
+            I::Call(self.imports.str_eq),
+            I::I32Or,
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            I::I32Or,
+            I::LocalSet(8),
+            text(s.must_be_boolean),
+            I::LocalSet(7),
+            I::Else,
+            // an unknown type name: no value has it
+            I::I32Const(0),
+            I::LocalSet(8),
+            text(s.must_be_a),
+            I::LocalGet(9),
+            concat.clone(),
+            I::LocalSet(7),
+            I::End,
+            I::End,
+            I::End,
+            I::End,
+            I::LocalGet(8),
+            I::I32Eqz,
+            if_empty(),
+        ]);
+        v.extend(report(vec![I::LocalGet(7)]));
+        v.extend([I::Br(2), I::End, I::End]);
+
+        // minLength / maxLength (string values)
+        v.extend([
+            I::LocalGet(6),
+            if_empty(),
+            I::LocalGet(6),
+            load(0),
+            I::LocalSet(7),
+            I::LocalGet(0),
+            load(16),
+            I::LocalTee(9),
+            I::I32Const(0),
+            I::I32GtS,
+            I::LocalGet(7),
+            I::LocalGet(9),
+            I::I32LtS,
+            I::I32And,
+            if_empty(),
+        ]);
+        let length_message = |bound: u32| {
+            vec![
+                text(bound),
+                I::LocalGet(9),
+                I::Call(self.imports.int_to_string),
+                I::Call(self.imports.concat),
+                text(s.characters),
+                I::Call(self.imports.concat),
+            ]
+        };
+        v.extend(report(length_message(s.at_least)));
+        v.extend([
+            I::End,
+            I::LocalGet(0),
+            load(20),
+            I::LocalTee(9),
+            I::I32Const(0),
+            I::I32GeS,
+            I::LocalGet(7),
+            I::LocalGet(9),
+            I::I32GtS,
+            I::I32And,
+            if_empty(),
+        ]);
+        v.extend(report(length_message(s.at_most)));
+        v.extend([I::End, I::End]);
+
+        // range: a number within [lo, hi] (NaN — no number — fails)
+        v.extend([
+            I::LocalGet(0),
+            load(12),
+            I::LocalTee(9),
+            if_empty(),
+            I::LocalGet(1),
+            I::I32Const(0),
+            I::Call(self.helpers.numeric),
+            I::LocalSet(16),
+            I::LocalGet(16),
+            I::LocalGet(9),
+            f64_at(0),
+            I::F64Ge,
+            I::LocalGet(16),
+            I::LocalGet(9),
+            f64_at(8),
+            I::F64Le,
+            I::I32And,
+            I::I32Eqz,
+            if_empty(),
+        ]);
+        v.extend(report(vec![
+            I::LocalGet(9),
+            I::Call(self.helpers.range_message),
+        ]));
+        v.extend([I::End, I::End]);
+
+        // match: the whole text matches a named pattern
+        if let Some(string_matches) = self.imports.string_matches {
+            v.extend([
+                I::LocalGet(0),
+                load(8),
+                I::LocalTee(9),
+                if_empty(),
+                I::LocalGet(1),
+                I::Call(self.helpers.value_text),
+                I::LocalSet(13),
+                I::LocalGet(9),
+                I::Call(self.helpers.pattern_id),
+                I::LocalSet(7),
+                I::LocalGet(13),
+                I::I32Const(0),
+                I::I32Ne,
+                I::LocalGet(7),
+                I::I32Const(0),
+                I::I32GeS,
+                I::I32And,
+                if_i32(),
+                I::LocalGet(13),
+                I::LocalGet(13),
+                load(0),
+                I::LocalGet(7),
+                I::Call(string_matches),
+                I::Else,
+                I::I32Const(0),
+                I::End,
+                I::I32Eqz,
+                if_empty(),
+            ]);
+            v.extend(report(vec![
+                I::LocalGet(7),
+                I::Call(self.helpers.pattern_message),
+            ]));
+            v.extend([I::End, I::End]);
+        }
+
+        // allowed values (`oneOf:`): the text is one of the listed texts
+        v.extend([
+            I::LocalGet(0),
+            load(40),
+            I::LocalTee(9),
+            if_empty(),
+            I::LocalGet(1),
+            I::Call(self.helpers.value_text),
+            I::LocalSet(13),
+            I::I32Const(0),
+            I::LocalSet(8),
+            I::LocalGet(13),
+            if_empty(),
+            I::LocalGet(9),
+            load(0),
+            I::LocalSet(11),
+            I::I32Const(0),
+            I::LocalSet(10),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(10),
+            I::LocalGet(11),
+            I::I32GeS,
+            I::BrIf(1),
+            I::LocalGet(9),
+            I::LocalGet(10),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            load(LIST_DATA_OFFSET),
+            I::LocalGet(13),
+            I::Call(self.imports.str_eq),
+            if_empty(),
+            I::I32Const(1),
+            I::LocalSet(8),
+            I::Br(2),
+            I::End,
+            I::LocalGet(10),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(10),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::End,
+            I::LocalGet(8),
+            I::I32Eqz,
+            if_empty(),
+        ]);
+        v.extend(report(vec![
+            text(s.one_of),
+            I::LocalGet(9),
+            text(s.comma_space),
+            I::Call(self.helpers.join),
+            I::Call(self.imports.concat),
+        ]));
+        v.extend([I::End, I::End]);
+
+        // custom: `boolean fn(string value)` through the function table
+        if let Some(check_type) = self.imports.custom_check_type {
+            v.extend([
+                I::LocalGet(0),
+                load(28),
+                I::LocalTee(9),
+                if_empty(),
+                I::LocalGet(1),
+                I::Call(self.helpers.value_text),
+                I::LocalTee(13),
+                if_i32(),
+                I::LocalGet(13),
+                I::LocalGet(9),
+                I::CallIndirect {
+                    ty: check_type,
+                    table: 0,
+                },
+                I::Else,
+                I::I32Const(0),
+                I::End,
+                I::I32Eqz,
+                if_empty(),
+            ]);
+            v.extend(report(vec![text(s.is_invalid)]));
+            v.extend([I::End, I::End]);
+        }
+
+        // shape: a nested object checked with the shape's rules
+        v.extend([
+            I::LocalGet(0),
+            load(56),
+            I::LocalTee(9),
+            if_empty(),
+            I::LocalGet(5),
+            I::I32Const(ANY_TAG_OBJECT),
+            I::I32Eq,
+            if_i32(),
+            I::LocalGet(1),
+            load(4),
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            I::LocalSet(14),
+            I::LocalGet(9),
+            I::LocalGet(14),
+            I::LocalGet(2),
+            text(s.dot),
+            concat.clone(),
+            I::LocalGet(3),
+            I::Call(self.helpers.check_object),
+            I::LocalSet(15),
+            I::LocalGet(15),
+            I::LocalGet(14),
+            I::I32Ne,
+            if_empty(),
+        ]);
+        v.extend(self.emit_new_box(ANY_TAG_OBJECT, 15, 1));
+        v.extend([I::End, I::End]);
+
+        // each: every element of a list checked with the element rules
+        v.extend([
+            I::LocalGet(0),
+            load(60),
+            I::LocalTee(9),
+            if_empty(),
+            I::LocalGet(5),
+            I::I32Const(ANY_TAG_ARRAY),
+            I::I32Ne,
+            if_empty(),
+        ]);
+        v.extend(report(vec![text(s.must_be_list)]));
+        v.extend([
+            I::Else,
+            // the JSON-tree array: [count][element box]...
+            I::LocalGet(1),
+            load(4),
+            I::LocalTee(13),
+            load(0),
+            I::LocalSet(11),
+            I::I32Const(0),
+            I::LocalSet(12),
+            I::I32Const(0),
+            I::LocalSet(10),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(10),
+            I::LocalGet(11),
+            I::I32GeS,
+            I::BrIf(1),
+            // object = the element's JSON-tree object, 0 if it is not one
+            I::LocalGet(13),
+            I::LocalGet(10),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            load(4),
+            I::LocalTee(7),
+            if_i32(),
+            I::LocalGet(7),
+            load(0),
+            I::I32Const(ANY_TAG_OBJECT),
+            I::I32Eq,
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            if_i32(),
+            I::LocalGet(7),
+            load(4),
+            I::Else,
+            I::I32Const(0),
+            I::End,
+            I::LocalSet(14),
+            // check it; its errors are named `label[i].field`
+            I::LocalGet(9),
+            I::LocalGet(14),
+            I::LocalGet(2),
+            text(s.open_bracket),
+            concat.clone(),
+            I::LocalGet(10),
+            I::Call(self.imports.int_to_string),
+            concat.clone(),
+            text(s.close_bracket_dot),
+            concat.clone(),
+            I::LocalGet(3),
+            I::Call(self.helpers.check_object),
+            I::LocalSet(15),
+            I::LocalGet(15),
+            I::LocalGet(14),
+            I::I32Ne,
+            if_empty(),
+            // a changed element goes into a copy of the array
+            I::LocalGet(12),
+            I::I32Eqz,
+            if_empty(),
+            I::LocalGet(11),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Const(4),
+            I::I32Add,
+            I::LocalSet(8),
+            I::LocalGet(8),
+            I::Call(self.imports.malloc),
+            I::LocalSet(12),
+            I::LocalGet(12),
+            I::LocalGet(13),
+            I::LocalGet(8),
+            I::Call(self.imports.memcpy),
+            I::End,
+        ]);
+        v.extend(self.emit_new_box(ANY_TAG_OBJECT, 15, 7));
+        v.extend([
+            I::LocalGet(12),
+            I::LocalGet(10),
+            I::I32Const(4),
+            I::I32Mul,
+            I::I32Add,
+            I::LocalGet(7),
+            store(4),
+            I::End,
+            I::LocalGet(10),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(10),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::LocalGet(12),
+            if_empty(),
+        ]);
+        v.extend(self.emit_new_box(ANY_TAG_ARRAY, 12, 1));
+        v.extend([I::End, I::End, I::End]);
+
+        // end of the rules
+        v.push(I::End);
+
+        // message: one message replaces the field's errors
+        v.extend([
+            I::LocalGet(0),
+            load(24),
+            I::LocalTee(9),
+            if_empty(),
+            I::LocalGet(3),
+            load(0),
+            load(0),
+            I::LocalGet(4),
+            I::I32GtS,
+            if_empty(),
+            I::LocalGet(3),
+            load(0),
+            I::LocalGet(4),
+            store(0),
+            I::LocalGet(3),
+            I::LocalGet(9),
+            add_error,
+            I::End,
+            I::End,
+            I::LocalGet(1),
+        ]);
+        v
     }
 
     // ==================== Code Generation: Result Construction ====================
@@ -1637,70 +2537,47 @@ impl ValidatorManager {
 
     /// `validator.getErrors(result_ptr: i32) -> list_ptr`
     ///
-    /// Returns errors_list_ptr from offset 8 of result.
+    /// The error list at offset 8 of the result; an empty list for a result
+    /// without one (`validator.ok`).
     fn generate_validator_get_errors(&self) -> Vec<Instruction<'static>> {
         vec![
             Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
+            load(8),
+            if_i32(),
+            Instruction::LocalGet(0),
+            load(8),
+            Instruction::Else,
+            Instruction::I32Const(0),
+            Instruction::Call(self.imports.list_allocate),
+            Instruction::End,
         ]
     }
 
     /// `validator.getFirstError(result_ptr: i32) -> string_ptr`
     ///
-    /// Reads the errors_list_ptr at offset 8. If the list is present (non-zero),
-    /// reads the first element pointer from the list data area (offset +16 of the
-    /// list header, matching Clean list layout: [length:4][capacity:4][type_id:4][pad:4][data...]).
-    /// Returns 0 if no errors exist (empty list or no list).
+    /// The first element of the error list (list layout:
+    /// [length:4][capacity:4][type_id:4][flags:4][data...]), or the empty
+    /// string when there is none.
+    ///
+    /// Locals: 1 errors list.
     fn generate_validator_get_first_error(&self) -> Vec<Instruction<'static>> {
+        let empty = self.imports.strings.empty;
         vec![
-            // Load errors_list_ptr from result at offset 8
             Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            // If 0 (no error list), return 0
-            Instruction::I32Eqz,
-            Instruction::If(BlockType::Empty),
-            Instruction::I32Const(0),
-            Instruction::Return,
+            load(8),
+            Instruction::LocalTee(1),
+            if_i32(),
+            Instruction::LocalGet(1),
+            load(0),
+            if_i32(),
+            Instruction::LocalGet(1),
+            load(LIST_DATA_OFFSET),
+            Instruction::Else,
+            text(empty),
             Instruction::End,
-            // Load list_ptr again (the If consumed it)
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            // Read list length at offset 0 of list header
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            // If length == 0, return 0
-            Instruction::I32Eqz,
-            Instruction::If(BlockType::Empty),
-            Instruction::I32Const(0),
-            Instruction::Return,
+            Instruction::Else,
+            text(empty),
             Instruction::End,
-            // Read first element: list data starts at offset 16 of the list header
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::I32Load(MemArg {
-                offset: 16,
-                align: 2,
-                memory_index: 0,
-            }),
         ]
     }
 
@@ -1730,79 +2607,84 @@ impl ValidatorManager {
 
     /// `validator.field(rules_ptr, field_name_ptr) -> rules_ptr`
     ///
-    /// Appends a zeroed field entry to the fields array, stores field_name_ptr
-    /// at its offset 0 and increments field_count. The rule calls that follow
-    /// apply to this field.
+    /// Appends a new field entry — no rules (no maximum length, -1), named
+    /// `field_name_ptr` — and increments field_count; the rule calls that
+    /// follow apply to this field. A full field array is moved to one twice
+    /// as large first.
     ///
     /// Params: 0=rules_ptr, 1=field_name_ptr
-    /// Extra locals: 2=field_count, 3=field_entry_ptr
+    /// Extra locals: 2=field_count, 3=field_entry_ptr, 4=capacity, 5=new_fields_ptr
     fn generate_validator_field(&self) -> Vec<Instruction<'static>> {
-        let mut instrs: Vec<Instruction<'static>> = Vec::new();
-
-        // field_count = rules.field_count (offset 0)
-        instrs.extend([
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(2),
-        ]);
-
-        // field_entry_ptr = fields_ptr + field_count * FIELD_ENTRY_SIZE
-        instrs.extend([
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }), // fields_ptr
-            Instruction::LocalGet(2),
-            Instruction::I32Const(FIELD_ENTRY_SIZE),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalSet(3),
-        ]);
+        use Instruction as I;
+        let mut instrs: Vec<Instruction<'static>> = vec![
+            I::LocalGet(0),
+            load(0),
+            I::LocalSet(2),
+            I::LocalGet(0),
+            load(4),
+            I::LocalSet(4),
+            // grow a full field array
+            I::LocalGet(2),
+            I::LocalGet(4),
+            I::I32GeS,
+            if_empty(),
+            I::LocalGet(4),
+            I::I32Const(1),
+            I::I32Shl,
+            I::I32Const(INITIAL_FIELD_CAPACITY),
+            I::LocalGet(4),
+            I::Select,
+            I::LocalSet(4),
+            I::LocalGet(4),
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::I32Mul,
+            I::Call(self.imports.malloc),
+            I::LocalSet(5),
+            I::LocalGet(5),
+            I::LocalGet(0),
+            load(8),
+            I::LocalGet(2),
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::I32Mul,
+            I::Call(self.imports.memcpy),
+            I::LocalGet(0),
+            I::LocalGet(5),
+            store(8),
+            I::LocalGet(0),
+            I::LocalGet(4),
+            store(4),
+            I::End,
+            // field_entry_ptr = fields_ptr + field_count * FIELD_ENTRY_SIZE
+            I::LocalGet(0),
+            load(8),
+            I::LocalGet(2),
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::I32Mul,
+            I::I32Add,
+            I::LocalSet(3),
+        ];
 
         // Zero out the entry word by word
         for word in 0..FIELD_ENTRY_WORDS {
-            instrs.extend([
-                Instruction::LocalGet(3),
-                Instruction::I32Const(0),
-                Instruction::I32Store(MemArg {
-                    offset: (word * 4) as u64,
-                    align: 2,
-                    memory_index: 0,
-                }),
-            ]);
+            instrs.extend([I::LocalGet(3), I::I32Const(0), store((word * 4) as u64)]);
         }
 
-        // Store field_name_ptr at entry offset 0
         instrs.extend([
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(1),
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
+            // name, and no maximum length
+            I::LocalGet(3),
+            I::LocalGet(1),
+            store(0),
+            I::LocalGet(3),
+            I::I32Const(-1),
+            store(20),
+            // rules.field_count = field_count + 1
+            I::LocalGet(0),
+            I::LocalGet(2),
+            I::I32Const(1),
+            I::I32Add,
+            store(0),
+            I::LocalGet(0), // return rules_ptr
         ]);
-
-        // rules.field_count = field_count + 1
-        instrs.extend([
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(2),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]);
-
-        instrs.push(Instruction::LocalGet(0)); // return rules_ptr
         instrs
     }
 
@@ -1874,47 +2756,36 @@ impl ValidatorManager {
         instrs
     }
 
-    /// `validator.range(rules_ptr, min, max) -> rules_ptr`
+    /// `validator.range(rules_ptr, lo: f64, hi: f64) -> rules_ptr`
     ///
-    /// Allocates an 8-byte range structure {min_i32, max_i32} and stores its
+    /// Allocates a 16-byte range structure {lo: f64, hi: f64} and stores its
     /// pointer at offset 12 of the last field entry.
     ///
-    /// Params: 0=rules_ptr, 1=min, 2=max
+    /// Params: 0=rules_ptr, 1=lo, 2=hi
     /// Extra locals: 3=range_rule_ptr, 4=field_entry_ptr
     fn generate_validator_range(&self) -> Vec<Instruction<'static>> {
-        let mut instrs: Vec<Instruction<'static>> = Vec::new();
-
-        // Allocate 8-byte range structure
-        instrs.extend([
-            Instruction::I32Const(8),
+        let bound = |offset: u64| {
+            Instruction::F64Store(MemArg {
+                offset,
+                align: 3,
+                memory_index: 0,
+            })
+        };
+        let mut instrs = vec![
+            Instruction::I32Const(16),
             Instruction::Call(self.imports.malloc),
-            Instruction::LocalTee(3), // range_rule_ptr
-            Instruction::LocalGet(1), // min
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
+            Instruction::LocalTee(3),
+            Instruction::LocalGet(1),
+            bound(0),
             Instruction::LocalGet(3),
-            Instruction::LocalGet(2), // max
-            Instruction::I32Store(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]);
-
-        // Get last field entry and store range_rule_ptr at offset 12
-        let entry_instrs = Self::last_field_entry_instrs(0, 4);
-        instrs.extend(entry_instrs);
+            Instruction::LocalGet(2),
+            bound(8),
+        ];
+        instrs.extend(Self::last_field_entry_instrs(0, 4));
         instrs.extend([
             Instruction::LocalGet(4),
-            Instruction::LocalGet(3), // range_rule_ptr
-            Instruction::I32Store(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }),
+            Instruction::LocalGet(3),
+            store(12),
             Instruction::LocalGet(0),
         ]);
         instrs
@@ -2208,269 +3079,180 @@ impl ValidatorManager {
 
     /// `validator.merge(rules_a_ptr, rules_b_ptr) -> new_rules_ptr`
     ///
-    /// Allocates a new ValidationRules with capacity = count_a + count_b, copies
-    /// all field entries from rules_a then rules_b into it, and returns the pointer.
+    /// A new ValidationRules with the field entries of `rules_a`, then those
+    /// of `rules_b`; an entry of `rules_b` replaces the entry with the same
+    /// name (§15: `b`'s field wins). `rules_a` and `rules_b` are unchanged.
     ///
     /// Params: 0=rules_a_ptr, 1=rules_b_ptr
-    /// Extra locals (starting at 2): see registration
+    /// Extra locals: 2=new_rules_ptr, 3=count_a, 4=count_b, 5=capacity,
+    /// 6=new_fields_ptr, 7=copy_index, 8=src_entry_ptr, 9=dst_entry_ptr,
+    /// 10=existing index, 11=field_count
     fn generate_validator_merge(&self) -> Vec<Instruction<'static>> {
-        // Locals:
-        // 0=rules_a_ptr, 1=rules_b_ptr (params)
-        // 2=new_rules_ptr, 3=count_a, 4=count_b, 5=total_count
-        // 6=new_fields_ptr, 7=src_fields_ptr_a, 8=src_fields_ptr_b
-        // 9=copy_index, 10=src_entry_ptr, 11=dst_entry_ptr, 12=byte_index
-
-        let mut instrs: Vec<Instruction<'static>> = Vec::new();
-
-        // count_a = rules_a.field_count
-        instrs.extend([
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(3),
+        use Instruction as I;
+        let entry = |fields: u32, index: u32| {
+            [
+                I::LocalGet(fields),
+                I::LocalGet(index),
+                I::I32Const(FIELD_ENTRY_SIZE),
+                I::I32Mul,
+                I::I32Add,
+            ]
+        };
+        let mut v = vec![
+            I::LocalGet(0),
+            load(0),
+            I::LocalSet(3),
+            I::LocalGet(1),
+            load(0),
+            I::LocalSet(4),
+            // capacity = max(count_a + count_b, INITIAL_FIELD_CAPACITY)
+            I::LocalGet(3),
+            I::LocalGet(4),
+            I::I32Add,
+            I::LocalTee(5),
+            I::I32Const(INITIAL_FIELD_CAPACITY),
+            I::LocalGet(5),
+            I::I32Const(INITIAL_FIELD_CAPACITY),
+            I::I32GtS,
+            I::Select,
+            I::LocalSet(5),
+            // header: field_count 0, capacity, fields, no name
+            I::I32Const(16),
+            I::Call(self.imports.malloc),
+            I::LocalTee(2),
+            I::I32Const(0),
+            store(0),
+            I::LocalGet(2),
+            I::LocalGet(5),
+            store(4),
+            I::LocalGet(2),
+            I::I32Const(0),
+            store(12),
+            I::LocalGet(5),
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::I32Mul,
+            I::Call(self.imports.malloc),
+            I::LocalSet(6),
+            I::LocalGet(2),
+            I::LocalGet(6),
+            store(8),
+            // the entries of rules_a
+            I::I32Const(0),
+            I::LocalSet(7),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(7),
+            I::LocalGet(3),
+            I::I32GeS,
+            I::BrIf(1),
+        ];
+        v.extend(entry(6, 7));
+        v.extend([I::LocalGet(0), load(8), I::LocalSet(8)]);
+        v.extend(entry(8, 7));
+        v.extend([
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::Call(self.imports.memcpy),
+            I::LocalGet(7),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(7),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::LocalGet(3),
+            I::LocalSet(11),
+            // the entries of rules_b, each replacing the entry with its name
+            I::I32Const(0),
+            I::LocalSet(7),
+            I::Block(BlockType::Empty),
+            I::Loop(BlockType::Empty),
+            I::LocalGet(7),
+            I::LocalGet(4),
+            I::I32GeS,
+            I::BrIf(1),
+            I::LocalGet(1),
+            load(8),
+            I::LocalSet(8),
         ]);
-
-        // count_b = rules_b.field_count
-        instrs.extend([
-            Instruction::LocalGet(1),
-            Instruction::I32Load(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(4),
+        v.extend(entry(8, 7));
+        v.extend([
+            I::LocalSet(8),
+            I::LocalGet(2),
+            I::LocalGet(11),
+            store(0),
+            I::LocalGet(2),
+            I::LocalGet(8),
+            load(0),
+            I::Call(self.helpers.field_index),
+            I::LocalTee(10),
+            I::I32Const(0),
+            I::I32LtS,
+            if_empty(),
+            I::LocalGet(11),
+            I::LocalSet(10),
+            I::LocalGet(11),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(11),
+            I::End,
         ]);
-
-        // total_count = count_a + count_b
-        instrs.extend([
-            Instruction::LocalGet(3),
-            Instruction::LocalGet(4),
-            Instruction::I32Add,
-            Instruction::LocalSet(5),
+        v.extend(entry(6, 10));
+        v.extend([
+            I::LocalSet(9),
+            I::LocalGet(9),
+            I::LocalGet(8),
+            I::I32Const(FIELD_ENTRY_SIZE),
+            I::Call(self.imports.memcpy),
+            I::LocalGet(7),
+            I::I32Const(1),
+            I::I32Add,
+            I::LocalSet(7),
+            I::Br(0),
+            I::End,
+            I::End,
+            I::LocalGet(2),
+            I::LocalGet(11),
+            store(0),
+            I::LocalGet(2), // return new_rules_ptr
         ]);
-
-        // Allocate new_rules header (16 bytes)
-        instrs.extend([
-            Instruction::I32Const(16),
-            Instruction::Call(self.imports.malloc),
-            Instruction::LocalSet(2), // new_rules_ptr
-        ]);
-
-        // new_rules.field_count = total_count
-        instrs.extend([
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(5),
-            Instruction::I32Store(MemArg {
-                offset: 0,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]);
-
-        // new_rules.capacity = total_count
-        instrs.extend([
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(5),
-            Instruction::I32Store(MemArg {
-                offset: 4,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]);
-
-        // new_rules.name_ptr = 0 (merged rules are unnamed)
-        instrs.extend([
-            Instruction::LocalGet(2),
-            Instruction::I32Const(0),
-            Instruction::I32Store(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]);
-
-        // Allocate new fields array: total_count * FIELD_ENTRY_SIZE bytes
-        instrs.extend([
-            Instruction::LocalGet(5),
-            Instruction::I32Const(FIELD_ENTRY_SIZE),
-            Instruction::I32Mul,
-            Instruction::Call(self.imports.malloc),
-            Instruction::LocalSet(6), // new_fields_ptr — use Set (not Tee) to avoid leaving value on stack
-        ]);
-
-        // new_rules.fields_ptr = new_fields_ptr
-        instrs.extend([
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(6),
-            Instruction::I32Store(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-        ]);
-
-        // src_fields_ptr_a = rules_a.fields_ptr
-        instrs.extend([
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(7),
-        ]);
-
-        // src_fields_ptr_b = rules_b.fields_ptr
-        instrs.extend([
-            Instruction::LocalGet(1),
-            Instruction::I32Load(MemArg {
-                offset: 8,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(8),
-        ]);
-
-        // Copy entries from rules_a (copy_index 0..count_a)
-        instrs.extend([
-            Instruction::I32Const(0),
-            Instruction::LocalSet(9), // copy_index = 0
-        ]);
-
-        instrs.push(Instruction::Block(BlockType::Empty)); // copy_a outer
-        instrs.push(Instruction::Loop(BlockType::Empty)); // copy_a loop
-
-        instrs.extend([
-            Instruction::LocalGet(9),
-            Instruction::LocalGet(3), // count_a
-            Instruction::I32GeS,
-            Instruction::BrIf(1), // done copying a
-        ]);
-
-        // src_entry_ptr = src_fields_ptr_a + copy_index * FIELD_ENTRY_SIZE
-        instrs.extend([
-            Instruction::LocalGet(7),
-            Instruction::LocalGet(9),
-            Instruction::I32Const(FIELD_ENTRY_SIZE),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalSet(10),
-        ]);
-
-        // dst_entry_ptr = new_fields_ptr + copy_index * FIELD_ENTRY_SIZE
-        instrs.extend([
-            Instruction::LocalGet(6),
-            Instruction::LocalGet(9),
-            Instruction::I32Const(FIELD_ENTRY_SIZE),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalSet(11),
-        ]);
-
-        // Copy the entry word-by-word
-        for word in 0..FIELD_ENTRY_WORDS {
-            let off = word * 4;
-            instrs.extend([
-                Instruction::LocalGet(11),
-                Instruction::LocalGet(10),
-                Instruction::I32Load(MemArg {
-                    offset: off as u64,
-                    align: 2,
-                    memory_index: 0,
-                }),
-                Instruction::I32Store(MemArg {
-                    offset: off as u64,
-                    align: 2,
-                    memory_index: 0,
-                }),
-            ]);
-        }
-
-        instrs.extend([
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9),
-            Instruction::Br(0),
-        ]);
-
-        instrs.push(Instruction::End); // end loop
-        instrs.push(Instruction::End); // end copy_a outer
-
-        // Copy entries from rules_b (copy_index 0..count_b, dst offset = count_a)
-        instrs.extend([
-            Instruction::I32Const(0),
-            Instruction::LocalSet(9), // copy_index = 0
-        ]);
-
-        instrs.push(Instruction::Block(BlockType::Empty)); // copy_b outer
-        instrs.push(Instruction::Loop(BlockType::Empty)); // copy_b loop
-
-        instrs.extend([
-            Instruction::LocalGet(9),
-            Instruction::LocalGet(4), // count_b
-            Instruction::I32GeS,
-            Instruction::BrIf(1),
-        ]);
-
-        // src_entry_ptr = src_fields_ptr_b + copy_index * FIELD_ENTRY_SIZE
-        instrs.extend([
-            Instruction::LocalGet(8),
-            Instruction::LocalGet(9),
-            Instruction::I32Const(FIELD_ENTRY_SIZE),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalSet(10),
-        ]);
-
-        // dst_entry_ptr = new_fields_ptr + (count_a + copy_index) * FIELD_ENTRY_SIZE
-        instrs.extend([
-            Instruction::LocalGet(6),
-            Instruction::LocalGet(3), // count_a
-            Instruction::LocalGet(9), // copy_index
-            Instruction::I32Add,
-            Instruction::I32Const(FIELD_ENTRY_SIZE),
-            Instruction::I32Mul,
-            Instruction::I32Add,
-            Instruction::LocalSet(11),
-        ]);
-
-        // Copy the entry word-by-word
-        for word in 0..FIELD_ENTRY_WORDS {
-            let off = word * 4;
-            instrs.extend([
-                Instruction::LocalGet(11),
-                Instruction::LocalGet(10),
-                Instruction::I32Load(MemArg {
-                    offset: off as u64,
-                    align: 2,
-                    memory_index: 0,
-                }),
-                Instruction::I32Store(MemArg {
-                    offset: off as u64,
-                    align: 2,
-                    memory_index: 0,
-                }),
-            ]);
-        }
-
-        instrs.extend([
-            Instruction::LocalGet(9),
-            Instruction::I32Const(1),
-            Instruction::I32Add,
-            Instruction::LocalSet(9),
-            Instruction::Br(0),
-        ]);
-
-        instrs.push(Instruction::End); // end loop
-        instrs.push(Instruction::End); // end copy_b outer
-
-        instrs.push(Instruction::LocalGet(2)); // return new_rules_ptr
-        instrs
+        v
     }
+}
+
+/// Number of i32 locals `validator.run` declares after its two params
+/// (indices 2..=16, see `generate_validator_run`).
+const RUN_EXTRA_LOCALS: usize = 15;
+
+/// Number of i32 locals `validator.runField` declares after its three params
+/// (indices 3..=9, see `generate_validator_run_field`).
+const RUN_FIELD_EXTRA_LOCALS: usize = 7;
+
+/// Number of i32 locals `__validator_check_object` declares after its four
+/// params (indices 4..=13).
+const CHECK_FIELDS_LOCALS: usize = 10;
+
+/// Number of i32 locals `validator.merge` declares after its two params.
+const MERGE_EXTRA_LOCALS: usize = 10;
+
+/// The locals of the field loop `emit_check_fields` emits.
+#[derive(Debug, Clone, Copy)]
+struct FieldLoop {
+    rules: u32,
+    /// The JSON-tree object, 0 for none.
+    object: u32,
+    /// The error-name prefix (a nested object), if any.
+    prefix: Option<u32>,
+    cell: u32,
+    count: u32,
+    index: u32,
+    entry: u32,
+    name: u32,
+    object_count: u32,
+    entry_index: u32,
+    value: u32,
+    checked: u32,
+    copy: u32,
+    label: u32,
 }
 
 #[cfg(test)]
@@ -2481,6 +3263,47 @@ mod tests {
     const TEST_IMPORTS: ValidatorImports = ValidatorImports {
         malloc: 7,
         str_eq: 8,
+        memcpy: 9,
+        concat: 10,
+        trim: 11,
+        list_allocate: 12,
+        list_add: 13,
+        int_to_string: 14,
+        int64_to_string: 15,
+        float_to_string: 16,
+        string_matches: Some(17),
+        custom_check_type: Some(1),
+        first_helper: 100,
+        strings: ValidatorStrings {
+            empty: 1000,
+            dot: 1004,
+            open_bracket: 1008,
+            close_bracket_dot: 1012,
+            comma_space: 1016,
+            is_required: 1020,
+            must_be_string: 1040,
+            must_be_whole: 1064,
+            must_be_number: 1088,
+            must_be_boolean: 1112,
+            must_be_a: 1136,
+            at_least: 1152,
+            at_most: 1176,
+            characters: 1200,
+            between: 1216,
+            and: 1240,
+            one_of: 1248,
+            is_invalid: 1272,
+            must_be_list: 1288,
+            no_match: 1308,
+            true_text: 1348,
+            false_text: 1356,
+            type_string: 1364,
+            type_integer: 1376,
+            type_number: 1388,
+            type_boolean: 1400,
+            patterns: [1412, 1424, 1432, 1440, 1452, 1460, 1472, 1484],
+            pattern_messages: [1500, 1536, 1560, 1584, 1616, 1656, 1688, 1708],
+        },
     };
 
     #[test]

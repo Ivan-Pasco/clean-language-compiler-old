@@ -736,8 +736,10 @@ impl MirCodeGenerator<'_> {
                     .map_err(|e| vec![e])?;
             }
 
+            // `validator.match` rules are checked with the same host import.
             if self.wasm_generator.has_reachable_prefix("string.matches")
                 || self.wasm_generator.has_reachable_prefix("string_matches")
+                || self.wasm_generator.has_reachable_prefix("validator.match")
             {
                 debug_mir!("DEBUG MIR: Registering string_matches import (used in code)");
                 self.wasm_generator

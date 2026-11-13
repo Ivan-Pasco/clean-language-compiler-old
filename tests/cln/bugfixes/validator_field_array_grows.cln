@@ -1,0 +1,29 @@
+// Test: bugfixes/validator_field_array_grows
+// Grammar: function_call (validator.field)
+// Semantic: stdlib-reference §15 — `validator.field(v, name)` starts a new
+//   field rule; a validator holds any number of fields
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   true
+//   false
+//   f12 is required
+//   f11
+//   12
+//
+// Regression: `validator.field` wrote past the 8-slot field array of
+// `validator.create()` instead of growing it, overwriting what was allocated
+// after it.
+
+start:
+	integer v = validator.create()
+	list<string> names = ["f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"]
+	iterate name in names
+		v = validator.required(validator.field(v, name))
+	pairs<string, any> all = {"f1": 1, "f2": 2, "f3": 3, "f4": 4, "f5": 5, "f6": 6, "f7": 7, "f8": 8, "f9": 9, "f10": 10, "f11": 11, "f12": 12}
+	print(validator.isOk(validator.run(v, all)))
+	pairs<string, any> noLast = {"f1": 1, "f2": 2, "f3": 3, "f4": 4, "f5": 5, "f6": 6, "f7": 7, "f8": 8, "f9": 9, "f10": 10, "f11": 11}
+	integer r = validator.run(v, noLast)
+	print(validator.isOk(r))
+	print(validator.getFirstError(r))
+	print(names.get(10))
+	print(names.size())

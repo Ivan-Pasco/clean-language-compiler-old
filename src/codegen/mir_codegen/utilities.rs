@@ -1021,7 +1021,8 @@ impl MirCodeGenerator<'_> {
         // The table holds user-function indices so hosts can dispatch them via
         // `call_indirect` using the i32 handle the compiler emitted at the
         // reference site. Exported below as `__indirect_function_table`.
-        let emit_function_table = !self.referenced_function_indices.is_empty();
+        let emit_function_table = !self.referenced_function_indices.is_empty()
+            || self.wasm_generator.requires_function_table;
         let mut sorted_referenced_funcs: Vec<u32> =
             self.referenced_function_indices.iter().copied().collect();
         sorted_referenced_funcs.sort_unstable();
