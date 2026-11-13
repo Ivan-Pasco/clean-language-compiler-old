@@ -161,6 +161,8 @@ impl<'a> TypeInference<'a> {
 
         // Collect errors
         self.errors.extend(solver_result.errors);
+        self.errors
+            .extend(super::instance_calls::check(&tast_program));
 
         // `T?` is checked; from here on it is stored as `T`.
         let mut tast_program = tast_program;

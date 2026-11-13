@@ -677,6 +677,27 @@ class Account
 
 **Fix:** give the parameter a different name (`constructor(integer startBalance)` + `balance = startBalance`), or drop the constructor body when it only stores its parameters.
 
+### CLASS008 — Method Called Through the Class Name Needs an Object
+`ClassName.method()` has no object to run on, so it may only call a method that needs none. A method needs an object when its body reads or writes a field of the class (its own or inherited), or calls a method of the object that needs one; `toString()` always needs one. Methods that use no field or method of the object stay callable through the class name, whatever fields the class has.
+
+**Message:** `"'{method}()' needs a {Class} object: create one (`{Class} {c} = {Class}()`) and call `{c}.{method}()`"` — `{c}` is the class name's first letter in lower case.
+
+**Example (fails — CLASS008):**
+```clean
+class Box
+    integer size
+
+    functions:
+        public:
+            integer get()
+                return size
+
+start:
+    print(Box.get())              // get() reads the field size
+```
+
+**Fix:** create an object and call the method on it: `Box b = Box()` then `b.get()`.
+
 **Build modes:**
 - `ensure` and `always:` checks are included in debug builds and stripped in release builds (`--release` flag).
 - Use `--contracts` to force contract checks in release builds.

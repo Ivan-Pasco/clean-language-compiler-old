@@ -1,0 +1,48 @@
+// Test: bugfixes/class008_static_call_of_method_needing_no_object
+// Grammar: static method call `ClassName.method()` (grammar.ebnf §5)
+// Semantic: CLASS008 — a method that uses no field or method of the object
+//   stays callable through the class name, also on a class with fields
+//   (15-classes-and-objects.md Static Methods, `User.isValidAge`), and a
+//   static method may call a sibling that needs no object
+// Fixed in: compiler 0.33.186
+// Expected output:
+//   true
+//   false
+//   8
+//   3
+//
+// Companion to class008_instance_method_called_through_class_name: the
+// calls that must keep compiling.
+
+start:
+	print(User.isValidAge(30))
+	print(User.isValidAge(200))
+	print(Calc.twice(4))
+	User u = User()
+	print(u.nameLength())
+
+class User
+	string name
+
+	constructor()
+		name = "Ann"
+
+	functions:
+		public:
+			boolean isValidAge(integer years)
+				return inRange(years)
+
+			boolean inRange(integer years)
+				return years >= 0 and years <= 150
+
+			integer nameLength()
+				return name.length()
+
+class Calc
+	functions:
+		public:
+			integer one(integer n)
+				return n
+
+			integer twice(integer n)
+				return one(n) * 2

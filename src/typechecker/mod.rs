@@ -17,6 +17,7 @@ use std::collections::{HashMap, HashSet};
 
 pub mod constraint_solver;
 mod erase_optional;
+mod instance_calls;
 #[cfg(test)]
 mod property_tests;
 pub mod tast;

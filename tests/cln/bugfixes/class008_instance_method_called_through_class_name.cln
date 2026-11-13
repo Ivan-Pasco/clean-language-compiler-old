@@ -1,0 +1,32 @@
+// Test: bugfixes/class008_instance_method_called_through_class_name
+// Grammar: static method call `ClassName.method()` (grammar.ebnf §5)
+// Semantic: CLASS008 — `ClassName.method()` has no object to run on, so a
+//   method that reads a field (`get`), or calls a method of the object that
+//   does (`twice`), cannot be called through the class name
+// Fixed in: compiler 0.33.186
+// Expected output:
+// Expected error:
+//   CLASS008
+//   'get()' needs a Box object: create one (`Box b = Box()`) and call `b.get()`
+//   'twice()' needs a Box object: create one (`Box b = Box()`) and call `b.twice()`
+//
+// Regression: both calls compiled; the method ran on a null object and
+// printed 0 instead of the field's value.
+
+start:
+	print(Box.get())
+	print(Box.twice())
+
+class Box
+	integer size
+
+	constructor()
+		size = 3
+
+	functions:
+		public:
+			integer get()
+				return size
+
+			integer twice()
+				return get() * 2
