@@ -523,18 +523,16 @@ impl TokenParser {
 
     pub(super) fn parse_primary(&mut self) -> Result<Expression, CompilerError> {
         match self.current_kind() {
+            // `-9223372036854775808` is handled in parse_unary; the bare
+            // magnitude 2^63 is above i64::MAX, an `integer:64u` literal.
             TokenKind::IntegerLiteral(i64::MIN) => {
-                // Only `-9223372036854775808` (handled in parse_unary) is in
-                // range; the bare magnitude 2^63 is not an i64.
-                let token = self.current();
-                Err(CompilerError::parse_error(
-                    format!("Integer literal {} is out of range", token.text),
-                    Some(token.location.clone()),
-                    Some(
-                        "Integers are 64-bit: -9223372036854775808 to 9223372036854775807"
-                            .to_string(),
-                    ),
-                ))
+                self.bump();
+                Ok(Expression::Literal(Value::UnsignedInteger(1u64 << 63)))
+            }
+            TokenKind::UnsignedIntegerLiteral(n) => {
+                let value = *n;
+                self.bump();
+                Ok(Expression::Literal(Value::UnsignedInteger(value)))
             }
             TokenKind::IntegerLiteral(n) => {
                 let value = *n;

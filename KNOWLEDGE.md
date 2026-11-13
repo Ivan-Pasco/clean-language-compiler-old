@@ -366,6 +366,8 @@ Where it is handled:
 
 Text: `unsigned_integer_text` (32u zero-extended into `int64_to_string`, 64u through `__uint64_to_string`). `.toInteger()` of text stored straight into a 32u/64u is rewritten by the type checker to `__string_to_u32`/`__string_to_u64`. Boxing: `emit_box_value` keeps a U32 zero-extended and boxes a U64 as a number; collections box through `__cln_to_any` with descriptor codes `u`/`U`. Fit checks take i128 ranges; an `integer:64u` source uses the `__integer_fit_<suffix>_u` variant.
 
-**Limits:** a literal above `i64::MAX` cannot be written (the parser reads integer literals as i64); an `integer:64u` above `i64::MAX` boxed into `any` (text of a collection, JSON) is a number (`1.8446744073709552e+19`); `any` → `list<integer:32u>` / `list<integer:64u>` converts with the signed element rules.
+Literals: a decimal literal above `i64::MAX` lexes as `UnsignedIntegerLiteral` (the bare 2^63 is the `i64::MIN` token outside a unary minus) and parses to `Value::UnsignedInteger`; the type checker types it `integer:64u` and carries its 64-bit pattern in `TastLiteral::Integer` (`literal_value` reads it back unsigned), so a target it does not fit in gets the "does not fit" error. `any` → `list<integer:32u>` / `list<integer:64u>` (and pairs values) convert with the `u` / `U` codes of `__any_convert` (0..=u32::MAX; a non-negative integer or a whole number below 2^64).
+
+**Limits (boxed-any ABI):** tag 1 holds a signed i64 and JSON integers outside ±2^53 decode as numbers (BOXED_ANY_ABI §2, D1), so an `integer:64u` above `i64::MAX` boxed into `any` (text of a collection, JSON) is a number (`1.8446744073709552e+19`) and a JSON integer above 2^53 read into a `list<integer:64u>` is the nearest double. Exact values need an ABI tag for unsigned 64-bit integers in every host.
 
 **Regression:** `tests/cln/bugfixes/unsigned_32_values_above_signed_maximum.cln`, `unsigned_64_values_above_signed_maximum.cln`.

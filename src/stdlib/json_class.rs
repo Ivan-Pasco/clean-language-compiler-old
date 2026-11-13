@@ -82,10 +82,12 @@ pub mod any_descriptor {
     pub const INTEGER: u8 = b'i';
     /// `integer:64`: an integer value (list elements only).
     pub const INTEGER_64: u8 = b'l';
-    /// `integer:32u` (`__cln_to_any` only): the zero extension of the value.
+    /// `integer:32u`: in `__cln_to_any` the zero extension of the value; in
+    /// `__any_convert` an integer from 0 to 4294967295.
     pub const UNSIGNED_32: u8 = b'u';
-    /// `integer:64u` (`__cln_to_any` only, by address like `integer:64`): an
-    /// integer box up to `i64::MAX`, a number box above it.
+    /// `integer:64u` (by address like `integer:64`): in `__cln_to_any` an
+    /// integer box up to `i64::MAX`, a number box above it; in
+    /// `__any_convert` a non-negative integer, or a whole number below 2^64.
     pub const UNSIGNED_64: u8 = b'U';
     /// `number`: a number or integer value (list elements only).
     pub const NUMBER: u8 = b'n';
@@ -125,6 +127,8 @@ fn conversion_message(code: u8) -> &'static str {
     use any_descriptor::*;
     match code {
         INTEGER | INTEGER_64 | OPTIONAL_INTEGER | OPTIONAL_INTEGER_64 => "value is not an integer",
+        UNSIGNED_32 => "value does not fit in integer:32u",
+        UNSIGNED_64 => "value does not fit in integer:64u",
         NUMBER | OPTIONAL_NUMBER => "value is not a number",
         BOOLEAN | OPTIONAL_BOOLEAN => "value is not a boolean",
         STRING => "value is not a string",
@@ -340,6 +344,8 @@ impl JsonClass {
         for code in [
             any_descriptor::INTEGER,
             any_descriptor::INTEGER_64,
+            any_descriptor::UNSIGNED_32,
+            any_descriptor::UNSIGNED_64,
             any_descriptor::NUMBER,
             any_descriptor::BOOLEAN,
             any_descriptor::STRING,
@@ -2117,6 +2123,25 @@ impl AnyConvertRuntime {
         // integer target takes the low word of the i64 (as `integer x =
         // value` does).
         v.extend(self.scalar(INTEGER, JSON_TAG_INTEGER));
+        // integer:32u: an integer from 0 to 4294967295 (the full i64 is
+        // read; a larger or negative value raises).
+        let mut unsigned_32 = vec![
+            Instruction::LocalGet(Self::TAG),
+            Instruction::I32Const(JSON_TAG_INTEGER),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(Self::ANY),
+            Instruction::I64Load(Self::double(4)),
+            Instruction::I64Const(u32::MAX as i64),
+            Instruction::I64LeU,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(Self::PAYLOAD),
+            Instruction::Return,
+            Instruction::End,
+            Instruction::End,
+        ];
+        unsigned_32.extend(self.raise(UNSIGNED_32));
+        v.extend(Self::when_code(Self::CODE, UNSIGNED_32, unsigned_32));
         v.extend(self.scalar(BOOLEAN, JSON_TAG_BOOLEAN));
         v.extend(self.scalar(STRING, JSON_TAG_STRING));
         // An optional primitive is the box of a value of its type (null
@@ -2267,6 +2292,10 @@ impl AnyConvertRuntime {
             Instruction::I32Const(any_descriptor::INTEGER_64 as i32),
             Instruction::I32Eq,
             Instruction::I32Or,
+            Instruction::LocalGet(Self::ELEMENT_CODE),
+            Instruction::I32Const(any_descriptor::UNSIGNED_64 as i32),
+            Instruction::I32Eq,
+            Instruction::I32Or,
         ]
     }
 
@@ -2366,6 +2395,73 @@ impl AnyConvertRuntime {
             Self::ELEMENT_CODE,
             INTEGER_64,
             wide_integer,
+        ));
+        // integer:64u: a non-negative integer, or a whole number from 0 to
+        // below 2^64 (a JSON number above i64::MAX decodes as a number).
+        let mut unsigned_64 = tag_is(JSON_TAG_INTEGER);
+        unsigned_64.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::I64Load(Self::double(4)),
+            Instruction::I64Const(0),
+            Instruction::I64LtS,
+            Instruction::If(BlockType::Empty),
+        ]);
+        unsigned_64.extend(self.raise(UNSIGNED_64));
+        unsigned_64.extend([
+            Instruction::End,
+            Instruction::LocalGet(local),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::I64Load(Self::double(4)),
+            Instruction::I64Store(Self::double(offset)),
+            Instruction::Else,
+        ]);
+        unsigned_64.extend(tag_is(JSON_TAG_NUMBER));
+        unsigned_64.extend([
+            Instruction::If(BlockType::Empty),
+            // whole, >= 0 and < 2^64
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::F64Load(Self::double(4)),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::F64Load(Self::double(4)),
+            Instruction::F64Trunc,
+            Instruction::F64Ne,
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::F64Load(Self::double(4)),
+            Instruction::F64Const(0.0),
+            Instruction::F64Lt,
+            Instruction::I32Or,
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::F64Load(Self::double(4)),
+            Instruction::F64Const(18446744073709551616.0),
+            Instruction::F64Ge,
+            Instruction::I32Or,
+            Instruction::If(BlockType::Empty),
+        ]);
+        unsigned_64.extend(self.raise(UNSIGNED_64));
+        unsigned_64.extend([
+            Instruction::End,
+            Instruction::LocalGet(local),
+            Instruction::LocalGet(Self::ELEMENT),
+            Instruction::F64Load(Self::double(4)),
+            Instruction::I64TruncSatF64U,
+            Instruction::I64Store(Self::double(offset)),
+            Instruction::Else,
+        ]);
+        unsigned_64.extend(tag_is(JSON_TAG_NULL));
+        unsigned_64.extend([
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(local),
+            Instruction::I64Const(0),
+            Instruction::I64Store(Self::double(offset)),
+            Instruction::Else,
+        ]);
+        unsigned_64.extend(self.raise(UNSIGNED_64));
+        unsigned_64.extend([Instruction::End, Instruction::End, Instruction::End]);
+        v.extend(Self::when_code(
+            Self::ELEMENT_CODE,
+            UNSIGNED_64,
+            unsigned_64,
         ));
         v
     }

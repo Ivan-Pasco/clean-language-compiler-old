@@ -11,7 +11,9 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     // Literals (§2.3 - exactly matching AST specification Value enum)
-    IntegerLiteral(i64),   // 42, -17 (default)
+    IntegerLiteral(i64), // 42, -17 (default)
+    /// A decimal integer literal above `i64::MAX` (up to `u64::MAX`).
+    UnsignedIntegerLiteral(u64),
     NumberLiteral(f64),    // 3.14, 6.02e23 (default)
     StringLiteral(String), // "Hello, World!"
 
@@ -134,6 +136,7 @@ impl fmt::Display for TokenKind {
         match self {
             // Literals
             TokenKind::IntegerLiteral(n) => write!(f, "{}", n),
+            TokenKind::UnsignedIntegerLiteral(n) => write!(f, "{}", n),
             TokenKind::NumberLiteral(n) => write!(f, "{}", n),
             TokenKind::StringLiteral(s) => write!(f, "\"{}\"", s),
 

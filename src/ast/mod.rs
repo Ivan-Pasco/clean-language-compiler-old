@@ -104,7 +104,10 @@ impl fmt::Display for SourceLocation {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum Value {
     Integer(i64), // Default integer (platform optimal)
-    Number(f64),  // Default number (platform optimal)
+    /// An integer literal above `i64::MAX` (up to `u64::MAX`): only an
+    /// `integer:64u` holds it (type-system.md §2).
+    UnsignedInteger(u64),
+    Number(f64), // Default number (platform optimal)
     Boolean(bool),
     String(String),
     Matrix(Vec<Vec<Value>>),
@@ -1831,6 +1834,7 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Value::Integer(i) => write!(f, "{i}"),
+            Value::UnsignedInteger(i) => write!(f, "{i}"),
             Value::Number(n) => write!(f, "{n}"),
             Value::String(s) => write!(f, "\"{s}\""),
             Value::Boolean(b) => write!(f, "{b}"),

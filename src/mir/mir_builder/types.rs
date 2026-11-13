@@ -1065,16 +1065,16 @@ impl MirBuilder {
                     ConcreteType::Boolean => code::OPTIONAL_BOOLEAN,
                     _ => return None,
                 },
-                // Boxing (`any_key`, `__cln_to_any`) keeps the unsigned
-                // values above the signed maximum.
+                // Unsigned values above the signed maximum: boxed and
+                // converted with the unsigned range.
                 ConcreteType::IntegerSized {
                     bits: 32,
                     unsigned: true,
-                } if any_key => code::UNSIGNED_32,
+                } => code::UNSIGNED_32,
                 ConcreteType::IntegerSized {
                     bits: 64,
                     unsigned: true,
-                } if any_key => code::UNSIGNED_64,
+                } => code::UNSIGNED_64,
                 ConcreteType::Integer
                 | ConcreteType::IntegerSized {
                     bits: 8 | 16 | 32, ..

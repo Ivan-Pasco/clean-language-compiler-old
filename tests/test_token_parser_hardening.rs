@@ -57,7 +57,10 @@ fn first_statement_value(src: &str) -> clean_language_compiler::ast::Expression 
 }
 
 /// `-9223372036854775808` (i64::MIN) is a valid integer literal; the bare
-/// magnitude 2^63 is out of range.
+/// magnitude 2^63, and values up to u64::MAX, are `integer:64u` literals.
+// Changed in 0.33.184: literals above i64::MAX parse as unsigned literals
+// (the type checker range-checks them against the target) instead of being
+// a parse error; above u64::MAX they are still invalid (developer decision).
 #[test]
 fn i64_min_literal() {
     use clean_language_compiler::ast::{Expression, Value};
@@ -65,9 +68,15 @@ fn i64_min_literal() {
         first_statement_value("start:\n\tinteger x = -9223372036854775808\n"),
         Expression::Literal(Value::Integer(i64::MIN))
     );
-    let error = parse_err("start:\n\tinteger x = 9223372036854775808\n");
-    assert!(error.to_string().contains("out of range"), "{}", error);
-    let error = parse_err("start:\n\tinteger x = -9223372036854775809\n");
+    assert_eq!(
+        first_statement_value("start:\n\tinteger:64u x = 9223372036854775808\n"),
+        Expression::Literal(Value::UnsignedInteger(1u64 << 63))
+    );
+    assert_eq!(
+        first_statement_value("start:\n\tinteger:64u x = 18446744073709551615\n"),
+        Expression::Literal(Value::UnsignedInteger(u64::MAX))
+    );
+    let error = parse_err("start:\n\tinteger:64u x = 18446744073709551616\n");
     assert!(error.to_string().contains("Invalid number"), "{}", error);
 }
 

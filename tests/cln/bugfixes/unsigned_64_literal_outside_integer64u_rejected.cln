@@ -1,0 +1,15 @@
+// Test: bugfixes/unsigned_64_literal_outside_integer64u_rejected
+// Semantic: type-system.md §2 — an integer literal above i64::MAX is an
+//   `integer:64u` value; stored into a type it does not fit in, it is a
+//   compile-time error (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+// Expected error:
+//   18446744073709551615 does not fit in integer (-2147483648 to 2147483647)
+//   9223372036854775808 does not fit in integer:32u (0 to 4294967295)
+
+start:
+	integer a = 18446744073709551615
+	integer:32u b = 9223372036854775808
+	print(a)
+	print(b)

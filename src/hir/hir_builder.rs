@@ -3096,6 +3096,7 @@ impl HirBuilder {
     fn value_to_hir_type(&self, value: &Value) -> HirType {
         match value {
             Value::Integer(_) => HirType::Integer,
+            Value::UnsignedInteger(_) => HirType::Integer64u,
             Value::Number(_) => HirType::Number,
             Value::String(_) => HirType::String,
             Value::Boolean(_) => HirType::Boolean,

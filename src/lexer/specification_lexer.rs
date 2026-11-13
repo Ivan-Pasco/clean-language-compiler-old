@@ -874,23 +874,28 @@ impl<'a> SpecificationLexer<'a> {
                 text,
             ))
         } else {
-            let value =
-                Self::decimal_integer(&number_text).ok_or_else(|| LexError::InvalidNumber {
-                    text: text.clone(),
-                    location: start_location.clone(),
-                })?;
-            Ok(Token::new(
-                TokenKind::IntegerLiteral(value),
-                start_location,
-                text,
-            ))
+            // Above 2^63 (up to u64::MAX): an `integer:64u` literal.
+            let kind = match Self::decimal_integer(&number_text) {
+                Some(value) => TokenKind::IntegerLiteral(value),
+                None => match number_text.parse::<u64>() {
+                    Ok(value) => TokenKind::UnsignedIntegerLiteral(value),
+                    Err(_) => {
+                        return Err(LexError::InvalidNumber {
+                            text: text.clone(),
+                            location: start_location.clone(),
+                        })
+                    }
+                },
+            };
+            Ok(Token::new(kind, start_location, text))
         }
     }
 
     /// Value of a decimal integer literal. `9223372036854775808` (2^63) does
     /// not fit in i64 on its own but is the magnitude of `i64::MIN`, so it
-    /// lexes as `i64::MIN`; the parser accepts it only right after a unary
-    /// minus and reports it as out of range anywhere else.
+    /// lexes as `i64::MIN`; right after a unary minus the parser reads it as
+    /// `i64::MIN`, anywhere else as the `integer:64u` literal 2^63. Larger
+    /// values up to `u64::MAX` lex as `UnsignedIntegerLiteral`.
     fn decimal_integer(text: &str) -> Option<i64> {
         match text.parse::<i64>() {
             Ok(value) => Some(value),
@@ -1307,7 +1312,7 @@ impl LexError {
             }
             LexError::UnterminatedComment { .. } => "Close the comment with `*/`.",
             LexError::InvalidNumber { .. } => {
-                "Integer literals must fit in 64 bits (-9223372036854775808 to 9223372036854775807)."
+                "Integer literals must fit in 64 bits (-9223372036854775808 to 18446744073709551615)."
             }
             LexError::InvalidIndentation { .. } => {
                 "Dedent to the indentation level of an enclosing block."

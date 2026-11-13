@@ -1,0 +1,43 @@
+// Test: bugfixes/unsigned_64_literals_and_any_lists
+// Semantic: type-system.md §2 — an integer literal up to
+//   18446744073709551615 can be written for an `integer:64u`; an `any`
+//   converted to list<integer:32u> / list<integer:64u> uses the unsigned
+//   element range (developer decision, compiler 0.33.184)
+// Fixed in: compiler 0.33.184
+// Expected output:
+//   18446744073709551615
+//   9223372036854775808
+//   9223372036854775807
+//   3000000000
+//   1
+//   2
+//   3000000000
+//   3
+//   4294967295
+
+start:
+	integer:64u top = 18446744073709551615
+	print(top)
+	integer:64u half = 9223372036854775808
+	print(half)
+	print(top - half)
+	any data = json.textToData("[3000000000, 7]")
+	list<integer:32u> xs = data
+	print(xs.get(0))
+	list<integer:32u> ys = small(json.textToData("[4294967296]")) onError [1]
+	print(ys.get(0))
+	list<integer:32u> zs = small(json.textToData("[-1]")) onError [2]
+	print(zs.get(0))
+	list<integer:64u> ws = large(data)
+	print(ws.get(0))
+	list<integer:64u> ns = large(json.textToData("[-1]")) onError [3]
+	print(ns.get(0))
+	list<integer:64u> limit = large(json.textToData("[4294967295]"))
+	print(limit.get(0))
+
+functions:
+	list<integer:32u> small(any value)
+		return value
+
+	list<integer:64u> large(any value)
+		return value

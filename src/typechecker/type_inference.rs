@@ -1620,17 +1620,34 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    /// The value of an integer constant (`300`, `-5`).
-    fn integer_constant(expression: &TastExpression) -> Option<i64> {
+    /// The value of an integer constant (`300`, `-5`, an `integer:64u`
+    /// literal above `i64::MAX`).
+    fn integer_constant(expression: &TastExpression) -> Option<i128> {
         match &expression.kind {
             TastExpressionKind::Literal {
                 value: TastLiteral::Integer(n),
-            } => Some(*n),
+            } => Some(Self::literal_value(*n, &expression.expr_type)),
             TastExpressionKind::UnaryOperation {
                 operator: UnaryOperator::Negate,
                 operand,
-            } => Self::integer_constant(operand).and_then(i64::checked_neg),
+            } => Self::integer_constant(operand).map(|n| -n),
             _ => None,
+        }
+    }
+
+    /// The value of an integer literal: an `integer:64u` literal carries its
+    /// 64-bit pattern (`infer_literal`).
+    fn literal_value(bits: i64, ty: &ConcreteType) -> i128 {
+        if matches!(
+            ty,
+            ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: true
+            }
+        ) {
+            i128::from(bits as u64)
+        } else {
+            i128::from(bits)
         }
     }
 
@@ -1774,7 +1791,7 @@ impl<'a> TypeInference<'a> {
         } else {
             format!("{INTEGER_FIT_PREFIX}{suffix}")
         };
-        if let Some(n) = Self::integer_constant(value).map(i128::from) {
+        if let Some(n) = Self::integer_constant(value) {
             if n < min || n > max {
                 let name = Self::integer_type_name(suffix);
                 self.errors.push(CompilerError::type_error(
@@ -3093,9 +3110,16 @@ impl<'a> TypeInference<'a> {
                             (ConcreteType::Class { .. }, ConcreteType::Interface { .. }) => true,
                             _ => false,
                         };
+                        // An integer constant stored into a sized integer is
+                        // range-checked instead ("... does not fit in ...",
+                        // `fit_into_sized_integer`).
+                        let integer_constant_into_sized = Self::integer_constant(&tast_init)
+                            .is_some()
+                            && Self::integer_range(var_type).is_some();
                         if types_are_concrete
                             && !init_ty.is_assignable_to(declared_ty)
                             && !class_subtype_ok
+                            && !integer_constant_into_sized
                         {
                             self.errors.push(CompilerError::Validation {
                                 context: Box::new(
@@ -3881,7 +3905,7 @@ impl<'a> TypeInference<'a> {
         let value = match &expression.kind {
             TastExpressionKind::Literal {
                 value: TastLiteral::Integer(n),
-            } => return Some(i128::from(*n)),
+            } => return Some(Self::literal_value(*n, &expression.expr_type)),
             TastExpressionKind::UnaryOperation {
                 operator: UnaryOperator::Negate,
                 operand,
@@ -5418,9 +5442,9 @@ impl<'a> TypeInference<'a> {
         // An unsigned target takes a literal in its range, also one above
         // the signed 32-bit maximum (`integer:32u big = 3000000000`).
         if let ConcreteType::IntegerSized { unsigned: true, .. } = declared_type {
-            if Self::concrete_integer_range(declared_type)
-                .is_some_and(|(min, max)| (min..=max).contains(&i128::from(literal)))
-            {
+            if Self::concrete_integer_range(declared_type).is_some_and(|(min, max)| {
+                (min..=max).contains(&Self::literal_value(literal, &tast_init.expr_type))
+            }) {
                 tast_init.expr_type = declared_type.clone();
             }
             return;
@@ -5572,6 +5596,15 @@ impl<'a> TypeInference<'a> {
             crate::ast::Value::Integer(value) => {
                 (TastLiteral::Integer(*value), ConcreteType::Integer)
             }
+            // Above i64::MAX: an `integer:64u` value, carried as its 64-bit
+            // pattern (the MIR builder emits it as an i64 constant).
+            crate::ast::Value::UnsignedInteger(value) => (
+                TastLiteral::Integer(*value as i64),
+                ConcreteType::IntegerSized {
+                    bits: 64,
+                    unsigned: true,
+                },
+            ),
             crate::ast::Value::Number(value) => (TastLiteral::Number(*value), ConcreteType::Number),
             crate::ast::Value::String(value) => {
                 (TastLiteral::String(value.clone()), ConcreteType::String)
