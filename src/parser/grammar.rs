@@ -379,6 +379,29 @@ pub fn register_fragment_block_keywords(keywords: &[String]) {
     }
 }
 
+/// Header attributes of the loaded plugins' blocks (`html var="card":`),
+/// shared with fragment parsing like `FRAGMENT_BLOCK_KEYWORDS`.
+static FRAGMENT_BLOCK_HEADER_ATTRIBUTES: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<String, Vec<String>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// Record block header attributes for fragment parsing (union with any
+/// already registered by other loaded registries).
+pub fn register_fragment_block_header_attributes(
+    attributes: &std::collections::HashMap<String, Vec<String>>,
+) {
+    if let Ok(mut known) = FRAGMENT_BLOCK_HEADER_ATTRIBUTES.write() {
+        for (block_name, names) in attributes {
+            let entry = known.entry(block_name.clone()).or_default();
+            for name in names {
+                if !entry.contains(name) {
+                    entry.push(name.clone());
+                }
+            }
+        }
+    }
+}
+
 /// Parse a wrapped plugin fragment (`start:` + indented body) with the
 /// token-driven parser used for regular source files. Returns `None` when the
 /// lexer or parser rejects it.
@@ -393,6 +416,9 @@ fn parse_with_token_parser(wrapped: &str) -> Option<Program> {
         .map(|k| k.clone())
         .unwrap_or_default();
     let mut parser = SpecificationParser::with_plugin_keywords(tokens, keywords);
+    if let Ok(attributes) = FRAGMENT_BLOCK_HEADER_ATTRIBUTES.read() {
+        parser.set_block_header_attributes(attributes.clone());
+    }
     parser.set_lenient_section_order(true);
     parser.parse_program().ok()
 }

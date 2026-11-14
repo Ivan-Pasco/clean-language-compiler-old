@@ -2,6 +2,7 @@ use super::token_parser::TokenParser;
 use crate::ast::Program;
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenStream;
+use std::collections::HashMap;
 
 /// Specification-compliant parser that uses tokens from the lexer
 ///
@@ -11,6 +12,8 @@ pub struct SpecificationParser {
     token_stream: TokenStream,
     /// Plugin-defined keywords that don't require colons (e.g., "data" from frame.data)
     plugin_keywords: Vec<String>,
+    /// Header attributes each plugin block accepts before its colon
+    block_header_attributes: HashMap<String, Vec<String>>,
     /// When true, skip section ordering enforcement (for plugin output)
     lenient_section_order: bool,
     /// Set by the first `parse_program`, which moves the token stream out.
@@ -22,6 +25,7 @@ impl SpecificationParser {
         Self {
             token_stream,
             plugin_keywords: Vec::new(),
+            block_header_attributes: HashMap::new(),
             lenient_section_order: false,
             consumed: false,
         }
@@ -37,9 +41,16 @@ impl SpecificationParser {
         Self {
             token_stream,
             plugin_keywords,
+            block_header_attributes: HashMap::new(),
             lenient_section_order: false,
             consumed: false,
         }
+    }
+
+    /// Set the header attributes each plugin block accepts before its colon
+    /// (`[blocks.<name>].attributes`, see `PluginRegistry::get_block_header_attributes`).
+    pub fn set_block_header_attributes(&mut self, attributes: HashMap<String, Vec<String>>) {
+        self.block_header_attributes = attributes;
     }
 
     /// Enable lenient section ordering for plugin output parsing
@@ -70,6 +81,7 @@ impl SpecificationParser {
             )
         };
 
+        parser.set_block_header_attributes(std::mem::take(&mut self.block_header_attributes));
         if self.lenient_section_order {
             parser.set_lenient_section_order(true);
         }

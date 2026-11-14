@@ -476,6 +476,12 @@ pub trait FrameworkPlugin: Send + Sync {
         &[]
     }
 
+    /// Header attributes `block_name` accepts before its colon
+    /// (`[blocks.<name>].attributes` in plugin.toml). Empty by default.
+    fn block_header_attributes(&self, _block_name: &str) -> &[String] {
+        &[]
+    }
+
     /// Contract 5 lint hook.
     ///
     /// Called by `cln lint` / `cln check` (and Phase D+, `cln compile`) once

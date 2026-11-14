@@ -3854,6 +3854,14 @@ impl FrameworkPlugin for WasmPluginAdapter {
         &self.expression_patterns_cache
     }
 
+    fn block_header_attributes(&self, block_name: &str) -> &[String] {
+        self.manifest
+            .blocks
+            .get(block_name)
+            .map(|config| config.attributes.as_slice())
+            .unwrap_or(&[])
+    }
+
     fn get_keywords(&self) -> &'static [&'static str] {
         self.keywords_cache
             .get_or_init(|| match self.call_get_keywords() {

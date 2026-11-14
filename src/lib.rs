@@ -657,6 +657,7 @@ pub fn lint_source(
 
     let plugin_keywords = registry.get_all_block_keywords();
     let mut parser = SpecificationParser::with_plugin_keywords(tokens, plugin_keywords);
+    parser.set_block_header_attributes(registry.get_block_header_attributes());
     let program = parser.parse_program().map_err(|e| vec![e])?;
 
     // The pre-expansion snapshot IS the just-parsed program — we run lint

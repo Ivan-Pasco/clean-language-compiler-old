@@ -624,6 +624,36 @@ impl TokenParser {
         location
     }
 
+    /// The indentation level of a framework block's body. The cursor is at
+    /// the block's first content token: the Indent opening the body, or text
+    /// left on the header line after the `:` (which stays in the body for
+    /// the plugin to read). In the second case the body level is that of the
+    /// Indent opening the next line, so a block inside a function body ends
+    /// where its indentation does instead of taking the statements after it.
+    pub(super) fn framework_block_body_level(&self) -> usize {
+        let mut idx = self.cursor;
+        while idx < self.tokens.len()
+            && !matches!(
+                self.tokens[idx].kind,
+                TokenKind::Indent(_) | TokenKind::Newline | TokenKind::Eof
+            )
+        {
+            idx += 1;
+        }
+        while idx < self.tokens.len()
+            && matches!(
+                self.tokens[idx].kind,
+                TokenKind::Newline | TokenKind::Comment(_) | TokenKind::BlockComment(_)
+            )
+        {
+            idx += 1;
+        }
+        match self.tokens.get(idx).map(|t| &t.kind) {
+            Some(TokenKind::Indent(level)) => *level,
+            _ => 1,
+        }
+    }
+
     /// Extract raw block content from source text using byte positions.
     ///
     /// Instead of reconstructing text from individual tokens (which destroys HTML/template formatting),
@@ -747,6 +777,17 @@ impl TokenParser {
         if self.peek_kind() == Some(&TokenKind::Colon) {
             return self.parse_framework_block();
         }
+        // `html var="card":` — header attributes right after the keyword.
+        if let TokenKind::Identifier(keyword) = self.current_kind() {
+            let keyword = keyword.clone();
+            let saved = self.cursor;
+            self.bump();
+            let has_header_attribute = self.at_block_header_attribute(&keyword);
+            self.cursor = saved;
+            if has_header_attribute {
+                return self.parse_framework_block();
+            }
+        }
 
         // Plugin keyword without colon (e.g., "data User")
         let start_location = self.current().location.clone();
@@ -818,8 +859,7 @@ impl TokenParser {
         self.eat(&TokenKind::Newline);
         self.skip_whitespace();
 
-        // Determine the block's indentation level
-        let block_indent_level = self.current_indent_level_or(1);
+        let block_indent_level = self.framework_block_body_level();
 
         // Extract raw content from source using byte positions
         let body_location = self.block_body_location(block_indent_level);
@@ -963,6 +1003,7 @@ impl TokenParser {
                 location: Some(start_location.clone()),
             });
         }
+        attributes.extend(self.parse_block_header_attributes(&block_name)?);
 
         // Expect colon
         self.expect(&TokenKind::Colon)?;
@@ -972,8 +1013,7 @@ impl TokenParser {
         self.eat(&TokenKind::Newline);
         self.skip_whitespace();
 
-        // Determine the block's indentation level
-        let block_indent_level = self.current_indent_level_or(1);
+        let block_indent_level = self.framework_block_body_level();
 
         // Extract raw content from source using byte positions
         let body_location = self.block_body_location(block_indent_level);
@@ -993,6 +1033,85 @@ impl TokenParser {
             location: Some(start_location),
             body_location: Some(body_location),
         })
+    }
+
+    /// True when the cursor is at `name =` and `name` is a header attribute
+    /// `block_name` declares (`[blocks.<name>].attributes` in plugin.toml).
+    pub(super) fn at_block_header_attribute(&self, block_name: &str) -> bool {
+        let TokenKind::Identifier(name) = self.current_kind() else {
+            return false;
+        };
+        self.peek_kind() == Some(&TokenKind::Assign)
+            && self
+                .block_header_attributes
+                .get(block_name)
+                .is_some_and(|declared| declared.contains(name))
+    }
+
+    /// The `name="value"` header attributes between a plugin block's name
+    /// and its colon (`html var="card":`). Only attributes the block declares
+    /// are accepted; any other `name=` there is SYN002.
+    fn parse_block_header_attributes(
+        &mut self,
+        block_name: &str,
+    ) -> Result<Vec<FrameworkAttribute>, CompilerError> {
+        let mut attributes = Vec::new();
+        while let TokenKind::Identifier(name) = self.current_kind() {
+            if self.peek_kind() != Some(&TokenKind::Assign) {
+                break;
+            }
+            let name = name.clone();
+            let location = self.current().location.clone();
+            let declared = self
+                .block_header_attributes
+                .get(block_name)
+                .cloned()
+                .unwrap_or_default();
+            if !declared.contains(&name) {
+                let help = if declared.is_empty() {
+                    format!("The `{}` block takes no header attributes", block_name)
+                } else {
+                    format!(
+                        "The `{}` block accepts: {}",
+                        block_name,
+                        declared
+                            .iter()
+                            .map(|d| format!("{}=\"...\"", d))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                return Err(CompilerError::syntax_error_with_code(
+                    format!(
+                        "`{}` is not a header attribute of the `{}` block",
+                        name, block_name
+                    ),
+                    Some(help),
+                    Some(location),
+                    "SYN002",
+                ));
+            }
+            self.bump(); // name
+            self.bump(); // =
+            let TokenKind::StringLiteral(value) = self.current_kind() else {
+                return Err(CompilerError::syntax_error_with_code(
+                    format!(
+                        "The `{}` header attribute of the `{}` block needs a string value",
+                        name, block_name
+                    ),
+                    Some(format!("Write `{} {}=\"...\":`", block_name, name)),
+                    Some(self.current().location.clone()),
+                    "SYN002",
+                ));
+            };
+            attributes.push(FrameworkAttribute {
+                name,
+                value: Some(value.clone()),
+                location: Some(location),
+            });
+            self.bump(); // value
+        }
+        Ok(attributes)
     }
 
     pub(super) fn parse_tests_block(&mut self) -> Result<Vec<TestCase>, CompilerError> {

@@ -1,0 +1,59 @@
+// Test: bugfixes/frame_ui_html_var_header_attribute
+// Grammar: frame-ui.ebnf html_block / html_var_attribute (`html var="name":`)
+// Fixed in: compiler 0.33.188
+// Ivan-Pasco/cleen-framework-old#26: `html var="name":` did not parse
+// (SYN001 at the colon), and `html: var="name"` inside a function body took
+// the statements after the block into its template, so the variable was
+// never printed. The block's header attribute now reaches frame.ui as the
+// `var` block attribute ([blocks.html] attributes in its plugin.toml) and
+// the variable holds the rendered HTML, in start:, functions, class
+// methods and component methods (plugin-emitted class methods now have
+// their own blocks expanded).
+// Expected output:
+//   <p>hi</p>
+//   <b>card</b>
+//   <i>2</i>
+//   <div><em>L</em></div>
+//   end
+
+plugins:
+	frame.ui
+
+component: tag="ui-badge"
+	inputs:
+		string label
+
+	functions:
+		string badge()
+			html var="b":
+				<em>{!label}</em>
+			return b
+
+	html:
+		<div>{!badge()}</div>
+
+start:
+	html var="out":
+		<p>hi</p>
+	print(out)
+	print(card("card"))
+	Box b = Box()
+	print(b.show("2"))
+	html var="page":
+		<ui-badge label="L"></ui-badge>
+	print(page)
+	print("end")
+
+class Box
+	functions:
+		public:
+			string show(string n)
+				html var="markup":
+					<i>{!n}</i>
+				return markup
+
+functions:
+	string card(string title)
+		html var="cardHtml":
+			<b>{!title}</b>
+		return cardHtml

@@ -942,6 +942,21 @@ impl PluginRegistry {
         keywords
     }
 
+    /// The header attributes each plugin block accepts before its colon
+    /// (`[blocks.<name>].attributes`), keyed by block name. Blocks without
+    /// header attributes are left out.
+    pub fn get_block_header_attributes(&self) -> HashMap<String, Vec<String>> {
+        let mut attributes = HashMap::new();
+        for (block_name, plugin) in &self.handlers {
+            let names = plugin.block_header_attributes(block_name);
+            if !names.is_empty() {
+                attributes.insert(block_name.clone(), names.to_vec());
+            }
+        }
+        crate::parser::grammar::register_fragment_block_header_attributes(&attributes);
+        attributes
+    }
+
     /// Get completions for a specific block type
     ///
     /// Delegates to the plugin that handles the given block type.

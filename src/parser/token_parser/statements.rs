@@ -284,6 +284,13 @@ impl TokenParser {
             return self.parse_validate_block();
         }
 
+        // A plugin block with header attributes: `html var="card":`.
+        if self.plugin_keywords.contains(&first_name) && self.at_block_header_attribute(&first_name)
+        {
+            self.cursor = first_cursor;
+            return self.parse_framework_block();
+        }
+
         // Check for apply block: identifier: or identifier.method:
         if self.check(&TokenKind::Colon) {
             // Check if identifier is a registered plugin block name (e.g., html, component)

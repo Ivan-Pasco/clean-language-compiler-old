@@ -215,6 +215,13 @@ pub struct PluginBlockConfig {
     /// opt a specific block out of typed emission during gradual migration.
     #[serde(default)]
     pub version: Option<u32>,
+    /// Header attributes the block accepts between its name and its colon,
+    /// each written `name="string"` (e.g. `attributes = ["var"]` allows
+    /// `html var="card":`). The parser passes them to the plugin in the
+    /// block's attributes JSON; any other `name=` on the header is a parse
+    /// error.
+    #[serde(default)]
+    pub attributes: Vec<String>,
 }
 
 fn default_min_compiler() -> String {

@@ -23,7 +23,7 @@ mod statements;
 use crate::ast::{Class, Program};
 use crate::error::CompilerError;
 use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, trace};
 
 /// Returns the ordering index for the core sections, or None for auxiliary sections.
@@ -68,6 +68,9 @@ pub struct TokenParser {
     pub(super) brace_depth: usize, // Track brace depth for multiline object literal support
     /// Plugin-defined keywords that don't require colons (e.g., "data" from frame.data)
     pub(super) plugin_keywords: HashSet<String>,
+    /// Header attributes each plugin block accepts before its colon
+    /// (`html var="card":`), from `[blocks.<name>].attributes`.
+    pub(super) block_header_attributes: HashMap<String, Vec<String>>,
     /// Original source text for raw content extraction in framework blocks
     pub(super) source_content: String,
     /// When true, skip section ordering enforcement (used for plugin output parsing
@@ -88,6 +91,7 @@ impl TokenParser {
             paren_depth: 0,
             brace_depth: 0,
             plugin_keywords: HashSet::new(),
+            block_header_attributes: HashMap::new(),
             lenient_section_order: false,
             pending_synthetic_classes: Vec::new(),
         }
@@ -108,6 +112,7 @@ impl TokenParser {
             paren_depth: 0,
             brace_depth: 0,
             plugin_keywords: plugin_keywords.into_iter().collect(),
+            block_header_attributes: HashMap::new(),
             lenient_section_order: false,
             pending_synthetic_classes: Vec::new(),
         }
@@ -126,6 +131,11 @@ impl TokenParser {
             tokens.push(Token::simple(TokenKind::Eof, location));
         }
         tokens
+    }
+
+    /// Set the header attributes each plugin block accepts before its colon.
+    pub fn set_block_header_attributes(&mut self, attributes: HashMap<String, Vec<String>>) {
+        self.block_header_attributes = attributes;
     }
 
     /// Enable lenient section ordering (for plugin output parsing).

@@ -712,13 +712,12 @@ impl<'a> PluginExpander<'a> {
         }
         self.pending_function_origins.clear();
 
-        // Plugin-emitted functions (endpoint handlers, helpers) can contain
-        // framework blocks and ORM queries of their own — an `html:` page
-        // inside a route handler — so they are expanded before merging.
+        // Plugin-emitted functions (endpoint handlers, helpers) and class
+        // methods (ORM models, component methods) can contain framework
+        // blocks and ORM queries of their own — an `html:` page inside a
+        // route handler, `html var="x":` in a component method — so they are
+        // expanded before merging.
         self.merge_pending_functions(program)?;
-
-        // Plugin-emitted classes (e.g. ORM models from frame.data).
-        program.classes.append(&mut self.pending_classes);
 
         // Capabilities merge with dedup: identical signatures across
         // plugins/files are silently coalesced; a name clash with a different
@@ -752,7 +751,7 @@ impl<'a> PluginExpander<'a> {
     /// a bound against a plugin that never converges.
     fn merge_pending_functions(&mut self, program: &mut Program) -> Result<(), PluginError> {
         let mut rounds = 0;
-        while !self.pending_functions.is_empty() {
+        while !self.pending_functions.is_empty() || !self.pending_classes.is_empty() {
             rounds += 1;
             if rounds > 16 {
                 return Err(PluginError::ExpansionFailed {
@@ -765,6 +764,9 @@ impl<'a> PluginExpander<'a> {
             let pending = std::mem::take(&mut self.pending_functions);
             let expanded = self.expand_functions(pending)?;
             program.functions.extend(expanded);
+            let pending_classes = std::mem::take(&mut self.pending_classes);
+            let expanded_classes = self.expand_classes(pending_classes)?;
+            program.classes.extend(expanded_classes);
         }
         Ok(())
     }
@@ -2352,6 +2354,69 @@ mod tests {
             &start.body[0],
             Statement::Expression { expr: Expression::Call(name, _), .. } if name == "__page_start"
         ));
+    }
+
+    /// Emits a class whose method holds a framework block, as frame.ui does
+    /// for a component method containing `html var="x":`.
+    struct ClassEmittingPlugin;
+
+    impl FrameworkPlugin for ClassEmittingPlugin {
+        fn name(&self) -> &'static str {
+            "test.classes"
+        }
+
+        fn handles(&self) -> &'static [&'static str] {
+            &["with_class"]
+        }
+
+        fn expand(&self, _block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+            Ok(Vec::new())
+        }
+
+        fn expand_full(&self, _block: &FrameworkBlock) -> PluginResult<PluginExpansion> {
+            let mut class = crate::ast::Class::new("Widget".to_string(), None);
+            class.methods.push(Function::new(
+                "show".to_string(),
+                Vec::new(),
+                Type::Void,
+                vec![Statement::FrameworkBlock {
+                    name: "echo".to_string(),
+                    content: "in method".to_string(),
+                    attributes: vec![],
+                    location: None,
+                    body_location: None,
+                }],
+                None,
+            ));
+            Ok(PluginExpansion {
+                classes: vec![class],
+                ..PluginExpansion::default()
+            })
+        }
+    }
+
+    #[test]
+    fn framework_block_in_plugin_emitted_class_method_is_expanded() {
+        let registry = PluginRegistry::builder()
+            .add(EchoPlugin)
+            .add(ClassEmittingPlugin)
+            .build()
+            .unwrap();
+
+        let program = make_test_program(vec![nested_block("with_class")]);
+        let mut expander = PluginExpander::new(&registry);
+        let result = expander.expand_program(program).unwrap();
+
+        let widget = result
+            .classes
+            .iter()
+            .find(|c| c.name == "Widget")
+            .expect("plugin-emitted class merged");
+        assert!(
+            matches!(&widget.methods[0].body[0], Statement::Print { .. }),
+            "the block inside the emitted method must be expanded; got {:?}",
+            widget.methods[0].body
+        );
     }
 
     /// Calls a bridge-looking function its (absent) manifest never declares.

@@ -1312,6 +1312,9 @@ impl MultiFileCompiler {
             Vec::new()
         };
         let mut parser = SpecificationParser::with_plugin_keywords(tokens, plugin_keywords);
+        if let Some(ref registry) = self.config.plugin_registry {
+            parser.set_block_header_attributes(registry.get_block_header_attributes());
+        }
         let ast = parser.parse_program()?;
 
         // Extract imports from AST, preserving file import flag
@@ -1473,6 +1476,9 @@ impl MultiFileCompiler {
             Vec::new()
         };
         let mut parser = SpecificationParser::with_plugin_keywords(tokens, plugin_keywords);
+        if let Some(ref registry) = self.config.plugin_registry {
+            parser.set_block_header_attributes(registry.get_block_header_attributes());
+        }
         let mut parsed_ast = parser.parse_program()?;
 
         // Stage 2.5a: Plugin Enforcement
