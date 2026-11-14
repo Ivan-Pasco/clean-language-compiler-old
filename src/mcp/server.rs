@@ -2269,31 +2269,8 @@ Header order when both are present: `class Name [is Parent] [can C1, C2, ...]`.
 - `SEM013` — class implements a capability method with the wrong signature.
 - `SEM014` — a capability default body calls a method that isn't part of the same capability.
 
-## Event Handlers (events: class section)
-Classes can declare an `events:` block sibling to `functions:` for UI event handlers (frame.ui components, etc.). Event-handler methods use a distinct signature: bare `name(params):` form — NO return type, trailing colon required. Parameters use `name [: type]` form.
-
-The compiler tags each `events:` method with `FunctionModifier::EventHandler`. After expansion, the compiler emits a bare-named top-level dispatch function per event method (when the class has a matching `state:` block instance), so the browser loader's `instance.exports[handlerName]()` lookup succeeds.
-
-```
-class FormatToolbar
-	events:
-		onMount():
-			printl("mounted")
-		fmt_bold():
-			printl("bold clicked")
-		fmt_italic():
-			printl("italic clicked")
-
-state:
-	FormatToolbar instance = FormatToolbar()
-
-start:
-	// Direct method call works as normal:
-	instance.onMount()
-	// Bare-name shim works too (used by the browser loader):
-	fmt_bold()
-	fmt_italic()
-```
+## Event Handlers (events: belongs to component:)
+`events:` is a section of a frame.ui `component:` block only (frame-ui.ebnf `events_section`); frame.ui exports each parameterless handler by its bare name for the browser loader. A plain `class` has no `events:` section (SYN002) — give it ordinary methods in `functions:`.
 
 ## Environment Variables
 Use `env.get("VAR_NAME")` — the single canonical form for reading environment variables. Do NOT use `$VAR` or `env("VAR")` shortcuts; they were removed in 2026-06-15.

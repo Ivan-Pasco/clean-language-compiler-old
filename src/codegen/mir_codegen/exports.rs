@@ -73,8 +73,7 @@ impl MirCodeGenerator<'_> {
             // A class member is checked by its name in the source: its bare
             // export must not replace a runtime function or export either.
             let name = function.source_name();
-            let from_plugin = function.location.file == crate::ast::PLUGIN_OUTPUT_MARKER
-                || function.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
+            let from_plugin = function.location.file == crate::ast::PLUGIN_OUTPUT_MARKER;
             let runtime_name = self.wasm_generator.function_map.contains_key(name)
                 || registered_later.contains(&name);
             let taken = (runtime_name && !from_plugin)

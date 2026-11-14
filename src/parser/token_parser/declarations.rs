@@ -417,94 +417,6 @@ impl TokenParser {
         })
     }
 
-    /// Parse a method declared inside an `events:` block.
-    ///
-    /// Per `foundation/spec/plugins/frame-ui.ebnf §events_section`:
-    ///
-    /// ```text
-    /// event_handler_function = identifier , "(" , [ parameter_list ] , ")" , ":" , NEWLINE
-    ///                        , INDENT , INDENT , INDENT , { statement } ;
-    /// parameter_list         = parameter , { "," , parameter } ;
-    /// parameter              = identifier , [ ":" , type ] ;
-    /// ```
-    ///
-    /// The shape `name(params):` is intentionally distinct from
-    /// `functions_method` — no return type (handlers are implicitly void),
-    /// trailing colon required, and parameters use `name [":" type]` form
-    /// instead of `type name`. This is what frame.ui v2.12.4+ emits from
-    /// `expand_component` once `normalize_handlers` no longer rewrites
-    /// `events:` to `functions:`. Treating events: methods as if they were
-    /// ordinary functions: methods (the previous implementation) failed
-    /// with "Unsupported statement type: Colon" because the trailing colon
-    /// in `onMount():` had no place in the standard method grammar.
-    pub(super) fn parse_event_handler_in_block(&mut self) -> Result<Function, CompilerError> {
-        let header_level = self.get_current_indent_level();
-        let start_location = self.current().location.clone();
-
-        // Method name.
-        let name_token = self.expect_name()?;
-        let func_name = name_token.text.clone();
-        self.skip_whitespace();
-
-        // Parameters: spec form `name [":" type]`, comma-separated.
-        self.expect(&TokenKind::LeftParen)?;
-        self.skip_whitespace();
-
-        let mut parameters = Vec::new();
-        if !self.check(&TokenKind::RightParen) {
-            loop {
-                self.skip_whitespace();
-                let param_name_token = self.expect_name()?;
-                let param_name = param_name_token.text.clone();
-                self.skip_whitespace();
-                // Optional `: type` annotation. Defaults to Any when absent
-                // so untyped handler params still resolve.
-                let param_type = if self.eat(&TokenKind::Colon) {
-                    self.skip_whitespace();
-                    self.parse_type()?
-                } else {
-                    Type::Any
-                };
-                parameters.push(Parameter {
-                    name: param_name,
-                    type_: param_type,
-                    default_value: None,
-                });
-                self.skip_whitespace();
-                if !self.eat(&TokenKind::Comma) {
-                    break;
-                }
-            }
-        }
-        self.expect(&TokenKind::RightParen)?;
-        self.skip_whitespace();
-
-        // The trailing colon is REQUIRED in the spec form. We accept its
-        // absence to also handle anyone still writing the typed-return form
-        // (`void name()`) inside an events: block — though that's outside
-        // the spec, callers may rely on the older shape until frame.ui's
-        // emit settles. When the colon IS present we expect a newline after
-        // it (statement body begins on the next line).
-        self.eat(&TokenKind::Colon);
-        self.skip_whitespace();
-
-        // Body — same indented-block handling as functions: methods.
-        let body = self.parse_block(header_level)?;
-
-        Ok(Function {
-            name: func_name,
-            type_parameters: Vec::new(),
-            type_constraints: Vec::new(),
-            parameters,
-            return_type: Type::Void,
-            body,
-            description: None,
-            visibility: Visibility::Public,
-            modifier: FunctionModifier::None,
-            location: Some(start_location),
-        })
-    }
-
     pub(super) fn parse_class(&mut self) -> Result<Class, CompilerError> {
         self.expect(&TokenKind::Class)?;
         self.skip_whitespace();
@@ -775,75 +687,31 @@ impl TokenParser {
                     }
                 }
                 TokenKind::Identifier(_) => {
-                    // HYDRATE_AUTO Gap 2 — `events:` class section.
-                    //
-                    // Spec: foundation/spec/plugins/frame-ui.ebnf §events_section.
-                    // A class can declare an `events:` block sibling to `functions:`.
-                    // Methods declared inside it have identical signatures and bodies
-                    // to ordinary methods; the distinction is that the post-expansion
-                    // shim pass emits a bare-named top-level dispatch function for
-                    // each, so that the browser loader's
-                    // `instance.exports[handlerName]()` lookup succeeds when a click
-                    // event hits the wrapper. Without this branch every events:-block
-                    // would have been swallowed by the generic identifier:colon
-                    // sub-section handler below and re-emitted as a synthetic class
-                    // of fields — which is what frame.ui v2.12.3 works around by
-                    // rewriting `events:` to `functions:` in `normalize_handlers`.
-                    let events_section = if let TokenKind::Identifier(name) = self.current_kind() {
-                        name == "events" && matches!(self.look_ahead(1).kind, TokenKind::Colon)
-                    } else {
-                        false
-                    };
-                    if events_section {
-                        self.bump(); // consume 'events'
-                        self.skip_whitespace();
-                        self.expect(&TokenKind::Colon)?;
-                        self.skip_whitespace();
-
-                        let events_indent_level = self.current_indent_level_or(1);
-
-                        // Mirror the methods-parsing loop from the Functions arm.
-                        while !self.is_at_end() {
-                            self.skip_whitespace();
-                            if self.is_at_end() {
-                                break;
-                            }
-                            if let TokenKind::Dedent(dedent_level) = self.current_kind() {
-                                if *dedent_level < events_indent_level {
-                                    break;
-                                }
-                                self.bump();
-                                self.skip_whitespace();
-                            }
-                            self.skip_indentation();
-                            if self.is_at_end() {
-                                break;
-                            }
-                            if matches!(
-                                self.current_kind(),
-                                TokenKind::Class
-                                    | TokenKind::Start
-                                    | TokenKind::Function
-                                    | TokenKind::Tests
-                                    | TokenKind::Functions
-                                    | TokenKind::Always
-                                    | TokenKind::Public
-                                    | TokenKind::Constructor
-                                    | TokenKind::Can
-                            ) {
-                                break;
-                            }
-                            if matches!(self.current_kind(), TokenKind::Identifier(_)) {
-                                let mut func = self.parse_event_handler_in_block()?;
-                                // Tag this method so the post-expansion shim
-                                // pass knows to emit a bare-named dispatch.
-                                func.modifier = crate::ast::FunctionModifier::EventHandler;
-                                methods.push(func);
-                            } else {
-                                break;
-                            }
-                        }
-                        continue;
+                    // `events:` belongs to frame.ui `component:` blocks
+                    // (frame-ui.ebnf events_section); a plain class has no
+                    // such section (grammar.ebnf class_body_item).
+                    if matches!(self.current_kind(), TokenKind::Identifier(name) if name == "events")
+                        && matches!(self.look_ahead(1).kind, TokenKind::Colon)
+                    {
+                        use crate::error::{ErrorContext, ErrorType};
+                        return Err(CompilerError::Syntax {
+                            context: Box::new(
+                                ErrorContext::new(
+                                    "`events:` is not a class section: event handlers belong \
+                                     in a frame.ui `component:` block"
+                                        .to_string(),
+                                    Some(
+                                        "Declare the handlers in a `component:` block's \
+                                         `events:` section, or make them methods in the \
+                                         class's `functions:` section"
+                                            .to_string(),
+                                    ),
+                                    ErrorType::Syntax,
+                                    Some(self.current().location.clone()),
+                                )
+                                .with_error_code("SYN002"),
+                            ),
+                        });
                     }
                     // Look ahead to distinguish three cases:
                     //   1. `identifier ":" newline/indent`  → plugin-injected sub-section header

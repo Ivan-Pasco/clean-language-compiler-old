@@ -143,33 +143,3 @@ class Counter
         .get_typed_func::<i32, i32>(&mut store, "bump")
         .expect("the export `bump` is the method (it takes `this`)");
 }
-
-#[test]
-fn event_handler_export_is_the_dispatch_function() {
-    let source = "start:
-\tinstance.onMount()
-
-state:
-\tToolbar instance = Toolbar()
-
-class Toolbar
-\tevents:
-\t\tonMount():
-\t\t\tprintl(\"mounted\")
-\t\tfmt_bold():
-\t\t\tprintl(\"bold clicked\")
-";
-    let wasm = clean_language_compiler::compile(source).expect("compiles");
-    let (mut store, instance, output) = instantiate(&wasm);
-    instance
-        .get_typed_func::<(), ()>(&mut store, "_start")
-        .expect("_start")
-        .call(&mut store, ())
-        .expect("runs");
-    instance
-        .get_typed_func::<(), ()>(&mut store, "fmt_bold")
-        .expect("fmt_bold export")
-        .call(&mut store, ())
-        .expect("handler runs");
-    assert_eq!(output.lock().unwrap().as_str(), "mounted\nbold clicked\n");
-}

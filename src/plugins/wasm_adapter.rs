@@ -4901,18 +4901,14 @@ fn attr_json_pair(key: &str, value: Option<&str>) -> String {
 }
 
 /// Build the JSON attribute object passed to a plugin's expand export from
-/// the block's declared attributes plus any inline `key="value"` pairs
-/// (already formatted by `extract_inline_attrs`). Returns an empty string
-/// when there are no attributes, which is what plugins expect.
-fn build_attributes_json(
-    attributes: &[crate::plugins::FrameworkAttribute],
-    extra_attrs: Vec<String>,
-) -> String {
-    let mut pairs: Vec<String> = attributes
+/// the block's declared attributes. Returns an empty string when there are
+/// no attributes, which is what plugins expect. Text on the block's header
+/// line after the `:` stays in the body; the plugin reads it.
+fn build_attributes_json(attributes: &[crate::plugins::FrameworkAttribute]) -> String {
+    let pairs: Vec<String> = attributes
         .iter()
         .map(|attr| attr_json_pair(&attr.name, attr.value.as_deref()))
         .collect();
-    pairs.extend(extra_attrs);
     if pairs.is_empty() {
         String::new()
     } else {
@@ -4945,11 +4941,10 @@ fn expand_inputs(block_name: &str, block: &FrameworkBlock, version: u32) -> Expa
     } else {
         split_binding_header(block_name, &block.content)
     };
-    let (extra_attrs, body) = extract_inline_attrs(content);
     ExpandInputs {
         binding_header,
-        attributes: build_attributes_json(&block.attributes, extra_attrs),
-        body,
+        attributes: build_attributes_json(&block.attributes),
+        body: content.to_string(),
     }
 }
 
@@ -4982,97 +4977,6 @@ fn split_binding_header<'c>(block_name: &str, content: &'c str) -> (Option<Strin
         ),
         None => (Some(content.to_string()), ""),
     }
-}
-
-/// Extract the inline `key="value"` attributes written on a block's header
-/// line (`component: tag="site-header"`, frame-ui.ebnf
-/// `component_tag_attr`).
-///
-/// The parser hands over the block content from the first token after the
-/// `:`. Text on the header line therefore arrives unindented as the first
-/// line, while every body line keeps its leading tab. So the first line is
-/// an attribute line only when it is not indented and consists entirely of
-/// `identifier="string"` pairs separated by whitespace or a comma. Values are
-/// `string_literal`s (grammar.ebnf §1.6) and their escapes are decoded.
-///
-/// Returns the attributes as JSON members (`"tag":"site-header"`) and the
-/// body that follows; content without an attribute line is returned whole.
-fn extract_inline_attrs(content: &str) -> (Vec<String>, String) {
-    let (first_line, rest) = match content.find('\n') {
-        Some(pos) => (&content[..pos], &content[pos + 1..]),
-        None => (content, ""),
-    };
-    if first_line.starts_with([' ', '\t']) {
-        return (Vec::new(), content.to_string());
-    }
-    match parse_attr_line(first_line.trim_end()) {
-        Some(pairs) if !pairs.is_empty() => (
-            pairs
-                .iter()
-                .map(|(k, v)| attr_json_pair(k, Some(v)))
-                .collect(),
-            rest.to_string(),
-        ),
-        _ => (Vec::new(), content.to_string()),
-    }
-}
-
-/// Parse a whole line of `identifier="string"` pairs. `None` when any part
-/// of the line is something else.
-fn parse_attr_line(line: &str) -> Option<Vec<(String, String)>> {
-    let mut pairs = Vec::new();
-    let mut rest = line;
-    while !rest.is_empty() {
-        let key_len = rest
-            .char_indices()
-            .find(|&(i, c)| {
-                !(c.is_ascii_alphabetic()
-                    || c == '_'
-                    || (i > 0 && (c.is_ascii_digit() || c == '-')))
-            })
-            .map(|(i, _)| i)
-            .unwrap_or(rest.len());
-        if key_len == 0 {
-            return None;
-        }
-        let key = &rest[..key_len];
-        let mut chars = rest[key_len..].strip_prefix("=\"")?.char_indices();
-        let after_open = &rest[key_len + 2..];
-        let mut value = String::new();
-        let end = loop {
-            let (i, c) = chars.next()?;
-            match c {
-                '"' => break i + 1,
-                '\\' => {
-                    let (_, escaped) = chars.next()?;
-                    value.push(match escaped {
-                        'n' => '\n',
-                        'r' => '\r',
-                        't' => '\t',
-                        '0' => '\0',
-                        '"' | '\\' | '{' | '}' => escaped,
-                        _ => return None,
-                    });
-                }
-                c => value.push(c),
-            }
-        };
-        pairs.push((key.to_string(), value));
-        // Pairs are separated by whitespace, optionally after a comma
-        // (`tag="x", client="off"`).
-        let after = &after_open[end..];
-        let after_comma = after.strip_prefix(',').unwrap_or(after);
-        let trimmed = after_comma.trim_start_matches([' ', '\t']);
-        if !trimmed.is_empty() && trimmed.len() == after.len() {
-            return None;
-        }
-        if trimmed.is_empty() && after_comma.len() != after.len() {
-            // A trailing comma.
-            return None;
-        }
-        rest = trimmed;
-    }
-    Some(pairs)
 }
 
 /// True when `generated_code` already starts with the binding header we stripped
@@ -5545,45 +5449,6 @@ mod tests {
         );
     }
 
-    /// Header-line attributes (`component: tag="x"`) are taken off the
-    /// content; an indented body line of the same shape is body, and
-    /// escaped quotes in a value are decoded instead of breaking parsing.
-    #[test]
-    fn inline_attrs_are_parsed_exactly() {
-        let (attrs, body) = extract_inline_attrs("tag=\"site-header\" client=\"off\"\n\thtml:\n");
-        assert_eq!(attrs, vec!["\"tag\":\"site-header\"", "\"client\":\"off\""]);
-        assert_eq!(body, "\thtml:\n");
-        let (attrs, _) = extract_inline_attrs("tag=\"site-header\", client=\"off\"\n\thtml:\n");
-        assert_eq!(attrs, vec!["\"tag\":\"site-header\"", "\"client\":\"off\""]);
-
-        // An indented first line is the body, even when it looks like an attribute.
-        let content = "\tname=\"x\"\n\tage=\"3\"\n";
-        assert_eq!(extract_inline_attrs(content), (vec![], content.to_string()));
-
-        // Escapes inside a value.
-        let (attrs, _) = extract_inline_attrs("tag=\"a\\\"b\\\\c\"\n\tbody");
-        assert_eq!(attrs, vec![r#""tag":"a\"b\\c""#]);
-
-        // Anything that is not wholly `key="value"` pairs is not an attribute line.
-        for line in [
-            "tag=\"x\" stray",
-            "tag=\"x\"other=\"y\"",
-            "tag=\"x\",",
-            "tag = \"x\"",
-            "list<User> rows =",
-            "tag=\"unterminated",
-            "<div>",
-        ] {
-            let content = format!("{}\n\tbody", line);
-            assert_eq!(
-                extract_inline_attrs(&content),
-                (vec![], content.clone()),
-                "{:?}",
-                line
-            );
-        }
-    }
-
     /// Attribute keys and values are JSON-escaped completely (control
     /// characters included), so the payload a plugin receives always parses.
     #[test]
@@ -5593,7 +5458,7 @@ mod tests {
             value: Some("line1\nline2\t\"q\"\\".to_string()),
             location: None,
         }];
-        let json = build_attributes_json(&attrs, Vec::new());
+        let json = build_attributes_json(&attrs);
         let parsed: serde_json::Value = serde_json::from_str(&json).expect(&json);
         assert_eq!(parsed["title"], "line1\nline2\t\"q\"\\");
     }

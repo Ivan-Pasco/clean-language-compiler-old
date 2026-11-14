@@ -1,47 +1,25 @@
 // Test: bugfixes/events_block_bare_name_export
-// Grammar: foundation/spec/plugins/frame-ui.ebnf §events_section
-//          event_handler_function = identifier , "(" , [ parameter_list ] , ")" , ":" ,
-//                                   NEWLINE , INDENT , INDENT , INDENT , { statement } ;
-// Semantic: Methods declared inside a class's `events:` section follow the
-//           spec form `name(params):` — no return type, trailing colon
-//           required, parameters use `name [":" type]` form. They are
-//           parsed by `parse_event_handler_in_block` and tagged with
-//           FunctionModifier::EventHandler. The post-expansion shim pass
-//           in plugins::expander emits a top-level free function with the
-//           bare method name for each event-handler method whose owning
-//           class has a matching state-block instance. The shim dispatches
-//           through that instance: `void fmt() { state_var.fmt() }`.
-// Regression: HYDRATE_AUTO Gap 2 reopen — earlier attempt routed events:
-//             methods through `parse_function_in_block`, which expects
-//             standard `void name()` syntax and rejects the spec-required
-//             trailing colon with "Unsupported statement type: Colon".
-//             Caused frame.ui v2.12.4 (the version intended to revert
-//             normalize_handlers) to fail with SYN001 on every component.
-//             Closed by adding the dedicated event-handler parser.
+// Changed in 0.33.187: events: only exists in frame.ui component: blocks (developer decision)
+// Grammar: grammar.ebnf class_body_item (no events section);
+//          frame-ui.ebnf events_section belongs to component_block only
+// Semantic: SYN002 — `events:` as the first section of a plain class is
+//           rejected. Earlier compilers parsed it and emitted a bare-named
+//           top-level function per handler; frame.ui now emits the handler
+//           exports for its components itself.
+// Fixed in: compiler 0.33.187
 // Expected output:
-//   onMount ran
-//   bold ran
-//   italic ran
-//   done
+// Expected error:
+//   error[SYN002]: `events:` is not a class section: event handlers belong in a frame.ui `component:` block
+//   events_block_bare_name_export.cln:23:2
+//   help: Declare the handlers in a `component:` block's `events:` section, or make them methods in the class's `functions:` section
 
 start:
-	// Direct method call still works — the event-block methods are normal
-	// class methods, plus a shim alongside them.
-	instance.onMount()
-	// The shim path: top-level free function with the bare name, which
-	// dispatches through the state instance.
-	fmt_bold()
-	fmt_italic()
-	printl("done")
+	instance.fmt_bold()
 
 state:
 	FormatToolbar instance = FormatToolbar()
 
 class FormatToolbar
 	events:
-		onMount():
-			printl("onMount ran")
 		fmt_bold():
 			printl("bold ran")
-		fmt_italic():
-			printl("italic ran")

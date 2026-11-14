@@ -5,14 +5,6 @@ use std::fmt;
 /// as non-roots — they're only kept if user code transitively references them.
 pub const PLUGIN_OUTPUT_MARKER: &str = "<plugin-output>";
 
-/// `SourceLocation.file` marker for code emitted by a v2 plugin's
-/// `lifecycle.module_helpers` slot when `module_helpers_are_roots = true`.
-/// The BFS reachability scan treats these as roots, so their bridge imports
-/// are not tree-shaken even when the helper is only called from generated
-/// code that the BFS cannot statically trace.
-/// See foundation/spec/plugins/contracts/lifecycle.md §3.1.
-pub const PLUGIN_OUTPUT_V2_ROOT_MARKER: &str = "<plugin-output-v2-root>";
-
 /// `SourceLocation.file` marker stamped on every statement injected into the
 /// program start function by a lifecycle slot dispatch (`program_init`,
 /// `server_init`, `client_init`).  Lets downstream passes distinguish
@@ -47,7 +39,6 @@ pub fn plugin_name_from_origin_marker(file: &str) -> Option<&str> {
 pub fn is_synthetic_file_marker(file: &str) -> bool {
     file.is_empty()
         || file == PLUGIN_OUTPUT_MARKER
-        || file == PLUGIN_OUTPUT_V2_ROOT_MARKER
         || file == LIFECYCLE_SLOT_OUTPUT_MARKER
         || file == "plugin"
 }
@@ -1489,17 +1480,6 @@ pub struct RulesBlock {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub enum FunctionModifier {
     None,
-    /// Method declared inside a class's `events:` section.
-    ///
-    /// Semantically identical to a method declared inside `functions:` —
-    /// same signature, same body, called by user code as `instance.method()`.
-    /// Distinguished only so the post-expansion shim pass can find these
-    /// methods, locate the singleton state-block instance of the owning
-    /// class, and emit a bare-named top-level dispatch shim for each. The
-    /// shim is what loader.js looks up via `instance.exports[handlerName]()`
-    /// when a click event fires. Closes HYDRATE_AUTO Gap 2 once frame.ui's
-    /// `normalize_handlers` rewrite is reverted.
-    EventHandler,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -1900,7 +1880,6 @@ mod tests {
     fn synthetic_file_markers_are_recognized() {
         assert!(is_synthetic_file_marker(""));
         assert!(is_synthetic_file_marker(PLUGIN_OUTPUT_MARKER));
-        assert!(is_synthetic_file_marker(PLUGIN_OUTPUT_V2_ROOT_MARKER));
         assert!(is_synthetic_file_marker(LIFECYCLE_SLOT_OUTPUT_MARKER));
         assert!(is_synthetic_file_marker("plugin"));
         // Real user paths must not be treated as synthetic — otherwise the

@@ -1527,7 +1527,7 @@ impl MultiFileCompiler {
         // injected for the entry module.  Shared modules get their own framework
         // blocks expanded but no preambles, preventing duplicate symbols in the
         // merged HIR (E001).
-        let mut ast = if let Some(ref registry) = self.config.plugin_registry {
+        let ast = if let Some(ref registry) = self.config.plugin_registry {
             tracing::debug!(
                 file = %file_path.display(),
                 is_entry = is_entry,
@@ -1591,29 +1591,6 @@ impl MultiFileCompiler {
         } else {
             parsed_ast
         };
-
-        // HYDRATE_AUTO Gap 2 — emit bare-named top-level dispatch shims for
-        // any class method declared inside an `events:` block. Runs whether
-        // or not plugins are active because `events:` is now a first-class
-        // class section (foundation/spec/plugins/frame-ui.ebnf §events_section)
-        // and a class with event handlers needs its shims regardless of
-        // whether the class came from user code or plugin expansion. When
-        // the expander already ran, this is the second invocation and is a
-        // no-op (shims already emitted are detected by name collision and
-        // skipped).
-        crate::plugins::expander::emit_event_handler_shims(&mut ast).map_err(|e| {
-            CompilerError::syntax_error(
-                e.to_string(),
-                Some("Event handler export conflict".to_string()),
-                Some(SourceLocation {
-                    file: file_path.to_string_lossy().to_string(),
-                    line: 1,
-                    column: 1,
-                    byte_start: None,
-                    byte_end: None,
-                }),
-            )
-        })?;
 
         // Stage 3: Build HIR
         let generic_instances = self

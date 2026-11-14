@@ -1606,28 +1606,8 @@ impl MirCodeGenerator<'_> {
                 // from leaking into frontend.wasm (CLIENT_MODULE_LEAK).
                 let is_user_defined = !self.client_mode
                     && !f.location.file.is_empty()
-                    && f.location.file != crate::ast::PLUGIN_OUTPUT_MARKER
-                    && f.location.file != crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
-                // PLUGIN_OUTPUT_V2_ROOT_MARKER is used by `expander.rs::synthesize_event_handler_shims`
-                // for synthesized event-handler shims that dispatch to component
-                // class methods. The browser loader calls these shims via
-                // `instance.exports[handlerName]()` JS — no static call site
-                // exists in MIR — so they must be BFS roots, otherwise their
-                // bridge imports (`_ui_*` helpers etc.) get tree-shaken.
-                //
-                // Plugin v2 module_helpers helpers deliberately do NOT carry
-                // this marker even when `module_helpers_are_roots = true`.
-                // The BFS already seeds `__route_handler_*` / `__page_handler_*`
-                // shims as roots and finds module_helpers naturally through
-                // them — auto-rooting every helper used to leak its bridge
-                // imports unconditionally (GEN003 fingerprint `a2375b1158b2`).
-                let is_v2_module_helper_root =
-                    f.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER;
-                if is_exported_by_attr
-                    || is_external_call_target
-                    || is_user_defined
-                    || is_v2_module_helper_root
-                {
+                    && f.location.file != crate::ast::PLUGIN_OUTPUT_MARKER;
+                if is_exported_by_attr || is_external_call_target || is_user_defined {
                     seed(*sym);
                 }
             }

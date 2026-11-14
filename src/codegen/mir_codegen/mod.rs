@@ -1195,11 +1195,9 @@ impl MirCodeGenerator<'_> {
         {
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             sorted_functions.retain(|(_, f)| {
-                // Dedup any plugin-emitted function (v1 preamble or v2 root helper)
-                // by name — multiple plugins may emit the same helper symbol.
-                if f.location.file == crate::ast::PLUGIN_OUTPUT_MARKER
-                    || f.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER
-                {
+                // Dedup any plugin-emitted preamble function by name —
+                // multiple plugins may emit the same helper symbol.
+                if f.location.file == crate::ast::PLUGIN_OUTPUT_MARKER {
                     seen.insert(f.name.clone())
                 } else {
                     true
@@ -1217,17 +1215,9 @@ impl MirCodeGenerator<'_> {
         //
         // We skip preamble functions whose names are not in the BFS reachable set.
         // User-defined functions are always kept (they are seeded by the BFS).
-        //
-        // v2 (contracts/lifecycle.md §3.1): functions tagged with the v2-root
-        // marker are explicit roots — never DCE'd, even when not transitively
-        // reachable from user code. Their bridge imports stay too because the
-        // BFS seeded them in the first place.
         if let Some(reachable) = &self.wasm_generator.reachable_imports {
             let reachable_snap = reachable.clone();
             sorted_functions.retain(|(_, f)| {
-                if f.location.file == crate::ast::PLUGIN_OUTPUT_V2_ROOT_MARKER {
-                    return true;
-                }
                 f.location.file != crate::ast::PLUGIN_OUTPUT_MARKER
                     || reachable_snap.contains(&f.name)
             });

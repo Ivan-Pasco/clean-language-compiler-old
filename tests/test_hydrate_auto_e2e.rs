@@ -431,13 +431,10 @@ fn event_handlers_exported_by_bare_name() {
          falls out of the reachable set and is DCE'd by [src/codegen/mir_codegen/\
          mod.rs:928](src/codegen/mir_codegen/mod.rs#L928).\n\
          \n\
-         Fix: frame.ui-side. Either (a) emit a top-level shim function for each \
-         events:-block method (bare name, delegates to the instance global — the \
-         compiler's regular-function export rule then places it in the export \
-         table by name), or (b) tag the component class's event-block methods \
-         with PLUGIN_OUTPUT_V2_ROOT_MARKER so the BFS treats them as explicit \
-         roots. The shim approach is cleaner because the bare name is then a \
-         genuine top-level function and not a method needing instance dispatch.\n\
+         Fix: frame.ui-side — emit a top-level function for each \
+         events:-block handler (bare name, delegates to the instance global); \
+         the compiler's regular-function export rule then places it in the \
+         export table by name.\n\
          \n\
          Reachable exports observed: {:?}",
         exports

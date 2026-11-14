@@ -1,55 +1,29 @@
 // Test: bugfixes/events_block_plugin_shape
-// Changed in 0.33.186: this. is not part of Clean (developer decision)
-// Fixed in: compiler 0.33.186 (header added with the change; the pin runs
-//   in check_regressions from this version on)
-// Grammar: foundation/spec/plugins/frame-ui.ebnf §events_section
-// Semantic: Mirrors the AST shape that frame.ui's `expand_component` emits
-//           after `normalize_handlers` becomes a pass-through (the v2.12.4
-//           intent). A component-source `class` with fields, an events:
-//           section in spec form, and a functions: sibling — exactly what
-//           the plugin re-parses into the program AST. Must compile and
-//           emit bare-named exports for every events: method via the shim
-//           pass.
-// Regression: HYDRATE_AUTO Gap 2 second reopen — the earlier events: parser
-//             change handled hand-written user-source events: blocks but
-//             failed on plugin-output shape because the events: section
-//             often appears AFTER fields, and the method form `name():`
-//             (spec) needs its own parser distinct from the typed
-//             `void name()` form. The first regression fixture
-//             `events_block_bare_name_export.cln` covered the user-source
-//             path; this fixture covers the plugin-output path where
-//             frame.ui v2.12.4+ emit lands in the AST.
+// Changed in 0.33.187: events: only exists in frame.ui component: blocks (developer decision)
+// Grammar: grammar.ebnf class_body_item (no events section);
+//          frame-ui.ebnf events_section belongs to component_block only
+// Semantic: SYN002 — `events:` after a plain class's fields is rejected
+//           too (the shape frame.ui once emitted as class text; it now
+//           emits component classes through typed emission).
+// Fixed in: compiler 0.33.187
 // Expected output:
-//   mounted
-//   done
+// Expected error:
+//   error[SYN002]: `events:` is not a class section: event handlers belong in a frame.ui `component:` block
+//   events_block_plugin_shape.cln:23:2
 
 start:
-	instance_my_toolbar.onMount()
-	do_thing()
-	printl("done")
+	instance_my_toolbar.render()
 
 state:
 	MyToolbar instance_my_toolbar = MyToolbar()
 
 class MyToolbar
-	string _tag = "my-toolbar"
-	string _hydration_mode = "on"
 	string _slot_content = ""
 
 	events:
-		onMount():
-			printl("mounted")
 		do_thing():
 			_slot_content = "clicked"
 
 	functions:
 		string render()
-			string __html = ""
-			__html = __html + "<button id='b'>Click</button>"
-			return __html
-
-		void setSlot(string content)
-			_slot_content = content
-
-		string renderSSR()
-			return render()
+			return "<button id='b'>Click</button>"
