@@ -10,6 +10,9 @@
 //   plugin's expansion, which emits calls into ui.* bridges. This canary
 //   is browser-only at runtime (frame.ui provides the JS runtime); the local
 //   wasmtime_runner prints "ok" to satisfy the compile-time smoke test.
+//   toggle() calls ui.toggleClass so the canary imports a ui bridge itself
+//   (it used to rely on an unused _ui_render_page import kept by a
+//   method/function name clash, fixed in 0.33.186).
 // Expected output:
 //   ok
 
@@ -29,6 +32,7 @@ component: tag="canary-widget"
 			// Fixed: was using !, grammar.ebnf unary_op requires not
 			state.expanded = not state.expanded
 			state.count = state.count + 1
+			ui.toggleClass(".canary", "open")
 
 	html:
 		<div class="canary" data-count="{state.count}">

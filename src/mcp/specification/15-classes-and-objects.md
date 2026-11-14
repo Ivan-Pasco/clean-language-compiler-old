@@ -59,7 +59,7 @@ class Shape
         string color
 
     constructor(string colorParam)
-        color = colorParam          // Implicit context - no 'this' needed
+        color = colorParam          // Implicit context - the field by its name
 
     functions:
         public:
@@ -86,7 +86,7 @@ class Circle is Shape
 
 - **Syntax**: Use `class Child is Parent` to inherit from a parent class
 - **Base Constructor**: Use `base(args...)` to call the parent constructor
-- **Implicit Context**: No need for `this` or `self` - fields are directly accessible
+- **Implicit Context**: Fields and methods are referred to by their bare names; Clean has no `this` or `self`
 - **Name Safety**: Parameters must have different names than fields to prevent conflicts
 - **Method Inheritance**: Child classes inherit all public methods from parent classes
 - **Field Inheritance**: Child classes inherit all public fields from parent classes
@@ -180,16 +180,24 @@ Every class has a `toString()`. Unless the class declares or inherits its own, i
 
 #### Implicit Context Rules
 
-Clean Language uses implicit context for accessing class fields:
+Inside a class, the object's own fields and methods are referred to by their bare names:
 
-- ✅ `color = colorParam` (field assignment — implicit `this`)
-- ✅ `return color` (field access — implicit `this`)
+- ✅ `color = colorParam` (field assignment)
+- ✅ `return color` (field access)
 - ✅ `radius = radiusParam` (works in child classes too)
-- ✅ `this.render()` (explicit self-method call)
-- ✅ `this.name` (explicit field access — equivalent to just `name`)
+- ✅ `render()` (call one of the object's own methods)
+- ❌ `this.name`, `this.render()` or a bare `this` — Clean has no `this`: SYN002 `` `this` is not used in Clean: refer to the field or method by its name (`count`, `clear()`) ``
 - ❌ Parameter names cannot match field names (compiler enforced, CLASS007) — except in a constructor without a body, whose parameters name the fields they set: `constructor(integer x, integer y)` stores both arguments
 
-Fields can be accessed directly by name (implicit `this`) or with explicit `this.field`. The `this` keyword is available inside all class methods and refers to the current instance. Explicit `this` is useful only for self-method calls.
+Because a name is never reused for a parameter and a field, a bare name is never ambiguous.
+
+**Name lookup inside a method or constructor.** A bare name is looked up in this order:
+
+1. local variables and parameters;
+2. the class's own members — its fields, and its methods including inherited public methods and capability methods;
+3. top-level functions and state.
+
+So a method named like a top-level function is called by the bare name inside the class.
 
 ### Capabilities (`can`)
 
@@ -206,7 +214,7 @@ can Draw:
 can Describe:
     string describe()
     string tag()
-        return "[" + this.describe() + "]"   // default body
+        return "[" + describe() + "]"   // default body
 ```
 
 Each item in a `can:` block is a method signature. A signature may include an optional default body indented beneath it. Methods without a body are **required** — every class that claims the capability must implement them. Methods with a body are **defaults** — classes inherit the body unless they override it.
@@ -319,7 +327,7 @@ start:
 
 **Rules for Static Methods:**
 - Use `ClassName.method()` syntax for static calls
-- Only allowed if the method doesn't access instance fields (`field`)
+- `ClassName.method()` has no object to run on, so the method must not need one: it may not read or write a field of the class (its own or inherited), call a method of the object that does, or be `toString()`. Otherwise it is CLASS008 — ``'get()' needs a Box object: create one (`Box b = Box()`) and call `b.get()` ``. A method that uses no field or method of the object stays callable through the class name, whatever fields the class has
 - All methods must be in `functions:` blocks
 - From outside the class, `ClassName.method()` reaches only methods under `functions: public:`; calling a private one is SEM005 (`'square' is private and cannot be accessed from outside 'Calc'`)
 - Method calls require parentheses: `MathUtils.add()` not `MathUtils.add`

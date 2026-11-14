@@ -114,7 +114,7 @@ for        this       returns    unit
 ```
 
 - `for` — reserved as an alternate loop keyword. Use `iterate` today.
-- `this` — reserved for possible explicit self-reference in class methods. Class methods currently reference their own fields by bare name.
+- `this` — not used: class methods refer to their own fields and methods by bare name. Writing `this` (`this.x`, `this.m()`, or bare `this`) is SYN002.
 - `returns` — reserved for possible arrow-style function signatures.
 - `unit` — reserved for a possible unit / void marker type distinct from `void`.
 

@@ -34,7 +34,9 @@ The lexer encountered a character that is not valid in any context.
 ### SYN002 — Unexpected Token
 A token appears where the grammar does not allow it.
 
-This includes a type block (an apply block like `integer:` or `string:`
+It also covers `this`, which is a reserved word with no use: `this.x`, `this.m()` and a bare `this` are SYN002 — `` "`this` is not used in Clean: refer to the field or method by its name (`count`, `clear()`)" ``.
+
+It also includes a type block (an apply block like `integer:` or `string:`
 declaring variables) at the top level of a file. Apply blocks are statements; they
 belong inside `start:`, `state:` or a function body.
 
@@ -218,6 +220,7 @@ A symbol (variable, function, class) is declared more than once in the same scop
 - Function defined twice at top level
 - Class defined twice
 - Duplicate import items
+- A top-level user function with the name of a function a plugin block emits (for example a frame.ui `events:` handler export). The error names the plugin and the block: `"Function '{name}' is already defined at {location}; plugin '{plugin}' also emits a function '{name}' for the '{block}:' block"`, with the help `Rename your function '{name}': the plugin's function keeps its name because the plugin's generated code calls it`.
 
 **Example (fails — SEM003):**
 ```clean
@@ -456,23 +459,35 @@ class Circle can Save
 
 ---
 
-### SEM014 — Capability Default Calls Undefined Method
+### SEM014 — Capability Default Uses an Unknown Member
 
-A default method body in a `can` block calls `this.otherMethod()`, but `otherMethod` is neither declared in the same capability nor guaranteed to exist on every class that claims the capability.
+A capability default body names a member that is not a method of the same capability (e.g. `return color`); a default body may use its parameters, locals, top-level names and the capability's own methods.
 
 **Example (fails — SEM014):**
 ```clean
 can Describe:
     string describe()
     string tag()
-        return this.color            // ERROR: color is not part of Describe
+        return color            // ERROR: color is not part of Describe
 ```
 
-**Fix:** Only call methods declared in the same capability from a default body.
+**Message:** `"The default body of '{capability}.{method}' uses '{name}', but '{name}' is not a method of capability '{capability}'"`
+
+**Fix:** Only call methods declared in the same capability (by bare name, e.g. `describe()`) from a default body.
 
 ---
 
 ## Scope Rules
+
+### Name Lookup Inside a Class
+
+Inside a class method or constructor, a bare name is resolved in this order:
+
+1. local variables and parameters;
+2. the class's own members — fields, and methods including inherited public methods and capability methods;
+3. top-level functions and state.
+
+Clean has no `this`: an object's own members are always named by their bare name (`count`, `clear()`). Ambiguity between a parameter and a field cannot arise because a parameter may not reuse a field's name (CLASS007).
 
 ### SCOPE001 — Variable Must Be Declared Before Use
 Variables must be declared with an explicit type before being referenced in expressions or statements.
@@ -684,6 +699,9 @@ class Account
 
 **Example (fails — CLASS008):**
 ```clean
+start:
+    print(Box.get())              // get() reads the field size
+
 class Box
     integer size
 
@@ -691,9 +709,6 @@ class Box
         public:
             integer get()
                 return size
-
-start:
-    print(Box.get())              // get() reads the field size
 ```
 
 **Fix:** create an object and call the method on it: `Box b = Box()` then `b.get()`.
