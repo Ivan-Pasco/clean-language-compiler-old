@@ -18,7 +18,9 @@
 #   5. runs the framework's unit/integration/e2e suites
 #      (scripts/run-framework-tests.sh), the plugin helper tests
 #      (scripts/test-plugins.sh --no-unit, the suites above already ran the
-#      unit tests) and the example smoke tests (scripts/smoke-examples.sh);
+#      unit tests), the example smoke tests (scripts/smoke-examples.sh) and
+#      the node suites of the frame.ui, frame.client and frame.canvas browser
+#      runtimes (node is required);
 #   6. builds the Clean Language website as a canary, when its checkout is
 #      found (--website DIR; default: "Web Site Clean" next to this repo).
 #      Example apps are small; a real site is not, and 0.33.17x shipped a
@@ -171,6 +173,18 @@ if [ ${#FAILED[@]} -eq 0 ]; then
     step "framework suites" bash scripts/run-framework-tests.sh
     step "plugin helper tests" bash scripts/test-plugins.sh --no-unit
     step "example smoke tests" bash scripts/smoke-examples.sh
+    # The browser runtimes run compiled Clean too (the framework's
+    # "Test Frame Framework" workflow runs these same node suites).
+    if command -v node >/dev/null 2>&1; then
+        step "frame.ui runtime tests" sh -c \
+            'node plugins/frame.ui/scripts/test_time_bridges.mjs && node plugins/frame.ui/scripts/test_loader_runtime.mjs'
+        step "frame.client runtime tests" node plugins/frame.client/runtime/tests/client-runtime.test.mjs
+        step "frame.canvas runtime tests" sh -c \
+            'for t in plugins/frame.canvas/runtime/tests/*.test.mjs; do node "$t" || exit 1; done'
+    else
+        echo "-- runtime tests: node not found, FAILED"
+        FAILED+=("runtime tests (node missing)")
+    fi
 fi
 # The canary needs the installed plugins, not the earlier suites' results.
 if [ "$INSTALLED" = 1 ] && [ -n "$WEBSITE" ]; then
