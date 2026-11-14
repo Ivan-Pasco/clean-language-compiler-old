@@ -59,6 +59,7 @@ fn base_manifest_v3(name: &str) -> PluginManifest {
                 PluginBlockConfig {
                     expand: Some("expand_block_typed".to_string()),
                     version: Some(3),
+                    attributes: Vec::new(),
                 },
             );
             m

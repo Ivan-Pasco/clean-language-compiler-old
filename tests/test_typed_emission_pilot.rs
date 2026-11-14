@@ -43,6 +43,7 @@ fn pilot_manifest() -> PluginManifest {
         PluginBlockConfig {
             expand: Some("expand_block_typed".to_string()),
             version: Some(3),
+            attributes: Vec::new(),
         },
     );
     PluginManifest {
@@ -260,6 +261,7 @@ fn plugin008_double_handle_use_fails() {
         PluginBlockConfig {
             expand: Some("expand_block_typed".to_string()),
             version: Some(3),
+            attributes: Vec::new(),
         },
     );
     let manifest = PluginManifest {
@@ -358,6 +360,7 @@ fn emit_error_severity2_with_return0_fails_expansion() {
         PluginBlockConfig {
             expand: Some("expand_block_typed".to_string()),
             version: Some(3),
+            attributes: Vec::new(),
         },
     );
     let manifest = PluginManifest {
