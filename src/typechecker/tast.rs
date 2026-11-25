@@ -47,6 +47,17 @@ pub fn string_match_pattern_error(name: &str) -> String {
 /// to it.
 pub const LIST_WIDEN_F64: &str = "__list_widen_f64";
 
+/// The native runtime functions that copy a list of plain elements into a new
+/// `list<any>` whose elements are boxed (`src/stdlib/list_class.rs`). The
+/// type checker wraps a `list<integer>`, `list<boolean>`, `list<string>`,
+/// `list<number>` or `list<integer:64>` value stored where a `list<any>` is
+/// expected in a call to the one for its element type.
+pub const LIST_TO_ANY_INTEGER: &str = "__list_to_any_integer";
+pub const LIST_TO_ANY_BOOLEAN: &str = "__list_to_any_boolean";
+pub const LIST_TO_ANY_STRING: &str = "__list_to_any_string";
+pub const LIST_TO_ANY_NUMBER: &str = "__list_to_any_number";
+pub const LIST_TO_ANY_INTEGER64: &str = "__list_to_any_integer64";
+
 /// The conversion the type checker wraps around a value stored into an
 /// optional primitive (`integer?`, `number?`, `boolean?` and their sized
 /// forms): a plain value is boxed, and an `any` or another optional

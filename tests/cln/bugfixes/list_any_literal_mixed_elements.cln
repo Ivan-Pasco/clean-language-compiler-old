@@ -1,0 +1,39 @@
+// Test: bugfixes/list_any_literal_mixed_elements
+// Grammar: list_literal, expression
+// Semantic: type-system.md §5 (every value is assignable to any)
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   3
+//   [1,"a",true]
+//   [1,"four"]
+//   7
+//   A:7
+//   E:7
+//   W:q
+//
+// Regression: `list<any> items = [1, "four", true]` was rejected with SEM001
+// (the declared element type any was not used). A list<integer> or
+// list<string> passed to list<any> was read back as garbage because its
+// elements were raw 4-byte values where any values are boxed.
+
+start:
+	list<any> items = [1, "four", true]
+	print(items.length())
+	list<any> la = [1, "a", true]
+	print(la)
+	list<any> two = [1, "four"]
+	print(two)
+	list<integer> xs = [7, 8]
+	print(xs[0])
+	any a = getFirst(xs)
+	print("A:" + a.toString())
+	integer i = getFirst(xs)
+	print("E:" + i.toString())
+	list<string> ss = ["p", "q"]
+	list<any> w = ss
+	any f = w[1]
+	print("W:" + f.toString())
+
+functions:
+	any getFirst(list<any> items)
+		return items[0]

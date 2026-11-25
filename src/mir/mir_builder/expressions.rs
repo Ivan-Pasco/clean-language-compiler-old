@@ -991,13 +991,29 @@ impl MirBuilder {
                 // A `list<integer>` stored where a `list<number>` is
                 // expected: the type checker wrapped it in this call, which
                 // copies it into a new list of 8-byte elements.
-                if function_name_opt.as_deref() == Some(crate::typechecker::tast::LIST_WIDEN_F64)
-                    && arguments.len() == 1
+                // The same for a list of plain elements stored where a
+                // `list<any>` is expected: it is copied into a new list of
+                // boxed values.
+                if let Some(copy) = function_name_opt
+                    .as_deref()
+                    .filter(|name| {
+                        use crate::typechecker::tast::*;
+                        [
+                            LIST_WIDEN_F64,
+                            LIST_TO_ANY_INTEGER,
+                            LIST_TO_ANY_BOOLEAN,
+                            LIST_TO_ANY_STRING,
+                            LIST_TO_ANY_NUMBER,
+                            LIST_TO_ANY_INTEGER64,
+                        ]
+                        .contains(name)
+                    })
+                    .filter(|_| arguments.len() == 1)
                 {
                     let list_id = self.build_expression(context, &arguments[0])?;
                     return Ok(self.emit_named_call(
                         context,
-                        crate::typechecker::tast::LIST_WIDEN_F64,
+                        copy,
                         vec![MirOperand::Value(list_id)],
                         MirType::I32,
                         &expression.location,

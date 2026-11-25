@@ -1,0 +1,14 @@
+// Test: bugfixes/list_literal_number_into_integer_list_rejected
+// Grammar: list_literal, expression
+// Semantic: SEM001 / type-system.md §5 (number is not implicitly an integer)
+// Fixed in: compiler 0.33.189
+// Expected output:
+// Expected error:
+//   number
+//
+// Regression: `list<integer> xs = [1, 2.5]` was accepted and stored 0 for the
+// number element.
+
+start:
+	list<integer> xs = [1, 2.5]
+	print(xs[1])

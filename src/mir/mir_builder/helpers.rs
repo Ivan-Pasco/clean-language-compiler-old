@@ -708,10 +708,25 @@ impl MirBuilder {
             .locals
             .get(&arg_id)
             .map(|local| local.local_type.clone());
-        if !matches!(
-            source,
-            Some(MirType::I32 | MirType::I8 | MirType::I16 | MirType::U8 | MirType::U16)
-        ) {
+        // Any integer source converts into a wider slot: 4-byte sources
+        // (`integer`, `integer:32u`, the small sizes) into `integer:64` and
+        // `number`, 8-byte sources (`integer:64`, `integer:64u`) into
+        // `number`. A source already in the slot's representation stays.
+        let converts = matches!(
+            (&source, &target),
+            (
+                Some(
+                    MirType::I32
+                        | MirType::I8
+                        | MirType::I16
+                        | MirType::U8
+                        | MirType::U16
+                        | MirType::U32
+                ),
+                _
+            ) | (Some(MirType::I64 | MirType::U64), MirType::F64)
+        );
+        if !converts {
             return arg_id;
         }
         let result_id = ValueId(context.function.next_value_id);

@@ -1,0 +1,18 @@
+// Test: bugfixes/bare_matrix_literal_keeps_values
+// Grammar: list_literal, expression
+// Semantic: 04-type-system.md bare generic shorthand (matrix = matrix<any>)
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   [[1,2],[3,4]]
+//   2
+//   [[1,2],[3,4]]
+//
+// Regression: `matrix m = [[1, 2], [3, 4]]` printed nulls because the integer
+// elements were not boxed into any.
+
+start:
+	matrix m = [[1, 2], [3, 4]]
+	print(m)
+	print(m[0][1])
+	matrix<any> m2 = [[1, 2], [3, 4]]
+	print(m2)

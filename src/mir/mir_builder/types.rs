@@ -925,6 +925,15 @@ impl MirBuilder {
                 _ => false,
             }
         }
+        // A `matrix<T>` is a list of `list<T>` rows.
+        let as_list;
+        let target = match target {
+            ConcreteType::Matrix(element) => {
+                as_list = ConcreteType::Array(Box::new(ConcreteType::Array(element.clone())));
+                &as_list
+            }
+            other => other,
+        };
         let (
             TastExpressionKind::ArrayLiteral { elements, .. },
             ConcreteType::Array(element_target),

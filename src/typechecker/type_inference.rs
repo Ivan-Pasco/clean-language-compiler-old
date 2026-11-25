@@ -65,6 +65,11 @@ pub struct TypeInference<'a> {
     /// sized-integer check of returned values (`fit_into_sized_integer`).
     current_return_hir_type: Option<HirType>,
 
+    /// The type a list literal about to be inferred is stored into, when
+    /// the statement declares it (`list<any> items = [1, "four"]`). Taken by
+    /// `infer_array_expression`, so it applies to that literal only.
+    list_literal_target: Option<ConcreteType>,
+
     /// Errors encountered during inference
     errors: Vec<CompilerError>,
     warnings: Vec<CompilerError>,
@@ -110,6 +115,7 @@ impl<'a> TypeInference<'a> {
             current_class: None,
             current_return_type: None,
             current_return_hir_type: None,
+            list_literal_target: None,
             errors: Vec::new(),
             warnings: Vec::new(),
             recursion_depth: 0,
@@ -1469,6 +1475,7 @@ impl<'a> TypeInference<'a> {
         self.fit_to_expected_type(value, target);
         Self::widen_literal_to_declared_type(value, target);
         Self::widen_integer_list_to_number_list(value, target);
+        Self::box_list_into_any_list(value, target);
         // The elements of a list literal and the values of a pairs literal
         // are stored into the target's element slots: `["a", none]` is not a
         // `list<string>` (type-system.md §8), and each element stored into
@@ -1483,6 +1490,7 @@ impl<'a> TypeInference<'a> {
             ) => {
                 let element = (**element).clone();
                 let boxes = element.optional_primitive().is_some();
+                self.fit_literal_rows(elements, element_type, &element, &mut value.expr_type);
                 for item in elements.iter_mut() {
                     if item.expr_type == ConcreteType::Null || boxes {
                         let location = item.location.clone();
@@ -1493,6 +1501,17 @@ impl<'a> TypeInference<'a> {
                     *element_type = element;
                     value.expr_type = target.clone();
                 }
+            }
+            // The rows of a matrix literal are stored as `list<T>` rows.
+            (
+                TastExpressionKind::ArrayLiteral {
+                    elements,
+                    element_type,
+                },
+                ConcreteType::Matrix(row_element),
+            ) => {
+                let row_target = ConcreteType::Array(row_element.clone());
+                self.fit_literal_rows(elements, element_type, &row_target, &mut value.expr_type);
             }
             (TastExpressionKind::ObjectLiteral { fields }, ConcreteType::Pairs(_, value_type)) => {
                 let value_type = (**value_type).clone();
@@ -1556,6 +1575,36 @@ impl<'a> TypeInference<'a> {
             supertype: target.clone(),
             location: location.clone(),
         });
+    }
+
+    /// The rows of a nested list literal stored where rows of `row_target`
+    /// are expected: each row literal is fitted to it (`[[1, 2], [3, 4]]`
+    /// as `list<list<number>>` holds number rows, `none` in a row of
+    /// strings is rejected, type-system.md §8), and the literal takes the
+    /// type of its rows.
+    fn fit_literal_rows(
+        &mut self,
+        elements: &mut [TastExpression],
+        element_type: &mut ConcreteType,
+        row_target: &ConcreteType,
+        literal_type: &mut ConcreteType,
+    ) {
+        if !matches!(row_target, ConcreteType::Array(_))
+            || elements.is_empty()
+            || !elements
+                .iter()
+                .all(|e| matches!(e.kind, TastExpressionKind::ArrayLiteral { .. }))
+        {
+            return;
+        }
+        for row in elements.iter_mut() {
+            let location = row.location.clone();
+            self.require_assignable(row, row_target, &location);
+        }
+        if elements.iter().all(|row| row.expr_type == *row_target) {
+            *element_type = row_target.clone();
+            *literal_type = ConcreteType::Array(Box::new(row_target.clone()));
+        }
     }
 
     /// The values an integer type holds, and for a sized target the suffix
@@ -3072,6 +3121,7 @@ impl<'a> TypeInference<'a> {
                         empty
                     } else {
                         // Normal inference for non-empty literals
+                        self.expect_list_literal_target(init_expr, &declared_type);
                         let mut tast_init = self.infer_expression(init_expr)?;
 
                         // Widen literal type to match a sized integer destination so the MIR
@@ -3439,7 +3489,10 @@ impl<'a> TypeInference<'a> {
                 let is_empty_literal = empty_literal.is_some();
                 let mut tast_value = match empty_literal {
                     Some(empty) => empty,
-                    None => self.infer_expression(value)?,
+                    None => {
+                        self.expect_list_literal_target(value, &target_type);
+                        self.infer_expression(value)?
+                    }
                 };
 
                 // Handle variable assignments (field access handled via PropertyAccess)
@@ -5047,6 +5100,85 @@ impl<'a> TypeInference<'a> {
         ))
     }
 
+    /// Record that the list literal `expr` is stored into `target`, so
+    /// `infer_array_expression` can use the declared element type.
+    fn expect_list_literal_target(&mut self, expr: &ResolvedHirExpression, target: &ConcreteType) {
+        self.list_literal_target = match expr {
+            ResolvedHirExpression::Array { .. } => Some(target.clone()),
+            _ => None,
+        };
+    }
+
+    /// The type two list elements share: the same type, the wider of two
+    /// numeric types (`integer` widens to `integer:64` and to `number`,
+    /// type-system.md §5), or rows of such types. `None` when a value of
+    /// one cannot be stored where the other is expected (`integer` and
+    /// `string`). Elements that are not scalar, string or list values (class
+    /// instances, `any`) share the first element's type, as before.
+    fn unify_literal_element_types(a: &ConcreteType, b: &ConcreteType) -> Option<ConcreteType> {
+        if a == b {
+            return Some(a.clone());
+        }
+        // (bits, unsigned) of an integer type
+        let integer = |t: &ConcreteType| match t {
+            ConcreteType::Integer => Some((32u8, false)),
+            ConcreteType::IntegerSized { bits, unsigned } => Some((*bits, *unsigned)),
+            _ => None,
+        };
+        let is_number =
+            |t: &ConcreteType| matches!(t, ConcreteType::Number | ConcreteType::NumberSized { .. });
+        let numeric = |t: &ConcreteType| integer(t).is_some() || is_number(t);
+        if numeric(a) && numeric(b) {
+            if is_number(a) || is_number(b) {
+                return Some(ConcreteType::Number);
+            }
+            let ((bits_a, unsigned_a), (bits_b, unsigned_b)) = (integer(a)?, integer(b)?);
+            // Plain `integer` is 32 bits wide, so the small sizes share it.
+            let (bits_a, bits_b) = (bits_a.max(32), bits_b.max(32));
+            let (bits, unsigned) = if unsigned_a == unsigned_b {
+                (bits_a.max(bits_b), unsigned_a)
+            } else {
+                // A signed and an unsigned type share the signed type wide
+                // enough for both.
+                let (unsigned_bits, signed_bits) = if unsigned_a {
+                    (bits_a, bits_b)
+                } else {
+                    (bits_b, bits_a)
+                };
+                if unsigned_bits < signed_bits {
+                    (signed_bits, false)
+                } else if unsigned_bits < 64 {
+                    (64, false)
+                } else {
+                    return None;
+                }
+            };
+            return Some(match (bits, unsigned) {
+                (32, false) => ConcreteType::Integer,
+                _ => ConcreteType::IntegerSized { bits, unsigned },
+            });
+        }
+        match (a, b) {
+            // Rows of a nested literal share the type of their elements.
+            (ConcreteType::Array(row_a), ConcreteType::Array(row_b)) => {
+                let widens = matches!(
+                    (&**row_a, &**row_b),
+                    (ConcreteType::Integer, ConcreteType::Number)
+                        | (ConcreteType::Number, ConcreteType::Integer)
+                );
+                widens.then(|| ConcreteType::Array(Box::new(ConcreteType::Number)))
+            }
+            _ if Self::is_primitive_value_type(a) && Self::is_primitive_value_type(b) => None,
+            // A list row beside a scalar or a string.
+            (ConcreteType::Array(_), t) | (t, ConcreteType::Array(_))
+                if Self::is_primitive_value_type(t) =>
+            {
+                None
+            }
+            _ => Some(a.clone()),
+        }
+    }
+
     /// Helper: infer an `Array` literal expression.
     fn infer_array_expression(
         &mut self,
@@ -5054,56 +5186,121 @@ impl<'a> TypeInference<'a> {
         element_type: &HirType,
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
+        // The element type the statement stores this literal into; for a
+        // matrix, a row.
+        let expected_element = match self.list_literal_target.take() {
+            Some(ConcreteType::Array(element)) => Some(*element),
+            Some(ConcreteType::Matrix(element)) => Some(ConcreteType::Array(element)),
+            _ => None,
+        };
         let mut tast_elements = Vec::new();
         for element in elements {
+            if let (ResolvedHirExpression::Array { .. }, Some(expected)) =
+                (element, &expected_element)
+            {
+                self.list_literal_target = Some(expected.clone());
+            }
             let tast_element = self.infer_expression(element)?;
+            self.list_literal_target = None;
             tast_elements.push(tast_element);
         }
-        // A list literal with runtime elements (`[title]`) has no element type
-        // from the HIR; it is the first element's type.
-        // Elements of different classes share their nearest common parent.
-        let concrete_element_type = match (element_type, tast_elements.first()) {
-            (HirType::Void, Some(first)) => {
-                let classes: Option<Vec<SymbolId>> = tast_elements
-                    .iter()
-                    .map(|e| match e.expr_type {
-                        ConcreteType::Class { symbol_id, .. } => Some(symbol_id),
-                        _ => None,
-                    })
-                    .collect();
-                match classes.and_then(|ids| self.nearest_common_class(&ids)) {
-                    Some(symbol_id) => ConcreteType::Class {
-                        symbol_id,
-                        type_args: Vec::new(),
-                    },
-                    None => first.expr_type.clone(),
+
+        // The type the elements share: a number after an integer makes a
+        // list of numbers, an `integer:64` after an integer a list of
+        // `integer:64`. A mismatch is two elements that cannot share one type.
+        let mut shared = tast_elements.first().map(|e| e.expr_type.clone());
+        let mut mismatch: Option<(ConcreteType, usize)> = None;
+        for (index, element) in tast_elements.iter().enumerate().skip(1) {
+            let Some(current) = &shared else { break };
+            match Self::unify_literal_element_types(current, &element.expr_type) {
+                Some(next) => shared = Some(next),
+                None => {
+                    mismatch = Some((current.clone(), index));
+                    break;
                 }
             }
-            _ => self.hir_type_to_concrete(element_type),
+        }
+
+        // A literal stored into `list<any>` holds every element as an `any`.
+        let stored_as_any =
+            matches!(expected_element, Some(ConcreteType::Any)) && !tast_elements.is_empty();
+
+        // A list literal with runtime elements (`[title]`) has no element type
+        // from the HIR; it is the shared type of its elements. A literal of
+        // constants carries the type of its first constant, so the shared
+        // type decides there too.
+        // Elements of different classes share their nearest common parent.
+        let shared_type = match (&shared, &mismatch) {
+            (Some(shared), None)
+                if Self::is_primitive_value_type(shared)
+                    || matches!(shared, ConcreteType::Array(_)) =>
+            {
+                Some(shared.clone())
+            }
+            _ => None,
+        };
+        // A sized integer list (`list<integer:32u> xs = [big, 7]`) takes its
+        // declared type when every element can be stored into it, since a
+        // plain `integer` is assignable to any sized integer.
+        let shared_type = match (&expected_element, &shared_type) {
+            (Some(declared @ ConcreteType::IntegerSized { .. }), Some(shared))
+                if !shared.is_assignable_to(declared)
+                    && tast_elements
+                        .iter()
+                        .all(|e| e.expr_type.is_assignable_to(declared)) =>
+            {
+                Some(declared.clone())
+            }
+            _ => shared_type,
+        };
+        let concrete_element_type = if stored_as_any {
+            ConcreteType::Any
+        } else {
+            match (element_type, tast_elements.first()) {
+                (HirType::Void, Some(first)) => {
+                    let classes: Option<Vec<SymbolId>> = tast_elements
+                        .iter()
+                        .map(|e| match e.expr_type {
+                            ConcreteType::Class { symbol_id, .. } => Some(symbol_id),
+                            _ => None,
+                        })
+                        .collect();
+                    match classes.and_then(|ids| self.nearest_common_class(&ids)) {
+                        Some(symbol_id) => ConcreteType::Class {
+                            symbol_id,
+                            type_args: Vec::new(),
+                        },
+                        None => shared_type.unwrap_or_else(|| first.expr_type.clone()),
+                    }
+                }
+                (_, Some(_)) => {
+                    shared_type.unwrap_or_else(|| self.hir_type_to_concrete(element_type))
+                }
+                _ => self.hir_type_to_concrete(element_type),
+            }
         };
 
         // SEM001: the elements of a list literal share one type. Only
-        // primitive element types are compared here; class and capability
-        // elements are checked where the list is used.
-        if let Some(first) = tast_elements.first() {
-            let first_type = first.expr_type.clone();
-            for element in &tast_elements[1..] {
-                let element_type = &element.expr_type;
-                if Self::is_primitive_value_type(&first_type)
-                    && Self::is_primitive_value_type(element_type)
-                    && !element_type.is_assignable_to(&first_type)
-                    && !first_type.is_assignable_to(element_type)
-                {
-                    self.errors.push(CompilerError::type_error(
-                        format!(
-                            "List elements must share one type: found {} and {}",
-                            first_type, element_type
-                        ),
-                        None,
-                        Some(element.location.clone()),
-                    ));
-                    break;
-                }
+        // scalar, string and list elements are compared here; class and
+        // capability elements are checked where the list is used.
+        if !stored_as_any {
+            if let Some((current, index)) = mismatch {
+                let element = &tast_elements[index];
+                self.errors.push(CompilerError::type_error(
+                    format!(
+                        "List elements must share one type: found {} and {}",
+                        current, element.expr_type
+                    ),
+                    None,
+                    Some(element.location.clone()),
+                ));
+            }
+        }
+
+        // A row stored among rows of numbers is a list of numbers too.
+        if let ConcreteType::Array(_) = &concrete_element_type {
+            for element in tast_elements.iter_mut() {
+                Self::widen_integer_list_to_number_list(element, &concrete_element_type);
             }
         }
 
@@ -5514,14 +5711,17 @@ impl<'a> TypeInference<'a> {
             ConcreteType::Array(declared_element),
         ) = (&mut tast_init.kind, declared_type)
         {
-            let widens = matches!(
-                **declared_element,
-                ConcreteType::Number
-                    | ConcreteType::IntegerSized {
-                        bits: 64,
-                        unsigned: false
-                    }
-            ) && matches!(element_type, ConcreteType::Integer);
+            let widens = match **declared_element {
+                ConcreteType::Number => matches!(
+                    element_type,
+                    ConcreteType::Integer | ConcreteType::IntegerSized { .. }
+                ),
+                ConcreteType::IntegerSized {
+                    bits: 64,
+                    unsigned: false,
+                } => matches!(element_type, ConcreteType::Integer),
+                _ => false,
+            };
             if widens {
                 for element in elements.iter_mut() {
                     Self::widen_literal_to_declared_type(element, declared_element);
@@ -5666,6 +5866,63 @@ impl<'a> TypeInference<'a> {
                     kind: TastExpressionKind::Variable {
                         symbol_id: SymbolId(0),
                         name: LIST_WIDEN_F64.to_string(),
+                    },
+                    expr_type: ConcreteType::Unknown,
+                    location: location.clone(),
+                }),
+                arguments: vec![list],
+                type_args: Vec::new(),
+            },
+            expr_type: target.clone(),
+            location,
+        };
+    }
+
+    /// A `list<integer>`, `list<boolean>`, `list<string>`, `list<number>` or
+    /// `list<integer:64>` value stored where a `list<any>` is expected
+    /// becomes a new list of boxed values (type-system.md §5: the elements
+    /// are not stored alike, so they are converted one by one). The copy is
+    /// a separate list; changing one does not change the other.
+    fn box_list_into_any_list(value: &mut TastExpression, target: &ConcreteType) {
+        use crate::typechecker::tast::{
+            LIST_TO_ANY_BOOLEAN, LIST_TO_ANY_INTEGER, LIST_TO_ANY_INTEGER64, LIST_TO_ANY_NUMBER,
+            LIST_TO_ANY_STRING,
+        };
+        let is_list_of_any = matches!(target, ConcreteType::Array(e) if **e == ConcreteType::Any);
+        if !is_list_of_any {
+            return;
+        }
+        let ConcreteType::Array(element) = &value.expr_type else {
+            return;
+        };
+        let function_name = match **element {
+            ConcreteType::Integer => LIST_TO_ANY_INTEGER,
+            ConcreteType::Boolean => LIST_TO_ANY_BOOLEAN,
+            ConcreteType::String => LIST_TO_ANY_STRING,
+            ConcreteType::Number => LIST_TO_ANY_NUMBER,
+            ConcreteType::IntegerSized {
+                bits: 64,
+                unsigned: false,
+            } => LIST_TO_ANY_INTEGER64,
+            _ => return,
+        };
+        let location = value.location.clone();
+        let list = std::mem::replace(
+            value,
+            TastExpression {
+                kind: TastExpressionKind::Literal {
+                    value: TastLiteral::Null,
+                },
+                expr_type: ConcreteType::Null,
+                location: location.clone(),
+            },
+        );
+        *value = TastExpression {
+            kind: TastExpressionKind::FunctionCall {
+                function: Box::new(TastExpression {
+                    kind: TastExpressionKind::Variable {
+                        symbol_id: SymbolId(0),
+                        name: function_name.to_string(),
                     },
                     expr_type: ConcreteType::Unknown,
                     location: location.clone(),
@@ -7627,6 +7884,15 @@ impl<'a> TypeInference<'a> {
                         });
                     }
                     *element_type = (**target_element).clone();
+                    value.expr_type = target.clone();
+                }
+                // `list<any>`: every element is boxed as an `any`.
+                ConcreteType::Any
+                    if !elements
+                        .iter()
+                        .any(|e| matches!(e.kind, TastExpressionKind::ArrayLiteral { .. })) =>
+                {
+                    *element_type = ConcreteType::Any;
                     value.expr_type = target.clone();
                 }
                 _ => {}

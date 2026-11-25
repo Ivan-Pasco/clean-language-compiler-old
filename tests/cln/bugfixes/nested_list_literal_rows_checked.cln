@@ -1,0 +1,14 @@
+// Test: bugfixes/nested_list_literal_rows_checked
+// Grammar: list_literal, expression
+// Semantic: SEM001 — every row of a nested literal is checked against the element type
+// Fixed in: compiler 0.33.189
+// Expected output:
+// Expected error:
+//   string
+//
+// Regression: only the first row of `[[1, 2], ["a", "b"]]` was typed; the
+// string row was accepted into list<list<integer>> and read back as pointers.
+
+start:
+	list<list<integer>> m = [[1, 2], ["a", "b"]]
+	print(m[1][1])

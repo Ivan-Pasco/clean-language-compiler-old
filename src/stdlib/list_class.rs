@@ -25,6 +25,7 @@
 use crate::codegen::CodeGenerator;
 use crate::codegen::LIST_TYPE_ID;
 use crate::error::CompilerError;
+use crate::mir::mir_types::AnyTypeTag;
 use crate::stdlib::json_class::JSON_TAG_NUMBER;
 use crate::stdlib::list_behavior::{BEHAVIOR_LINE, BEHAVIOR_UNIQUE};
 use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
@@ -1125,6 +1126,73 @@ fn gen_widen_f64(malloc: u32) -> Vec<Instruction<'static>> {
     v
 }
 
+/// `__list_to_any_<kind>(items)`: a new `list<any>` holding the elements of
+/// `items`, each boxed as an `any` (12 bytes: tag at 0, payload at 4). A list
+/// of `list<integer>`, `list<boolean>` and `list<string>` keeps 4-byte
+/// elements; `list<number>` boxes the f64; `list<integer:64>` boxes the value
+/// as a number, as every `integer:64` stored into an `any` is. A null list
+/// stays null.
+///
+/// Locals: 0 items, 1 len, 2 result, 3 i, 4 box.
+fn gen_to_any(malloc: u32, elem: Elem, tag: i32) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(0),
+        Instruction::I32Eqz,
+        Instruction::If(BlockType::Empty),
+        Instruction::I32Const(0),
+        Instruction::Return,
+        Instruction::End,
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::LocalSet(1),
+    ];
+    v.extend(emit_alloc_fresh(malloc, 1, 2, Elem::I32.stride()));
+    v.extend([
+        Instruction::I32Const(0),
+        Instruction::LocalSet(3),
+        Instruction::Block(BlockType::Empty),
+        Instruction::Loop(BlockType::Empty),
+        Instruction::LocalGet(3),
+        Instruction::LocalGet(1),
+        Instruction::I32GeS,
+        Instruction::BrIf(1),
+        // box = malloc(12); box.tag = tag
+        Instruction::I32Const(12),
+        Instruction::Call(malloc),
+        Instruction::LocalSet(4),
+        Instruction::LocalGet(4),
+        Instruction::I32Const(tag),
+        Instruction::I32Store(mem(0, 2)),
+        // box.payload = items[i]
+        Instruction::LocalGet(4),
+    ]);
+    v.extend(elem_addr(0, 3, elem));
+    v.push(elem.load());
+    v.push(match elem {
+        Elem::F64 => Instruction::F64Store(mem(4, 2)),
+        Elem::I64 => Instruction::F64ConvertI64S,
+        _ => Instruction::I32Store(mem(4, 2)),
+    });
+    if elem == Elem::I64 {
+        v.push(Instruction::F64Store(mem(4, 2)));
+    }
+    // result[i] = box
+    v.extend(elem_addr(2, 3, Elem::I32));
+    v.extend([
+        Instruction::LocalGet(4),
+        Elem::I32.store(),
+        Instruction::LocalGet(3),
+        Instruction::I32Const(1),
+        Instruction::I32Add,
+        Instruction::LocalSet(3),
+        Instruction::Br(0),
+        Instruction::End,
+        Instruction::End,
+        Instruction::LocalGet(2),
+    ]);
+    v
+}
+
 /// Copy `len_local` bytes from `src_local` to `pos_local`, advancing
 /// `pos_local`; `k_local` is scratch.
 fn emit_copy_bytes(
@@ -1798,6 +1866,45 @@ impl ListClass {
             &i32x(3),
             gen_widen_f64(malloc),
         )?;
+
+        // list<T> → list<any> for the element types whose slots are not
+        // boxed values (type-system.md §5).
+        for (name, elem, tag) in [
+            (
+                crate::typechecker::tast::LIST_TO_ANY_INTEGER,
+                Elem::I32,
+                AnyTypeTag::Integer,
+            ),
+            (
+                crate::typechecker::tast::LIST_TO_ANY_BOOLEAN,
+                Elem::I32,
+                AnyTypeTag::Boolean,
+            ),
+            (
+                crate::typechecker::tast::LIST_TO_ANY_STRING,
+                Elem::Str,
+                AnyTypeTag::String,
+            ),
+            (
+                crate::typechecker::tast::LIST_TO_ANY_NUMBER,
+                Elem::F64,
+                AnyTypeTag::Number,
+            ),
+            (
+                crate::typechecker::tast::LIST_TO_ANY_INTEGER64,
+                Elem::I64,
+                AnyTypeTag::Number,
+            ),
+        ] {
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &i32x(1),
+                Some(WasmType::I32),
+                &i32x(4),
+                gen_to_any(malloc, elem, tag.as_i32()),
+            )?;
+        }
 
         // join — `list.join(items, sep)` and `string.join(items, sep)` are
         // the same operation (stdlib-reference.md §5).

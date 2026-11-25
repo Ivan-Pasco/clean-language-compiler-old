@@ -1,0 +1,14 @@
+// Test: bugfixes/matrix_literal_none_cell_rejected
+// Grammar: list_literal, expression
+// Semantic: SEM001 / type-system.md §8 (none is not a plain string)
+// Fixed in: compiler 0.33.189
+// Expected output:
+// Expected error:
+//   none cannot be used as string
+//
+// Regression: a `none` cell in a row of `matrix<string>` was accepted and
+// read back as a null string.
+
+start:
+	matrix<string> m = [["a", "b"], ["c", none]]
+	print(m[1][1].length())
