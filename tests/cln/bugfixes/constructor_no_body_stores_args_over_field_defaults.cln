@@ -1,0 +1,32 @@
+// Test: bugfixes/constructor_no_body_stores_args_over_field_defaults
+// Grammar: class_declaration, constructor_declaration
+// Semantic: 15-classes-and-objects "Implicit Context Rules" — a constructor without a body stores its parameters
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   3
+//   4
+//   5
+//   6
+//
+// Regression: field default initializers ran before the implicit
+// `this.f = f` stores and clobbered the parameter of the same name.
+
+start:
+	Point p = Point(3, 4)
+	print(p.x)
+	print(p.y)
+	Pair r = Pair(5, 6)
+	print(r.x)
+	print(r.y)
+
+class Point
+	public:
+		integer x
+		integer y = 9
+	constructor(integer x, integer y)
+
+class Pair
+	public:
+		integer x = 0
+		integer y = 1
+	constructor(integer x, integer y)
