@@ -407,4 +407,160 @@ impl MirBuilder {
             location,
         )))
     }
+
+    /// `1` when the pointer `value_id` is not null, otherwise `0`. A branch
+    /// on a text pointer tests the pointer itself; comparing it with `0`
+    /// would compare text.
+    fn pointer_present(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        value_id: ValueId,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result = self.optional_temp(context, MirType::I32, location);
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result),
+                operation: MirOperation::Select {
+                    condition: MirOperand::Value(value_id),
+                    true_value: MirOperand::Constant(MirConstant::Integer(1)),
+                    false_value: MirOperand::Constant(MirConstant::Integer(0)),
+                },
+                location: location.clone(),
+            },
+        );
+        result
+    }
+
+    /// `==`, `!=` and `is` when an operand is none or text, and neither is
+    /// an optional primitive (`build_optional_comparison` takes those). A
+    /// `string?` is the text pointer with `0` for none, so none and `""` are
+    /// different values although the text comparison reads a null pointer as
+    /// `""`: none equals only none, a plain 0, 0.0, false or text is never
+    /// none, and two texts compare by content only when both are present.
+    /// `None` when the comparison is neither.
+    pub(super) fn build_none_or_text_comparison(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        operator: &BinaryOperator,
+        left: &TastExpression,
+        right: &TastExpression,
+        location: &SourceLocation,
+    ) -> Result<Option<ValueId>, Vec<CompilerError>> {
+        let negate = match operator {
+            BinaryOperator::Equal | BinaryOperator::Is => false,
+            BinaryOperator::NotEqual => true,
+            _ => return Ok(None),
+        };
+        let is_none = |e: &TastExpression| {
+            matches!(e.expr_type, ConcreteType::Null)
+                || matches!(
+                    e.kind,
+                    TastExpressionKind::Literal {
+                        value: TastLiteral::Null
+                    }
+                )
+        };
+        let is_text = |e: &TastExpression| matches!(e.expr_type, ConcreteType::String);
+        let left_none = is_none(left);
+        let right_none = is_none(right);
+        let plain_other = |e: &TastExpression| is_text(e) || e.expr_type.is_primitive_value();
+        let applies = match (left_none, right_none) {
+            (true, true) => false,
+            (true, false) => plain_other(right),
+            (false, true) => plain_other(left),
+            (false, false) => is_text(left) && is_text(right),
+        };
+        if !applies {
+            return Ok(None);
+        }
+
+        // Evaluate in source order.
+        let left_id = self.build_expression(context, left)?;
+        let right_id = self.build_expression(context, right)?;
+
+        let equal = if left_none || right_none {
+            let (other, other_id) = if left_none {
+                (right, right_id)
+            } else {
+                (left, left_id)
+            };
+            if is_text(other) {
+                // Equal when the text pointer is null.
+                let present = self.pointer_present(context, other_id, location);
+                self.optional_binary(
+                    context,
+                    MirBinaryOp::Eq,
+                    MirOperand::Value(present),
+                    MirOperand::Constant(MirConstant::Integer(0)),
+                    location,
+                )
+            } else {
+                // A plain integer, number or boolean is never none.
+                let never = self.optional_temp(context, MirType::I32, location);
+                self.add_instruction(
+                    context,
+                    MirInstruction {
+                        dest: Some(never),
+                        operation: MirOperation::Copy {
+                            source: MirOperand::Constant(MirConstant::Integer(0)),
+                        },
+                        location: location.clone(),
+                    },
+                );
+                never
+            }
+        } else {
+            let left_present = self.pointer_present(context, left_id, location);
+            let right_present = self.pointer_present(context, right_id, location);
+            let same_presence = self.optional_binary(
+                context,
+                MirBinaryOp::Eq,
+                MirOperand::Value(left_present),
+                MirOperand::Value(right_present),
+                location,
+            );
+            // Both none, or both present with the same content. The content
+            // compare of a none reads it as "" and is discarded below.
+            let both_none = self.optional_binary(
+                context,
+                MirBinaryOp::Eq,
+                MirOperand::Value(left_present),
+                MirOperand::Constant(MirConstant::Integer(0)),
+                location,
+            );
+            let content_equal = self.optional_binary(
+                context,
+                MirBinaryOp::Eq,
+                MirOperand::Value(left_id),
+                MirOperand::Value(right_id),
+                location,
+            );
+            let none_or_equal = self.optional_binary(
+                context,
+                MirBinaryOp::Or,
+                MirOperand::Value(both_none),
+                MirOperand::Value(content_equal),
+                location,
+            );
+            self.optional_binary(
+                context,
+                MirBinaryOp::And,
+                MirOperand::Value(same_presence),
+                MirOperand::Value(none_or_equal),
+                location,
+            )
+        };
+        if !negate {
+            return Ok(Some(equal));
+        }
+        Ok(Some(self.optional_binary(
+            context,
+            MirBinaryOp::Eq,
+            MirOperand::Value(equal),
+            MirOperand::Constant(MirConstant::Integer(0)),
+            location,
+        )))
+    }
 }

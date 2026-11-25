@@ -405,6 +405,18 @@ impl MirBuilder {
                     return Ok(result);
                 }
 
+                // `==`, `!=` and `is` on none and text: a `string?` holding
+                // "" is a value, none is the null pointer.
+                if let Some(result) = self.build_none_or_text_comparison(
+                    context,
+                    operator,
+                    left,
+                    right,
+                    &expression.location,
+                )? {
+                    return Ok(result);
+                }
+
                 // `value default fallback` (06-expressions.md §Default Operator):
                 // the fallback is evaluated only when `value` is null. Only
                 // null coalesces — `0`, `false` and `""` are values.

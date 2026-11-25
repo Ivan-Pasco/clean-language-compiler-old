@@ -1,0 +1,55 @@
+// Test: bugfixes/optional_string_empty_text_is_a_value
+// Grammar: type (nullable "?"), variable_declaration, equality_expression
+// Semantic: type-system.md §8 — a `string?` holding "" holds a value:
+//   `== none` and `is none` are false, `!= none` is true. none equals only
+//   none; two optional strings compare by text, none included.
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   false
+//   false
+//   true
+//   false
+//   true
+//   true
+//   false
+//   true
+//   true
+//   true
+//   true
+//   false
+//   true
+//   true
+//   fallback
+//   <empty>
+//   abc
+//
+// Regression: `string? == none` fell to the plain string comparison, which
+// treats a null pointer as the empty text, so "" == none was true.
+
+start:
+	string? s = ""
+	print(s == none)
+	print(s is none)
+	print(s != none)
+	if s == none
+		print("treated as none")
+	string? t = none
+	print(t == s)
+	print(t == none)
+	print(t is none)
+	print(none == s)
+	print(s != t)
+	print(none != s)
+	print(s == "")
+	string? u = ""
+	print(s == u)
+	string? v = "x"
+	print(s == v)
+	print(t != v)
+	print(t == t)
+	print(t default "fallback")
+	string result = s default "fallback"
+	if result == ""
+		print("<empty>")
+	string? w = "abc"
+	print(w default "z")

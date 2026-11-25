@@ -1,0 +1,43 @@
+// Test: bugfixes/none_never_equals_a_plain_value
+// Grammar: equality_expression, null_literal
+// Semantic: 03-lexical-structure.md §None Semantics — `none == none` is
+//   true and `none == anything_else` is false: no plain 0, 0.0, false or
+//   "" equals none, on either side, for `==`, `!=` and `is`.
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   false
+//   false
+//   false
+//   false
+//   true
+//   true
+//   false
+//   false
+//   false
+//   true
+//   false
+//   false
+//   true
+//   true
+//
+// Regression: `none == 0` compared the raw null pointer with the literal
+// and was true, as was `none == ""`.
+
+start:
+	print(none == 0)
+	print(0 == none)
+	print(none == false)
+	print(none == "")
+	print(none != 0)
+	print(none != "")
+	print(none is 0)
+	print(none == 0.0)
+	integer? n = 0
+	print(n == none)
+	print(n != none)
+	boolean? b = false
+	print(b == none)
+	string? s = ""
+	print(s == none)
+	print(s != none)
+	print(none == none)
