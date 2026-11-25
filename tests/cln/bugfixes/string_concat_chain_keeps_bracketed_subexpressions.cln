@@ -1,0 +1,38 @@
+// Test: bugfixes/string_concat_chain_keeps_bracketed_subexpressions
+// Grammar: grammar.ebnf `string_concat_expr`, `additive_expr`
+// Semantic: ast.md faithful lowering (HIR string-builder rewrite must not change meaning)
+// Fixed in: compiler 0.33.189
+//
+// The return-chain and call-argument rewrites split a `+` chain into one
+// operation per operand. They flattened bracketed right operands and integer
+// additions on the left spine, so the same expression compiled in one
+// position and failed (SEM001) in another.
+//
+// Expected output:
+//   Sum: 3!
+//   Sum: 3!
+//   13 items
+
+start:
+	print(f(1, 2))
+	print(g(1, 2))
+	print(loopy())
+
+functions:
+	string f(integer a, integer b)
+		string r = "Sum: " + (a + b) + "!"
+		return r
+
+	string g(integer a, integer b)
+		return "Sum: " + (a + b) + "!"
+
+	string show(string s)
+		return s
+
+	string loopy()
+		integer i = 3
+		string out = ""
+		while i < 4
+			out = out + show(i + 10 + " items")
+			i = i + 1
+		return out

@@ -4431,8 +4431,59 @@ impl HirBuilder {
         if !Self::chain_contains_string_literal_leaf(expr) {
             return false;
         }
+        // The chain is split into one append per operand, which is only
+        // equivalent when every `+` on the spine is a string concatenation.
+        if !Self::chain_decomposes_safely(expr) {
+            return false;
+        }
         // Count operands: at least 3 means at least 2 `+` operators.
         Self::count_chain_operands(expr) >= 3
+    }
+
+    /// True when splitting the `+` chain `expr` into one operation per
+    /// operand preserves its meaning. Every `+` node on the left spine must
+    /// be provably a string concatenation (it contains a string literal
+    /// leaf, or is an explicit `StringConcat`); otherwise a spine node such
+    /// as `i + 10` in `i + 10 + " items"` is integer addition and must stay
+    /// one operand. A right operand that is itself a `+` node must be
+    /// provably a string for the same reason (`"Sum: " + (a + b) + "!"`
+    /// keeps `(a + b)` as an integer sum). Right operands are never split.
+    fn chain_decomposes_safely(expr: &HirExpression) -> bool {
+        let is_concat_node = |e: &HirExpression| {
+            matches!(
+                e,
+                HirExpression::BinaryOp {
+                    op: HirBinaryOp::Add | HirBinaryOp::StringConcat,
+                    ..
+                }
+            )
+        };
+        let provably_string = |e: &HirExpression| {
+            matches!(
+                e,
+                HirExpression::BinaryOp {
+                    op: HirBinaryOp::StringConcat,
+                    ..
+                }
+            ) || Self::chain_contains_string_literal_leaf(e)
+        };
+        let mut cur = expr;
+        while let HirExpression::BinaryOp {
+            left, op, right, ..
+        } = cur
+        {
+            if !matches!(op, HirBinaryOp::Add | HirBinaryOp::StringConcat) {
+                break;
+            }
+            if !provably_string(cur) {
+                return false;
+            }
+            if is_concat_node(right) && !provably_string(right) {
+                return false;
+            }
+            cur = left.as_ref();
+        }
+        true
     }
 
     /// Count the operand leaves of a left-folded `+` / `StringConcat`
@@ -4446,8 +4497,11 @@ impl HirBuilder {
                 ..
             } => {
                 // A left-fold `((a + b) + c) + d` has one RHS per node;
-                // the leftmost leaf is the base. Recurse on `left`.
-                Self::count_chain_operands(left) + Self::count_chain_operands(right)
+                // the leftmost leaf is the base. Recurse on `left` only: a
+                // bracketed right operand is one operand (see
+                // `flatten_concat_chain_fragments`).
+                let _ = right;
+                Self::count_chain_operands(left) + 1
             }
             _ => 1,
         }
@@ -4460,13 +4514,12 @@ impl HirBuilder {
     /// Consumes the input to avoid a clone of what may be a very large
     /// tree of expressions.
     fn flatten_concat_chain_fragments(expr: HirExpression) -> Vec<HirExpression> {
-        let mut out: Vec<HirExpression> = Vec::new();
-        let mut stack: Vec<HirExpression> = vec![expr];
-        // Walk down `left` while stashing `right`s. Because we take the
-        // leftmost leaf last, we assemble the reverse of source order,
-        // then reverse at the end.
-        let mut collected: Vec<HirExpression> = Vec::new();
-        while let Some(cur) = stack.pop() {
+        // Walk down the left spine collecting each node's right operand
+        // (kept whole: a bracketed `(a + b)` is a single operand), then
+        // append the leftmost leaf and reverse into source order.
+        let mut rights: Vec<HirExpression> = Vec::new();
+        let mut cur = expr;
+        loop {
             match cur {
                 HirExpression::BinaryOp {
                     left,
@@ -4474,21 +4527,16 @@ impl HirBuilder {
                     right,
                     ..
                 } => {
-                    // Handle `right` after `left`; but since we're using a
-                    // LIFO stack, push right FIRST so left is processed first.
-                    stack.push(*right);
-                    stack.push(*left);
+                    rights.push(*right);
+                    cur = *left;
                 }
                 other => {
-                    // Leaf.
-                    collected.push(other);
+                    let mut out = vec![other];
+                    out.extend(rights.into_iter().rev());
+                    return out;
                 }
             }
         }
-        // The stack-driven walk already produces source order because we
-        // push left before right, and the pop-order matches that pushing.
-        out.append(&mut collected);
-        out
     }
 
     /// True iff `stmt` is `acc = acc + e1 + e2 + ... + eN` (a chained
@@ -4501,9 +4549,25 @@ impl HirBuilder {
                 target: HirLValue::Variable { name, .. },
                 value,
                 ..
-            } if name == acc_name => Self::is_chained_self_append(value, acc_name),
+            } if name == acc_name => {
+                // The rewrite removes the `acc` binding between the builder
+                // declaration and the finalize, so a right operand that
+                // reads `acc` (`s = s + "-" + s.length().toString()`) would
+                // resolve to nothing or to an outer variable. Such chains
+                // are not rewritten.
+                Self::is_chained_self_append(value, acc_name)
+                    && !Self::chain_right_operands_read_variable(value, acc_name)
+            }
             _ => false,
         }
+    }
+
+    /// True when any right operand of the left-folded `+` chain `expr`
+    /// reads `name`.
+    fn chain_right_operands_read_variable(expr: &HirExpression, name: &str) -> bool {
+        let mut analysis = AccumulatorAnalysis::default();
+        Self::analyze_chain_right_operands_for_accumulator(expr, name, &mut analysis);
+        analysis.reads > 0 || analysis.disqualified
     }
 
     /// True iff `stmt` (or any nested statement inside it) writes the
@@ -4606,9 +4670,31 @@ impl HirBuilder {
             HirStatement::While { body, .. } | HirStatement::For { body, .. } => body,
             _ => return false,
         };
+        // The loop header (while condition / for iterable) is evaluated
+        // outside the body, where the rewrite has replaced `acc` with the
+        // builder. A header that reads `acc` would resolve to nothing (or to
+        // an outer variable of the same name), so such loops keep their
+        // plain string semantics.
+        if Self::loop_header_touches_variable(stmt, acc_name) {
+            return false;
+        }
         let mut analysis = AccumulatorAnalysis::default();
         Self::analyze_block_for_accumulator(body, acc_name, &mut analysis);
         analysis.is_rewritable()
+    }
+
+    /// True when the loop header of `stmt` (the `while` condition or the
+    /// `for` iterable) reads `name`, or contains a construct the
+    /// accumulator analysis treats as disqualifying.
+    fn loop_header_touches_variable(stmt: &HirStatement, name: &str) -> bool {
+        let header = match stmt {
+            HirStatement::While { condition, .. } => condition,
+            HirStatement::For { iterable, .. } => iterable,
+            _ => return false,
+        };
+        let mut analysis = AccumulatorAnalysis::default();
+        Self::analyze_expr_for_accumulator(header, name, &mut analysis);
+        analysis.reads > 0 || analysis.disqualified
     }
 
     /// If `(decl, loop_stmt)` matches the accumulator pattern, mutate the
@@ -4658,7 +4744,11 @@ impl HirBuilder {
         };
 
         // -- Step 3: scan the body for exactly one canonical self-append and
-        // verify `acc` is not touched anywhere else.
+        // verify `acc` is not touched anywhere else, including the loop
+        // header (see `stmt_is_accumulator_loop`).
+        if Self::loop_header_touches_variable(loop_stmt, &acc_name) {
+            return None;
+        }
         let mut analysis = AccumulatorAnalysis::default();
         Self::analyze_block_for_accumulator(&new_body, &acc_name, &mut analysis);
         if !analysis.is_rewritable() {
@@ -5109,6 +5199,12 @@ impl HirBuilder {
             HirStatement::While { body, .. } | HirStatement::For { body, .. } => body,
             _ => return false,
         };
+
+        if Self::loop_header_touches_variable(stmt, name_a)
+            || Self::loop_header_touches_variable(stmt, name_b)
+        {
+            return false;
+        }
 
         let mut analysis_a = AccumulatorAnalysis::default();
         let mut analysis_b = AccumulatorAnalysis::default();
@@ -7802,6 +7898,15 @@ impl HirBuilder {
     ///
     /// Non-chain inputs are returned unchanged.
     fn fold_concat_chain_to_transient_calls(expr: HirExpression) -> HirExpression {
+        // Only fold a chain whose every spine `+` is a string concatenation;
+        // `i + 10 + " items"` must keep `i + 10` as integer addition.
+        if !Self::chain_decomposes_safely(&expr) {
+            return expr;
+        }
+        Self::fold_concat_chain_nodes(expr)
+    }
+
+    fn fold_concat_chain_nodes(expr: HirExpression) -> HirExpression {
         match expr {
             HirExpression::BinaryOp {
                 left,
@@ -7809,7 +7914,7 @@ impl HirBuilder {
                 right,
                 location,
             } => {
-                let folded_left = Self::fold_concat_chain_to_transient_calls(*left);
+                let folded_left = Self::fold_concat_chain_nodes(*left);
                 let folded_right = *right;
                 HirExpression::Call {
                     function: "string_concat_transient".to_string(),
@@ -8834,5 +8939,68 @@ mod tests {
             location: loc(),
         };
         assert!(!HirBuilder::stmt_is_chained_self_append(&stmt, "acc"));
+    }
+    // ---- chain_decomposes_safely / header and RHS guards (#48) -------------
+
+    #[test]
+    fn chain_decomposes_safely_declines_integer_sum_on_the_spine() {
+        // (i + 10) + " items": the spine's inner `+` is integer addition.
+        let expr = add(add(var("i"), lit_int(10)), lit_str(" items"));
+        assert!(!HirBuilder::chain_decomposes_safely(&expr));
+    }
+
+    #[test]
+    fn chain_decomposes_safely_declines_bracketed_integer_sum() {
+        // ("Sum: " + (a + b)) + "!": (a + b) is a right operand without a literal.
+        let expr = add(add(lit_str("Sum: "), add(var("a"), var("b"))), lit_str("!"));
+        assert!(!HirBuilder::chain_decomposes_safely(&expr));
+        assert!(!HirBuilder::should_rewrite_return_chain(&expr));
+    }
+
+    #[test]
+    fn chain_decomposes_safely_accepts_literal_led_chain() {
+        let expr = add(add(lit_str("<b>"), var("x")), lit_str("</b>"));
+        assert!(HirBuilder::chain_decomposes_safely(&expr));
+    }
+
+    #[test]
+    fn flatten_keeps_bracketed_right_operand_whole() {
+        let expr = add(add(lit_str("a"), add(lit_str("b"), var("c"))), lit_str("d"));
+        let frags = HirBuilder::flatten_concat_chain_fragments(expr);
+        assert_eq!(frags.len(), 3);
+    }
+
+    #[test]
+    fn self_append_whose_rhs_reads_acc_is_not_chained() {
+        let stmt = HirStatement::Assignment {
+            target: HirLValue::Variable {
+                name: "s".to_string(),
+                location: loc(),
+            },
+            value: add(add(var("s"), lit_str("-")), var("s")),
+            location: loc(),
+        };
+        assert!(!HirBuilder::stmt_is_chained_self_append(&stmt, "s"));
+    }
+
+    #[test]
+    fn loop_whose_condition_reads_acc_is_not_an_accumulator_loop() {
+        let body = HirBlock {
+            statements: vec![HirStatement::Assignment {
+                target: HirLValue::Variable {
+                    name: "acc".to_string(),
+                    location: loc(),
+                },
+                value: add(var("acc"), lit_str("x")),
+                location: loc(),
+            }],
+            location: loc(),
+        };
+        let stmt = HirStatement::While {
+            condition: var("acc"),
+            body,
+            location: loc(),
+        };
+        assert!(!HirBuilder::stmt_is_accumulator_loop(&stmt, "acc"));
     }
 }

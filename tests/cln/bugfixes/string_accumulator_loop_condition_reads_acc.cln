@@ -1,0 +1,40 @@
+// Test: bugfixes/string_accumulator_loop_condition_reads_acc
+// Grammar: grammar.ebnf `while_statement`, `string_concat_expr`
+// Semantic: ast.md faithful lowering (HIR string-builder rewrite must not change meaning)
+// Fixed in: compiler 0.33.189
+//
+// The loop condition reads the accumulator. The accumulator-to-builder
+// rewrite only analysed the loop body, so the condition referred to nothing
+// (SEM007).
+//
+// Expected output:
+//   ab   |
+//   xxx|
+//   xxxyyy
+
+start:
+	print(pad("ab", 5) + "|")
+	print(fill() + "|")
+	print(dual())
+
+functions:
+	string pad(string text, integer width)
+		string out = text
+		string acc = ""
+		while acc.length() + out.length() < width
+			acc = acc + " "
+		return out + acc
+
+	string fill()
+		string acc = ""
+		while acc.length() < 3
+			acc = acc + "x"
+		return acc
+
+	string dual()
+		string a = ""
+		string b = ""
+		while a.length() < 3
+			a = a + "x"
+			b = b + "y"
+		return a + b
