@@ -71,6 +71,11 @@ pub const STRING_TO_U32: &str = "__string_to_u32";
 /// to 18446744073709551615.
 pub const STRING_TO_U64: &str = "__string_to_u64";
 
+/// `.toInteger()` of text stored straight into an `integer:64`: the type
+/// checker calls the 64-bit parser (`__string_to_int64`) instead of the
+/// 32-bit `string.toInteger`.
+pub const STRING_TO_I64: &str = "__string_to_int64";
+
 /// Type-checked program representation
 #[derive(Debug, Clone)]
 pub struct TastProgram {

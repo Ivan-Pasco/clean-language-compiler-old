@@ -1,0 +1,15 @@
+// Test: bugfixes/sized_type_followed_by_name_u
+// Grammar: size_specifier, variable_declaration, parameter
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   4
+//   5
+
+start:
+	integer:64 u = 4
+	print(u)
+	print(f(5))
+
+functions:
+	integer f(integer:8 u)
+		return u

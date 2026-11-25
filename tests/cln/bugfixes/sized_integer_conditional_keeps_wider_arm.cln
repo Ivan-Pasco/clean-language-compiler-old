@@ -1,0 +1,30 @@
+// Test: bugfixes/sized_integer_conditional_keeps_wider_arm
+// Grammar: conditional_expression, null_coalesce_expression
+// Semantic: type-system.md §5 (widening), Integer Overflow (never wraps)
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   9000000000
+//   9000000000
+//   4000000000
+//   2.5
+//   9000000000
+//
+// Regression: `if c then <integer:64 | integer:32u> else <integer>` and
+// `x default <wider>` took the narrower `integer` as the common type and
+// wrapped the wider arm to 32 bits.
+
+start:
+	integer:64 big = 9000000000
+	integer:64 a = if big > 5 then big else 0
+	print(a)
+	print(pick(big))
+	integer:32u u = 4000000000
+	print(if big > 5 then u else 1)
+	integer? none1 = none
+	print(none1 default 2.5)
+	integer:64 e = none1 default big
+	print(e)
+
+functions:
+	integer:64 pick(integer:64 v)
+		return if v > 0 then v else 0

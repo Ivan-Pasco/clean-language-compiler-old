@@ -9,7 +9,7 @@ use super::tast::{
     TastExpressionKind, TastField, TastFunction, TastGuardClause, TastLiteral, TastObjectField,
     TastParameter, TastProgram, TastStateBlock, TastStateDeclaration, TastStatement,
     TastWatchBlock, TypeConstraint, UnaryOperator, Visibility, INTEGER_FIT_PREFIX, LIST_WIDEN_F64,
-    OPTIONAL_BOX, STRING_TO_U32, STRING_TO_U64,
+    OPTIONAL_BOX, STRING_TO_I64, STRING_TO_U32, STRING_TO_U64,
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
@@ -1710,8 +1710,14 @@ impl<'a> TypeInference<'a> {
             fallback,
         } = &mut value.kind
         {
+            let before = expression.expr_type.clone();
             self.fit_into_sized_integer(expression, target);
             self.fit_into_sized_integer(fallback, target);
+            // A text conversion rewritten to the target's own parser now has
+            // the target's type, and so does the `onError` around it.
+            if expression.expr_type != before {
+                value.expr_type = expression.expr_type.clone();
+            }
             return;
         }
         let Some((suffix, min, max)) = Self::integer_range(target) else {
@@ -1722,6 +1728,7 @@ impl<'a> TypeInference<'a> {
         if let Some(converter) = match target {
             HirType::Integer32u => Some(STRING_TO_U32),
             HirType::Integer64u => Some(STRING_TO_U64),
+            HirType::Integer64 => Some(STRING_TO_I64),
             _ => None,
         } {
             if let TastExpressionKind::MethodCall {
@@ -4093,6 +4100,31 @@ impl<'a> TypeInference<'a> {
         ))
     }
 
+    /// `literal` is an integer literal and `other` is `integer:32u` or
+    /// `integer:64u`: when the literal is in the unsigned type's range it
+    /// takes that type (type-system.md §2, literals fit any integer type
+    /// that holds their value).
+    fn retype_literal_beside_unsigned(other: &TastExpression, literal: &mut TastExpression) {
+        let ConcreteType::IntegerSized {
+            bits: 32 | 64,
+            unsigned: true,
+        } = other.expr_type
+        else {
+            return;
+        };
+        let TastExpressionKind::Literal {
+            value: TastLiteral::Integer(value),
+        } = literal.kind
+        else {
+            return;
+        };
+        if Self::concrete_integer_range(&other.expr_type).is_some_and(|(min, max)| {
+            (min..=max).contains(&Self::literal_value(value, &literal.expr_type))
+        }) {
+            literal.expr_type = other.expr_type.clone();
+        }
+    }
+
     /// Helper: infer a `BinaryOp` expression.
     fn infer_binary_op_expression(
         &mut self,
@@ -4101,8 +4133,14 @@ impl<'a> TypeInference<'a> {
         right: &ResolvedHirExpression,
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
-        let tast_left = self.infer_expression(left)?;
-        let tast_right = self.infer_expression(right)?;
+        let mut tast_left = self.infer_expression(left)?;
+        let mut tast_right = self.infer_expression(right)?;
+
+        // An integer literal beside an unsigned operand takes the operand's
+        // type when it fits (`u > 3000000000` with `integer:32u u`), as a
+        // literal assigned to an unsigned variable does.
+        Self::retype_literal_beside_unsigned(&tast_left, &mut tast_right);
+        Self::retype_literal_beside_unsigned(&tast_right, &mut tast_left);
 
         let resolved_left_type = tast_left.expr_type.clone();
         let resolved_right_type = tast_right.expr_type.clone();
@@ -5398,6 +5436,53 @@ impl<'a> TypeInference<'a> {
         ))
     }
 
+    /// A list literal of integer literals declared as `list<integer:32u>` or
+    /// `list<integer:64u>` takes the declared element type when every
+    /// literal is in its range (type-system.md §2: a literal fits any
+    /// integer type that holds its value), as `integer:32u u = 5` does.
+    /// Returns true when it retyped the list.
+    fn retype_unsigned_literal_list(
+        tast_init: &mut TastExpression,
+        declared_type: &ConcreteType,
+    ) -> bool {
+        let (
+            TastExpressionKind::ArrayLiteral {
+                elements,
+                element_type,
+            },
+            ConcreteType::Array(declared_element),
+        ) = (&mut tast_init.kind, declared_type)
+        else {
+            return false;
+        };
+        let ConcreteType::IntegerSized {
+            bits: 32 | 64,
+            unsigned: true,
+        } = **declared_element
+        else {
+            return false;
+        };
+        let Some((min, max)) = Self::concrete_integer_range(declared_element) else {
+            return false;
+        };
+        let fits = !elements.is_empty()
+            && elements.iter().all(|element| match element.kind {
+                TastExpressionKind::Literal {
+                    value: TastLiteral::Integer(literal),
+                } => (min..=max).contains(&Self::literal_value(literal, &element.expr_type)),
+                _ => false,
+            });
+        if !fits {
+            return false;
+        }
+        for element in elements.iter_mut() {
+            element.expr_type = (**declared_element).clone();
+        }
+        *element_type = (**declared_element).clone();
+        tast_init.expr_type = declared_type.clone();
+        true
+    }
+
     /// Widen an integer-literal expression's `expr_type` from the default `Integer` to a
     /// sized integer type when the surrounding declaration demands it. This is what tells the
     /// MIR builder to emit `MirConstant::Integer64` for an `integer:64 x = 999999999999`
@@ -5418,6 +5503,9 @@ impl<'a> TypeInference<'a> {
         tast_init: &mut TastExpression,
         declared_type: &ConcreteType,
     ) {
+        if Self::retype_unsigned_literal_list(tast_init, declared_type) {
+            return;
+        }
         if let (
             TastExpressionKind::ArrayLiteral {
                 elements,
@@ -5890,7 +5978,12 @@ impl<'a> TypeInference<'a> {
                 if matches!(right_type, ConcreteType::Optional(_)) {
                     Ok(right_type.clone())
                 } else {
-                    Ok(value_type)
+                    // The common type of both operands: `none default 2.5`
+                    // is a number, `none default <integer:64>` an integer:64.
+                    match self.find_common_type(&value_type, right_type) {
+                        ConcreteType::Unknown => Ok(value_type),
+                        common => Ok(common),
+                    }
                 }
             }
 
@@ -7548,6 +7641,16 @@ impl<'a> TypeInference<'a> {
             left.clone()
         } else {
             match (left, right) {
+                // `integer` meets a sized integer: concrete sized integers
+                // are `integer:64`, `integer:32u` and `integer:64u` (the
+                // narrower ones collapse to `integer`), all of which hold
+                // values `integer` cannot. The sized type is the common
+                // type, so the wider arm is not wrapped to 32 bits.
+                (ConcreteType::Integer, sized @ ConcreteType::IntegerSized { .. })
+                | (sized @ ConcreteType::IntegerSized { .. }, ConcreteType::Integer) => {
+                    sized.clone()
+                }
+
                 // If one type is assignable to the other, use the more general type
                 (l, r) if l.is_assignable_to(r) => r.clone(),
                 (l, r) if r.is_assignable_to(l) => l.clone(),

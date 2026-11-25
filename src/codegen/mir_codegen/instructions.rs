@@ -1170,8 +1170,17 @@ impl MirCodeGenerator<'_> {
                                         "DEBUG CALL ARGS:   Converting i32 arg[{}] to f64",
                                         i
                                     );
-                                    self.current_instructions
-                                        .push(Instruction::F64ConvertI32S);
+                                    // integer:32u reads its top bit as value.
+                                    let unsigned = matches!(
+                                        arg,
+                                        MirOperand::Value(id)
+                                            if self.value_to_type.get(id) == Some(&MirType::U32)
+                                    );
+                                    self.current_instructions.push(if unsigned {
+                                        Instruction::F64ConvertI32U
+                                    } else {
+                                        Instruction::F64ConvertI32S
+                                    });
                                 }
                             }
 
@@ -1231,8 +1240,16 @@ impl MirCodeGenerator<'_> {
                                         "DEBUG CALL ARGS:   Bridge Number param[{}]: inserting i32→f64 conversion",
                                         i
                                     );
-                                    self.current_instructions
-                                        .push(Instruction::F64ConvertI32S);
+                                    let unsigned = matches!(
+                                        arg,
+                                        MirOperand::Value(id)
+                                            if self.value_to_type.get(id) == Some(&MirType::U32)
+                                    );
+                                    self.current_instructions.push(if unsigned {
+                                        Instruction::F64ConvertI32U
+                                    } else {
+                                        Instruction::F64ConvertI32S
+                                    });
                                 }
                             }
                         }

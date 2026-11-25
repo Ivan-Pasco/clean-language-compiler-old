@@ -1632,11 +1632,17 @@ impl TokenParser {
             if let TokenKind::IntegerLiteral(size) = self.current_kind() {
                 let size = *size;
                 let size_location = self.current().location.clone();
+                let size_end_column = size_location.column + self.current().text.chars().count();
                 self.bump(); // consume the size
 
-                // Check for 'u' suffix for unsigned
+                // Check for 'u' suffix for unsigned. The suffix is part of
+                // the size_specifier (`":" DIGIT+ ["u"]`), so it must touch
+                // the digits: in `integer:64 u` the `u` is a variable name.
                 let unsigned = if let TokenKind::Identifier(suffix) = self.current_kind() {
-                    if suffix == "u" {
+                    let suffix_location = &self.current().location;
+                    let adjacent = suffix_location.line == size_location.line
+                        && suffix_location.column == size_end_column;
+                    if suffix == "u" && adjacent {
                         self.bump(); // consume 'u'
                         true
                     } else {

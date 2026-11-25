@@ -1,0 +1,19 @@
+// Test: bugfixes/unsigned_literals_in_lists_and_comparisons
+// Grammar: list_literal, comparison_expression
+// Semantic: type-system.md §2 (literals fit unsigned types), Values Must Fit
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   [5,6]
+//   true
+//   [7,8]
+//   true
+
+start:
+	list<integer:32u> a = [5, 6]
+	print(a)
+	integer:32u u = 4000000000
+	print(u > 3000000000)
+	list<integer:64u> b = [7, 8]
+	print(b)
+	integer:64u w = 18000000000000000000
+	print(w > 5)

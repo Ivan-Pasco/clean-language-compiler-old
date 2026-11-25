@@ -1,0 +1,16 @@
+// Test: bugfixes/integer_64_text_conversion_uses_64_bit_range
+// Grammar: method_call, variable_declaration
+// Semantic: stdlib-reference.md §3 (conversion into integer:64 uses its range)
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   5000000000
+//   5000000000
+//   5000000000
+
+start:
+	integer:64 s = "5000000000".toInteger() onError -1
+	print(s)
+	integer:64 t = "5000000000".toInteger()
+	print(t)
+	integer:64u u = "5000000000".toInteger()
+	print(u)

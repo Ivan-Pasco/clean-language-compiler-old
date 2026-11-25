@@ -957,6 +957,7 @@ impl MirBuilder {
                 if let Some(converter) = function_name_opt.as_deref().filter(|name| {
                     *name == crate::typechecker::tast::STRING_TO_U32
                         || *name == crate::typechecker::tast::STRING_TO_U64
+                        || *name == crate::typechecker::tast::STRING_TO_I64
                 }) {
                     if arguments.len() == 1 {
                         let text_id = self.build_expression(context, &arguments[0])?;
