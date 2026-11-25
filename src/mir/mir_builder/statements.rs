@@ -719,11 +719,9 @@ impl MirBuilder {
                             location: target.location.clone(),
                         };
                         self.add_instruction(context, store_instruction);
-
-                        // Also update the scope for simple field references (for optimization)
-                        if let Some(current_scope) = context.scope_stack.last_mut() {
-                            current_scope.insert(property_name.clone(), final_value_id);
-                        }
+                        // The store changes only the field. The scope stack holds locals
+                        // and parameters, so the bare field name must not be bound here:
+                        // it would shadow a same-named local or parameter.
                     }
                     TastExpressionKind::ArrayAccess { array, index } => {
                         // `list[i] = v` is `list.set(i, v)` and `map[k] = v` is

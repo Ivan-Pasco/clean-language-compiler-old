@@ -1,0 +1,34 @@
+// Test: bugfixes/field_assignment_keeps_same_named_local
+// Grammar: assignment_statement, class_declaration
+// Semantic: 07-statements / 15-classes-and-objects — assigning obj.field changes only the field
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   5
+//   5
+//   local
+//   100
+//
+// Regression: after storing into obj.field the MIR builder bound the bare
+// field name in the scope, shadowing a local or parameter of the same name.
+
+start:
+	print(make(5))
+	integer size = 5
+	Box b = Box()
+	b.size = 99
+	print(size)
+	string name = "local"
+	Box c = Box()
+	c.size = 100
+	print(name)
+	print(c.size)
+
+class Box
+	public:
+		integer size = 0
+
+functions:
+	integer make(integer size)
+		Box b = Box()
+		b.size = 100
+		return size
