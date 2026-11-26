@@ -787,7 +787,8 @@ impl TokenParser {
         self.skip_whitespace();
 
         // Check if we have parentheses (function call style) with multiple arguments
-        let expression = if self.check(&TokenKind::LeftParen) {
+        let parenthesized = self.check(&TokenKind::LeftParen);
+        let expression = if parenthesized {
             self.bump(); // consume (
             self.skip_whitespace();
 
@@ -827,7 +828,10 @@ impl TokenParser {
         // print("Hello")   → newline=true  (default: adds newline)
         // print("Hello") + → newline=false (continuation: stays on same line)
         self.skip_whitespace();
-        let newline = if self.check(&TokenKind::Plus) {
+        // print "Hello"    → newline=false (bare form, spec 07 Print Statements)
+        let newline = if !parenthesized {
+            false
+        } else if self.check(&TokenKind::Plus) {
             let saved = self.cursor;
             self.bump();
             // Don't call skip_whitespace() here - it eats Newline tokens,

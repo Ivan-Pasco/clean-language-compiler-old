@@ -1,0 +1,27 @@
+// Test: bugfixes/print_bare_form_no_newline
+// Grammar: print_statement
+// Semantic: spec 07-statements.md Print Statements - bare `print value` prints no newline
+// Fixed in: compiler 0.33.190
+// Expected output:
+// ABCD
+// E12
+// F
+// G
+//
+// Regression: the bare form `print x` ended with a newline; only
+// `print(x)` does. `print(x) +` and the bare form continue the line.
+
+start:
+	print "A"
+	print "B"
+	print "C"
+	print("D")
+	print "E"
+	integer n = 1
+	print n
+	print 2
+	print("")
+	print("F") +
+	print("")
+	print:
+		"G"

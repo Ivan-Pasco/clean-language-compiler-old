@@ -1,5 +1,6 @@
 // CI Tier 4 | t4_pairs_method_calls
 // Grammar: pairs<K,V> type, method-call syntax (set/get/has/len)
+// Fixed: was using bare `print x` (no newline per spec 07), spec requires print(x) for one line per value
 // Expected output:
 //   world
 //   true
@@ -8,6 +9,6 @@
 start:
 	pairs<string, string> p = {}
 	p.set("hello", "world")
-	print p.get("hello")
-	print p.has("hello").toString()
-	print p.len().toString()
+	print(p.get("hello"))
+	print(p.has("hello").toString())
+	print(p.len().toString())
