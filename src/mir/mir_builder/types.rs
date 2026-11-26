@@ -387,7 +387,10 @@ impl MirBuilder {
                     MirType::Any,
                     location,
                 ),
-            ConcreteType::Any => value_id,
+            // A `none` held by an `any` can be the null pointer (a missing
+            // field, an out-of-range index); the host reads boxes only, so
+            // it is replaced by a null-tag box and encodes as `null`.
+            ConcreteType::Any => self.emit_json_try_decode_v2_wrapper(context, value_id, location),
             other => self.emit_box_any(context, value_id, other, location),
         };
         if value_type.optional_primitive().is_some() {

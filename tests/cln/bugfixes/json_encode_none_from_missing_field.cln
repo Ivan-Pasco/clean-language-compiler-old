@@ -1,0 +1,23 @@
+// Test: bugfixes/json_encode_none_from_missing_field
+// Grammar: namespace_function_call
+// Semantic: stdlib-reference.md §8 — json.encode / dataToText never fail;
+//   a none value encodes as null
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   true
+//   null
+//   null
+//   null
+//
+// Regression: a missing field or out-of-range index on `any` gave the raw
+// pointer 0, which equals none but made json.encode trap with
+// "null boxed-Any pointer".
+
+start:
+	any d = json.textToData("{\"a\": 1, \"l\": [1]}")
+	any m = d.missing
+	printl(m == none)
+	printl(json.encode(m))
+	any o = d.l[5]
+	printl(json.encode(o))
+	printl(json.dataToText(m))
