@@ -113,6 +113,10 @@ fn is_primitive(t: &ConcreteType) -> bool {
     )
 }
 
+fn is_optional_text(t: &ConcreteType) -> bool {
+    matches!(t, ConcreteType::Optional(inner) if **inner == ConcreteType::String)
+}
+
 fn function_(function: &mut TastFunction) {
     for parameter in &mut function.parameters {
         parameter_(parameter);
@@ -198,9 +202,28 @@ fn expr(expression: &mut TastExpression) {
     ty(&mut expression.expr_type);
     match &mut expression.kind {
         TastExpressionKind::Literal { .. } | TastExpressionKind::Variable { .. } => {}
-        TastExpressionKind::BinaryOperation { left, right, .. } => {
+        TastExpressionKind::BinaryOperation {
+            operator,
+            left,
+            right,
+        } => {
+            // `==`, `!=` and `is` keep `string?` on their operands: none and
+            // "" are both stored as text pointers, and only a `string?` may be
+            // none, so the MIR builder compares such operands by presence.
+            let compares = matches!(
+                operator,
+                BinaryOperator::Equal | BinaryOperator::NotEqual | BinaryOperator::Is
+            );
+            let left_optional_text = compares && is_optional_text(&left.expr_type);
+            let right_optional_text = compares && is_optional_text(&right.expr_type);
             expr(left);
             expr(right);
+            if left_optional_text {
+                left.expr_type = ConcreteType::Optional(Box::new(ConcreteType::String));
+            }
+            if right_optional_text {
+                right.expr_type = ConcreteType::Optional(Box::new(ConcreteType::String));
+            }
         }
         TastExpressionKind::UnaryOperation { operand, .. } => expr(operand),
         TastExpressionKind::FunctionCall {

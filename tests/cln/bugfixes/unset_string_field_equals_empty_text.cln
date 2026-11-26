@@ -1,0 +1,27 @@
+// Test: bugfixes/unset_string_field_equals_empty_text
+// Grammar: class_declaration, equality_expression
+// Semantic: 15-classes-and-objects — a field with no default starts empty
+// Fixed in: compiler 0.33.189
+// Expected output:
+//   true
+//   false
+//   true
+//   false
+//
+// Regression: the none-vs-text comparison added for `string?` also applied to
+// plain `string` values, so a string field that was never assigned (the null
+// pointer) no longer compared equal to "". frame.data's field-defaults and
+// string-primary-key tests failed this way.
+
+start:
+	Note n = Note()
+	print(n.text == "")
+	print(n.text != "")
+	string empty = ""
+	print(n.text == empty)
+	n.text = "set"
+	print(n.text == "")
+
+class Note
+	public:
+		string text

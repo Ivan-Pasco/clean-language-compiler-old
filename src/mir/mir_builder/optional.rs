@@ -462,15 +462,27 @@ impl MirBuilder {
                     }
                 )
         };
-        let is_text = |e: &TastExpression| matches!(e.expr_type, ConcreteType::String);
+        let is_optional_text = |e: &TastExpression| match &e.expr_type {
+            ConcreteType::Optional(inner) => matches!(**inner, ConcreteType::String),
+            _ => false,
+        };
+        let is_text =
+            |e: &TastExpression| matches!(e.expr_type, ConcreteType::String) || is_optional_text(e);
         let left_none = is_none(left);
         let right_none = is_none(right);
         let plain_other = |e: &TastExpression| is_text(e) || e.expr_type.is_primitive_value();
+        // Two texts compare by presence only when one of them is a
+        // `string?`. A plain `string` that was never assigned (a field with
+        // no default) is the null pointer and reads as "".
         let applies = match (left_none, right_none) {
             (true, true) => false,
             (true, false) => plain_other(right),
             (false, true) => plain_other(left),
-            (false, false) => is_text(left) && is_text(right),
+            (false, false) => {
+                is_text(left)
+                    && is_text(right)
+                    && (is_optional_text(left) || is_optional_text(right))
+            }
         };
         if !applies {
             return Ok(None);
