@@ -445,8 +445,20 @@ impl MirBuilder {
                         };
 
                         // Check if this is a state variable assignment - emit GlobalStore
-                        if let Some((symbol_id, mir_type)) = self.state_variables.get(name).cloned()
-                        {
+                        // A local declared in this function shadows a state
+                        // variable of the same name: assigning it writes the
+                        // local (the read path already resolves locals first).
+                        let shadowing_local = context
+                            .scope_stack
+                            .iter()
+                            .rev()
+                            .any(|scope| scope.contains_key(name));
+                        let state_target = if shadowing_local {
+                            None
+                        } else {
+                            self.state_variables.get(name).cloned()
+                        };
+                        if let Some((symbol_id, mir_type)) = state_target {
                             // Inject guard check before the assignment if this variable has a guard
                             if let Some((guard_condition, _value_symbol_id, _error_msg)) =
                                 self.state_guards.get(name).cloned()

@@ -766,7 +766,17 @@ impl MirBuilder {
     ) -> Result<(), Vec<CompilerError>> {
         match &receiver.kind {
             TastExpressionKind::Variable { name, .. } => {
-                if let Some((symbol_id, mir_type)) = self.state_variables.get(name).cloned() {
+                // A local that shadows a state variable is the receiver.
+                let shadowing_local = context
+                    .scope_stack
+                    .iter()
+                    .any(|scope| scope.contains_key(name));
+                let state_target = if shadowing_local {
+                    None
+                } else {
+                    self.state_variables.get(name).cloned()
+                };
+                if let Some((symbol_id, mir_type)) = state_target {
                     self.add_instruction(
                         context,
                         MirInstruction {

@@ -1,0 +1,33 @@
+// Test: bugfixes/local_shadows_state_variable
+// Grammar: variable_declaration, assignment_statement, state_declaration
+// Semantic: SCOPE — a local declared in a function shadows a state variable
+//   of the same name; assigning it never writes the state variable
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   ab-ab
+//   [orig]
+//   9
+//   [orig]
+//
+// Regression: `s = s + "-" + s` on a local `s` wrote the state variable `s`
+// and the function returned the unchanged local ("ab").
+
+start:
+	print(build())
+	print("[" + s + "]")
+	print(bump())
+	print("[" + s + "]")
+
+state:
+	string s = "orig"
+	integer n = 1
+
+functions:
+	string build()
+		string s = "ab"
+		s = s + "-" + s
+		return s
+	integer bump()
+		integer n = 5
+		n = n + 4
+		return n
