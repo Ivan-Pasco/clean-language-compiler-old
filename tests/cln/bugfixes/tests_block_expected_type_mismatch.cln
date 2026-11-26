@@ -1,0 +1,16 @@
+// Test: bugfixes/tests_block_expected_type_mismatch
+// Grammar: tests_block, named_test
+// Semantic: SEM001 - the expected value has the type of the test expression (12-testing.md rule 4)
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   SEM001
+//
+// Regression: `add(1, 1) = "2"` compiled and failed at runtime.
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+tests:
+	"type mismatch": add(1, 1) = "2"

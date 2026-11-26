@@ -161,6 +161,9 @@ pub struct ResolvedHirTest {
     pub name: String,
     pub description: Option<String>,
     pub body: ResolvedHirBlock,
+    /// An endpoint test (`test "name"` + request + checks). The compiler checks
+    /// its form but `cln test` does not run it (12-testing.md).
+    pub is_endpoint: bool,
     pub location: SourceLocation,
 }
 

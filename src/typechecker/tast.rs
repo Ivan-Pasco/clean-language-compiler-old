@@ -376,6 +376,9 @@ pub struct TastObjectField {
 pub struct TastTest {
     pub name: String,
     pub body: TastBlock,
+    /// An endpoint test (`test "name"` + request + checks). The compiler checks
+    /// its form but `cln test` does not run it (12-testing.md).
+    pub is_endpoint: bool,
     pub is_background: bool,
     pub location: SourceLocation,
 }

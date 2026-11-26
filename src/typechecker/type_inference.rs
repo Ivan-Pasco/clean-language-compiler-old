@@ -1006,11 +1006,20 @@ impl<'a> TypeInference<'a> {
         // The body is inferred using the standard block inference path.
         let mut tast_tests: Vec<crate::typechecker::tast::TastTest> = Vec::new();
         for test in &program.tests {
-            match self.infer_block(&test.body) {
+            // A test body returns a boolean. `current_return_type` still
+            // holds the last constructor or method inferred above (a class
+            // type, or the method's return type), so set it for each test
+            // and clear it afterwards.
+            self.current_return_type = Some(ConcreteType::Boolean);
+            let inferred = self.infer_block(&test.body);
+            self.current_return_type = None;
+            match inferred {
                 Ok(tast_body) => {
+                    self.check_test_expected_type(&tast_body);
                     tast_tests.push(crate::typechecker::tast::TastTest {
                         name: test.name.clone(),
                         body: tast_body,
+                        is_endpoint: test.is_endpoint,
                         is_background: false,
                         location: test.location.clone(),
                     });
@@ -1043,6 +1052,63 @@ impl<'a> TypeInference<'a> {
             // Forward the resolver's per-class capability vtable descriptors
             // through to MIR so it can synthesize class-id dispatch tables.
             vtable_descriptors: program.vtable_descriptors.clone(),
+        }
+    }
+
+    /// SEM001: the expected value of a test has the type of the tested
+    /// expression (12-testing.md, Test Syntax Rules 4). The HIR builder
+    /// lowers `expr = expected` to `__test_ok = expr == expected`; `==` itself
+    /// compares any two types, so the test checks the two sides here. Only
+    /// the plain kinds (numbers, strings, booleans) are compared: a number
+    /// type matches any other number type.
+    fn check_test_expected_type(&mut self, body: &TastBlock) {
+        fn kind(ty: &ConcreteType) -> Option<&'static str> {
+            match ty {
+                ConcreteType::Integer
+                | ConcreteType::Number
+                | ConcreteType::IntegerSized { .. }
+                | ConcreteType::NumberSized { .. } => Some("a number"),
+                ConcreteType::String => Some("a string"),
+                ConcreteType::Boolean => Some("a boolean"),
+                _ => None,
+            }
+        }
+
+        for statement in &body.statements {
+            let TastStatement::Assignment { target, value, .. } = statement else {
+                continue;
+            };
+            let is_test_result = matches!(
+                &target.kind,
+                TastExpressionKind::Variable { name, .. } if name == "__test_ok"
+            );
+            let TastExpressionKind::BinaryOperation {
+                operator: crate::typechecker::tast::BinaryOperator::Equal,
+                left,
+                right,
+            } = &value.kind
+            else {
+                continue;
+            };
+            if !is_test_result {
+                continue;
+            }
+            if let (Some(tested), Some(expected)) = (kind(&left.expr_type), kind(&right.expr_type))
+            {
+                if tested != expected {
+                    self.errors.push(CompilerError::type_error(
+                        format!(
+                            "The expected value of a test must have the type of the tested expression: the expression is {} ({}), the expected value is {} ({})",
+                            left.expr_type, tested, right.expr_type, expected
+                        ),
+                        Some(
+                            "Write the expected value with the type the expression returns"
+                                .to_string(),
+                        ),
+                        Some(right.location.clone()),
+                    ));
+                }
+            }
         }
     }
 

@@ -92,6 +92,18 @@ fn every_assertion_of_an_endpoint_test_is_kept() {
 }
 
 #[test]
+fn endpoint_tests_are_marked_so_cln_test_leaves_them_out() {
+    let ast = parse_to_ast(
+        "tests:\n\t\"one\": 1 = 1\n\ttest \"health\"\n\t\tGET \"/api/health\"\n\t\tstatus = 200\n",
+        "endpoint_test.cln",
+    )
+    .expect("parse");
+    let hir = HirBuilder::new().build_hir(ast).expect("hir").hir;
+    let flags: Vec<bool> = hir.tests.iter().map(|test| test.is_endpoint).collect();
+    assert_eq!(flags, vec![false, true]);
+}
+
+#[test]
 fn an_unparseable_assertion_is_an_error_not_dropped() {
     let source = "start:\n\tprint(\"x\")\n\ntests:\n\ttest \"health\"\n\t\tGET \"/api/health\"\n\t\tstatus 200\n";
     assert!(

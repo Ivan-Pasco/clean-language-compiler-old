@@ -1883,6 +1883,21 @@ fn runner_program_output(stdout: &str) -> Vec<String> {
     lines
 }
 
+/// Whether the compiled module exports `_run_tests`, the function that runs
+/// its `tests:` block.
+fn exports_run_tests(wasm: &[u8]) -> bool {
+    wasmparser::Parser::new(0)
+        .parse_all(wasm)
+        .filter_map(Result::ok)
+        .any(|payload| match payload {
+            wasmparser::Payload::ExportSection(exports) => exports
+                .into_iter()
+                .filter_map(Result::ok)
+                .any(|export| export.name == "_run_tests"),
+            _ => false,
+        })
+}
+
 async fn handle_test(
     dirs: Vec<String>,
     files: Vec<String>,
@@ -1954,6 +1969,22 @@ async fn handle_test(
                 continue;
             }
         };
+
+        // A file without tests (no `tests:` block, or one with only
+        // endpoint tests, which `cln test` does not run) is reported, not
+        // failed or run (12-testing.md).
+        if !exports_run_tests(&wasm_binary) {
+            if output_config.json_mode {
+                json_results.push(serde_json::json!({
+                    "file": cln_path,
+                    "passed": true,
+                    "output": "no tests found",
+                }));
+            } else if output_config.shows_progress() {
+                println!("  no tests found");
+            }
+            continue;
+        }
 
         let temp_wasm = work_dir.path().join(format!("test_{index}.wasm"));
         fs::write(&temp_wasm, &wasm_binary)?;

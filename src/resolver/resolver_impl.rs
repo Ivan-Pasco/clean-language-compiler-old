@@ -1883,6 +1883,7 @@ impl NameResolver {
                 name: test.name.clone(),
                 description: test.description.clone(),
                 body: resolved_body,
+                is_endpoint: test.is_endpoint,
                 location: test.location.clone(),
             });
         }

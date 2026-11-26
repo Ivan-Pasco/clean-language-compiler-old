@@ -1,0 +1,29 @@
+// Test: bugfixes/tests_block_with_class
+// Grammar: tests_block, class_declaration
+// Semantic: SEM001 - a tests: block in a file that declares a class type-checks
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   PASS: one
+//   PASS: calculator addition
+//   PASS: after the methods
+//
+// Regression: every test failed with "Cannot unify types: boolean and
+// Class#N" because the tests were checked against the return type of the
+// last constructor or method.
+
+class Calculator
+	integer value
+
+	constructor(integer initialValue)
+		value = initialValue
+
+	functions:
+		public:
+			integer add(integer x)
+				value = value + x
+				return value
+
+tests:
+	"one": 1 + 1 = 2
+	"calculator addition": Calculator(10).add(5) = 15
+	"after the methods": Calculator(0).add(3) = 3

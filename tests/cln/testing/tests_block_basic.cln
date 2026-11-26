@@ -8,7 +8,10 @@
 //   PASS: subtraction
 //   PASS: multiplication
 //   PASS: negation
-//   PASS: anonymous integer check
+//   PASS: test_7
+// Fixed: was expecting "PASS: anonymous integer check"; 12-testing.md "Test
+// Output Format" names an anonymous test by its position (test_7 is the
+// eighth test in the block).
 
 functions:
 	integer add(integer a, integer b)

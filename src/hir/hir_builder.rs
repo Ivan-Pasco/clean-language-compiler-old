@@ -793,21 +793,11 @@ impl HirBuilder {
                     test_expression,
                     expected_value,
                 } => {
-                    let lhs = self.build_expression(test_expression)?;
-                    let rhs = self.build_expression(expected_value)?;
-                    let equality = HirExpression::BinaryOp {
-                        left: Box::new(lhs),
-                        op: HirBinaryOp::Equal,
-                        right: Box::new(rhs),
-                        location: test_loc.clone(),
-                    };
-                    let body = HirBlock {
-                        statements: vec![HirStatement::Return {
-                            value: Some(equality),
-                            location: test_loc.clone(),
-                        }],
-                        location: test_loc.clone(),
-                    };
+                    let body = self.build_expression_test_body(
+                        test_expression,
+                        expected_value,
+                        test_loc.clone(),
+                    )?;
                     let name = test_case
                         .description
                         .clone()
@@ -816,6 +806,7 @@ impl HirBuilder {
                         name,
                         description: test_case.description.clone(),
                         body,
+                        is_endpoint: false,
                         location: test_loc,
                     });
                 }
@@ -829,6 +820,7 @@ impl HirBuilder {
                         name,
                         description: test_case.description.clone(),
                         body,
+                        is_endpoint: true,
                         location: test_loc,
                     });
                 }
@@ -8183,6 +8175,179 @@ impl Default for HirBuilder {
 }
 
 impl HirBuilder {
+    /// Build the body of an `expr = expected` test (12-testing.md).
+    ///
+    /// The test runs inside an `onError` region, so an error raised by the
+    /// tested expression does not stop the run:
+    ///
+    /// ```text
+    /// boolean __test_ok = false
+    /// __err_region_begin()
+    /// __test_ok = expr == expected        // expected: a value
+    /// __err_region_end()
+    /// if __err_take():
+    ///     __test_ok = false               // an unexpected error fails the test
+    /// return __test_ok
+    /// ```
+    ///
+    /// For `expr = error("message")` the test passes when `expr` raises an
+    /// error with exactly that message:
+    ///
+    /// ```text
+    /// boolean __test_raised = false
+    /// string __test_message = ""
+    /// __err_region_begin()
+    /// expr
+    /// __err_region_end()
+    /// if __err_take():
+    ///     __test_raised = true
+    ///     __test_message = __err_message()
+    /// return __test_raised and __test_message == "message"
+    /// ```
+    fn build_expression_test_body(
+        &mut self,
+        test_expression: &Expression,
+        expected_value: &Expression,
+        loc: SourceLocation,
+    ) -> Result<HirBlock, CompilerError> {
+        let variable = |name: &str| HirExpression::Variable {
+            name: name.to_string(),
+            location: loc.clone(),
+        };
+        let assign = |name: &str, value: HirExpression| HirStatement::Assignment {
+            target: HirLValue::Variable {
+                name: name.to_string(),
+                location: loc.clone(),
+            },
+            value,
+            location: loc.clone(),
+        };
+        let declare =
+            |name: &str, var_type: HirType, value: Value| HirStatement::VariableDeclaration {
+                name: name.to_string(),
+                var_type,
+                initializer: Some(HirExpression::Literal {
+                    value,
+                    location: loc.clone(),
+                }),
+                is_mutable: true,
+                location: loc.clone(),
+            };
+        let boolean = |value: bool| HirExpression::Literal {
+            value: Value::Boolean(value),
+            location: loc.clone(),
+        };
+
+        let lhs = self.build_expression(test_expression)?;
+
+        if let Expression::Call(name, arguments) = expected_value {
+            if name == "error" {
+                let [message] = arguments.as_slice() else {
+                    return Err(CompilerError::semantic_error_with_code(
+                        "error(...) in a test expects exactly one message".to_string(),
+                        Some("Write `expr = error(\"message\")`".to_string()),
+                        Some(loc),
+                        "SEM002",
+                    ));
+                };
+                let expected_message = self.build_expression(message)?;
+                let mut statements = vec![
+                    declare("__test_raised", HirType::Boolean, Value::Boolean(false)),
+                    declare(
+                        "__test_message",
+                        HirType::String,
+                        Value::String(String::new()),
+                    ),
+                    Self::error_runtime_call("__err_region_begin", Vec::new(), &loc),
+                    HirStatement::Expression {
+                        expression: lhs,
+                        location: loc.clone(),
+                    },
+                ];
+                let handler = HirBlock {
+                    statements: vec![
+                        assign("__test_raised", boolean(true)),
+                        assign(
+                            "__test_message",
+                            HirExpression::Call {
+                                function: "__err_message".to_string(),
+                                arguments: Vec::new(),
+                                location: loc.clone(),
+                            },
+                        ),
+                    ],
+                    location: loc.clone(),
+                };
+                let result = HirExpression::BinaryOp {
+                    left: Box::new(variable("__test_raised")),
+                    op: HirBinaryOp::And,
+                    right: Box::new(HirExpression::BinaryOp {
+                        left: Box::new(variable("__test_message")),
+                        op: HirBinaryOp::Equal,
+                        right: Box::new(expected_message),
+                        location: loc.clone(),
+                    }),
+                    location: loc.clone(),
+                };
+                return Ok(Self::finish_test_body(
+                    &mut statements,
+                    handler,
+                    result,
+                    &loc,
+                ));
+            }
+        }
+
+        let rhs = self.build_expression(expected_value)?;
+        let mut statements = vec![
+            declare("__test_ok", HirType::Boolean, Value::Boolean(false)),
+            Self::error_runtime_call("__err_region_begin", Vec::new(), &loc),
+            assign(
+                "__test_ok",
+                HirExpression::BinaryOp {
+                    left: Box::new(lhs),
+                    op: HirBinaryOp::Equal,
+                    right: Box::new(rhs),
+                    location: loc.clone(),
+                },
+            ),
+        ];
+        let handler = HirBlock {
+            statements: vec![assign("__test_ok", boolean(false))],
+            location: loc.clone(),
+        };
+        Ok(Self::finish_test_body(
+            &mut statements,
+            handler,
+            variable("__test_ok"),
+            &loc,
+        ))
+    }
+
+    /// Close a test's error region, run `handler` when an error reached it
+    /// and return `result`.
+    fn finish_test_body(
+        statements: &mut Vec<HirStatement>,
+        handler: HirBlock,
+        result: HirExpression,
+        loc: &SourceLocation,
+    ) -> HirBlock {
+        statements.push(Self::error_runtime_call(
+            "__err_region_end",
+            Vec::new(),
+            loc,
+        ));
+        statements.push(Self::error_handler_if(handler, loc));
+        statements.push(HirStatement::Return {
+            value: Some(result),
+            location: loc.clone(),
+        });
+        HirBlock {
+            statements: std::mem::take(statements),
+            location: loc.clone(),
+        }
+    }
+
     /// Build a HirTest body for an endpoint test case.
     ///
     /// Generates:

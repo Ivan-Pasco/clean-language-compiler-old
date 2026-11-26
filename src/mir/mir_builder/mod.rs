@@ -1020,7 +1020,11 @@ impl MirBuilder {
                         .symbol_name_map
                         .insert(symbol_id, fn_name.clone());
                     mir_program.functions.insert(symbol_id, mir_function);
-                    test_symbol_ids.push((symbol_id, test.name.clone()));
+                    // An endpoint test is compiled, but `_run_tests` (what
+                    // `cln test` runs) leaves it out (12-testing.md).
+                    if !test.is_endpoint {
+                        test_symbol_ids.push((symbol_id, test.name.clone()));
+                    }
                     debug!(
                         test_name = %test.name,
                         symbol_id = symbol_id.0,

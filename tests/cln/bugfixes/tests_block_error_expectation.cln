@@ -1,0 +1,30 @@
+// Test: bugfixes/tests_block_error_expectation
+// Grammar: tests_block, named_test, anonymous_test
+// Semantic: 12-testing.md "Testing Functions with Error Handling" - `expr = error("msg")` passes when expr raises that error; a test that raises an unexpected error fails; every test runs
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   PASS: normal division
+//   PASS: division by zero throws error
+//   FAIL: wrong message
+//   FAIL: no error raised
+//   FAIL: unexpected error
+//   PASS: after
+//   PASS: test_6
+//
+// Regression: the first `= error(...)` test trapped the module and no later
+// test ran; an unexpected error did the same.
+
+functions:
+	integer safeDivide(integer a, integer b)
+		if b == 0
+			error("Division by zero")
+		return a / b
+
+tests:
+	"normal division": safeDivide(10, 2) = 5
+	"division by zero throws error": safeDivide(10, 0) = error("Division by zero")
+	"wrong message": safeDivide(10, 0) = error("other")
+	"no error raised": safeDivide(10, 2) = error("Division by zero")
+	"unexpected error": safeDivide(10, 0) = 5
+	"after": safeDivide(9, 3) = 3
+	safeDivide(10, 0) = error("Division by zero")
