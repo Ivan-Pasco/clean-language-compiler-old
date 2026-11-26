@@ -913,6 +913,16 @@ impl MirCodeGenerator<'_> {
                 .register_error_handling_operations()
                 .map_err(|e| vec![e])?;
 
+            // `math.abs(integer)` and integer `^` raise "integer overflow",
+            // so they follow the error-handling runtime.
+            if self.wasm_generator.has_reachable_prefix("math_")
+                || self.wasm_generator.has_reachable_prefix("math.")
+            {
+                self.wasm_generator
+                    .register_checked_integer_functions()
+                    .map_err(|e| vec![e])?;
+            }
+
             debug_mir!("DEBUG MIR: Registering HTTP operations");
             self.wasm_generator
                 .register_http_operations()

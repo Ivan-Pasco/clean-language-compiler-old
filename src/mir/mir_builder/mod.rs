@@ -17,8 +17,9 @@ use crate::resolver::symbol_table::{
     SYM_BUILTIN_LIST_ADD_F64, SYM_BUILTIN_LIST_ADD_I64, SYM_BUILTIN_LIST_ADD_STRING,
     SYM_BUILTIN_LIST_ALLOCATE, SYM_BUILTIN_LIST_PUSH, SYM_BUILTIN_LIST_PUSH_F64,
     SYM_BUILTIN_LIST_SIZE, SYM_BUILTIN_MATH_POW_F64, SYM_BUILTIN_MATH_POW_I32,
-    SYM_BUILTIN_MATH_POW_I64, SYM_BUILTIN_STRING_CONCAT, SYM_BUILTIN_STRING_CONCAT_TRANSIENT,
-    SYM_CLASS_SERIALIZER_BASE, SYM_COMPUTED_GETTER_BASE, SYM_WATCH_HANDLER_BASE,
+    SYM_BUILTIN_MATH_POW_I64, SYM_BUILTIN_MATH_POW_U32, SYM_BUILTIN_MATH_POW_U64,
+    SYM_BUILTIN_STRING_CONCAT, SYM_BUILTIN_STRING_CONCAT_TRANSIENT, SYM_CLASS_SERIALIZER_BASE,
+    SYM_COMPUTED_GETTER_BASE, SYM_WATCH_HANDLER_BASE,
 };
 use crate::resolver::SymbolId;
 use crate::typechecker::tast::{
@@ -644,6 +645,12 @@ impl MirBuilder {
         mir_program
             .symbol_name_map
             .insert(SYM_BUILTIN_MATH_POW_I64, "math.pow.i64".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SYM_BUILTIN_MATH_POW_U32, "math.pow.u32".to_string());
+        mir_program
+            .symbol_name_map
+            .insert(SYM_BUILTIN_MATH_POW_U64, "math.pow.u64".to_string());
         // list.allocate and list.push for array literal creation
         mir_program
             .symbol_name_map

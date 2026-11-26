@@ -112,8 +112,10 @@ fn eval_tast_binary(op: &BinaryOperator, left: ConstValue, right: ConstValue) ->
         (BinaryOperator::Modulo, ConstValue::Integer(l), ConstValue::Integer(r)) if r != 0 => {
             ConstValue::Integer(l % r)
         }
-        (BinaryOperator::Power, ConstValue::Integer(l), ConstValue::Integer(r)) if r >= 0 => {
-            ConstValue::Integer(l.wrapping_pow(r as u32))
+        (BinaryOperator::Power, ConstValue::Integer(l), ConstValue::Integer(r))
+            if (0..=i64::from(u32::MAX)).contains(&r) && l.checked_pow(r as u32).is_some() =>
+        {
+            ConstValue::Integer(l.pow(r as u32))
         }
 
         // Float arithmetic

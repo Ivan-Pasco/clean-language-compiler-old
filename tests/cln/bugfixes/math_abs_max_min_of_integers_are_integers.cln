@@ -1,8 +1,11 @@
 // Test: bugfixes/math_abs_max_min_of_integers_are_integers
 // Grammar: call_expression (math.abs, math.max, math.min), method_call (toString)
 // Semantic: stdlib-reference.md §2 — math.abs, math.max and math.min of
-//   integers return an integer; integer arithmetic wraps, so the absolute
-//   value of the smallest integer is that integer
+//   integers return an integer
+// Fixed (compiler 0.33.190, issue #50): was expecting the absolute value of
+//   the smallest integer to wrap to itself; 04-type-system.md says integer
+//   arithmetic never wraps, so that case now raises "integer overflow" and
+//   lives in integer_abs_min_raises.cln
 // Fixed in: compiler 0.33.183
 // Expected output:
 //   5
@@ -10,12 +13,11 @@
 //   9
 //   -4
 //   7
-//   -2147483648
+//   2147483647
 //
 // Regression: the type checker typed these calls `integer`, but the code
 // always called the `number` implementations, so using the result as an
-// integer (`math.abs(v).toString()`) produced invalid WebAssembly, and the
-// old integer abs trapped on -2147483648.
+// integer (`math.abs(v).toString()`) produced invalid WebAssembly.
 
 start:
 	integer v = id(-5)
@@ -26,7 +28,7 @@ start:
 	print(math.min(v + 1, 3).toString())
 	integer m = math.abs(id(-7))
 	print(m.toString())
-	integer smallest = id(-2147483647) - 1
+	integer smallest = id(-2147483647)
 	print(math.abs(smallest).toString())
 
 functions:

@@ -356,17 +356,17 @@ impl MirBuilder {
                 if matches!(operator, BinaryOperator::Power) {
                     let left_id = self.build_expression(context, left)?;
                     let right_id = self.build_expression(context, right)?;
-                    let (result_type, pow_function) =
-                        match self.convert_concrete_type(&expression.expr_type) {
-                            MirType::I64 | MirType::U64 => (MirType::I64, SYM_BUILTIN_MATH_POW_I64),
-                            MirType::I8
-                            | MirType::I16
-                            | MirType::I32
-                            | MirType::U8
-                            | MirType::U16
-                            | MirType::U32 => (MirType::I32, SYM_BUILTIN_MATH_POW_I32),
-                            _ => (MirType::F64, SYM_BUILTIN_MATH_POW_F64),
-                        };
+                    let (result_type, pow_function) = match self
+                        .convert_concrete_type(&expression.expr_type)
+                    {
+                        MirType::I64 => (MirType::I64, SYM_BUILTIN_MATH_POW_I64),
+                        MirType::U64 => (MirType::U64, SYM_BUILTIN_MATH_POW_U64),
+                        MirType::U32 => (MirType::U32, SYM_BUILTIN_MATH_POW_U32),
+                        MirType::I8 | MirType::I16 | MirType::I32 | MirType::U8 | MirType::U16 => {
+                            (MirType::I32, SYM_BUILTIN_MATH_POW_I32)
+                        }
+                        _ => (MirType::F64, SYM_BUILTIN_MATH_POW_F64),
+                    };
                     let result_id = ValueId(context.function.next_value_id);
                     context.function.next_value_id += 1;
                     self.register_temp_local(

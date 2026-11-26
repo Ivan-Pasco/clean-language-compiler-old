@@ -958,6 +958,12 @@ impl super::CodeGenerator {
         Ok(())
     }
 
+    /// Register the integer math helpers that raise "integer overflow"
+    /// (`math.abs(integer)`, integer `^`). Needs `__err_raise`.
+    pub(crate) fn register_checked_integer_functions(&mut self) -> Result<(), CompilerError> {
+        crate::stdlib::math_class::MathClass::new().register_checked_integer_functions(self)
+    }
+
     /// Register string.split as an import
     /// This must be called BEFORE any stdlib functions are registered
     /// because WASM requires all imports to come before internal functions

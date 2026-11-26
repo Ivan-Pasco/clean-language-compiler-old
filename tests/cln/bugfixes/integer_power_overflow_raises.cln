@@ -1,0 +1,72 @@
+// Test: bugfixes/integer_power_overflow_raises
+// Semantic: semantic-rules.md RUN003 — integer arithmetic never wraps: an
+//   integer `^` whose result is outside its type raises the catchable error
+//   "integer overflow"; an in-range `integer:32u` power is unsigned
+//   (issue #50)
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   2147483648
+//   true
+//   -1
+//   -2
+//   -3
+//   -4
+//   -5
+//   -6
+//   1073741824
+//   -2147483648
+//   1162261467
+//   4611686018427387904
+//   9223372036854775808
+//   4228250625
+//   1
+//   0
+//   0
+//   -1
+//   caught: integer overflow
+//   1000000000000000000
+//   1
+
+start:
+	integer:32u u = 2
+	integer:32u a = u ^ 31
+	print(a)
+	print(a > 5)
+	integer two = 2
+	integer c = two ^ 32 onError -1
+	print(c)
+	integer three = 3
+	integer d = three ^ 21 onError -2
+	print(d)
+	integer:64 two64 = 2
+	integer:64 e = two64 ^ 70 onError -3
+	print(e)
+	integer minusTwo = -2
+	integer f = minusTwo ^ 32 onError -4
+	print(f)
+	integer:32u g = u ^ 32 onError 5
+	if g == 5
+		print(-5)
+	integer:64u two64u = 2
+	integer:64u h = two64u ^ 64 onError 6
+	if h == 6
+		print(-6)
+	print(two ^ 30)
+	print(minusTwo ^ 31)
+	print(three ^ 19)
+	print(two64 ^ 62)
+	print(two64u ^ 63)
+	integer:32u byte = 255
+	print(byte ^ 4)
+	integer zero = 0
+	integer one = 1
+	integer minusOne = -1
+	print(one ^ 2000000000)
+	print(zero ^ 5)
+	print(two ^ -1)
+	print(minusOne ^ 1999999999)
+	integer k = two ^ 40 onError:
+		print("caught: " + error)
+	integer:64 ten = 10
+	print(ten ^ 18)
+	print(zero ^ 0)

@@ -65,38 +65,9 @@ impl MathClass {
             abs_impl.clone(),
         )?;
 
-        // math.abs(integer x) -> integer. Integer arithmetic wraps, so the
-        // absolute value of the smallest integer is that integer itself.
-        register_stdlib_function(
-            codegen,
-            "math.abs.i32",
-            &[WasmType::I32],
-            Some(WasmType::I32),
-            vec![
-                Instruction::I32Const(0),
-                Instruction::LocalGet(0),
-                Instruction::I32Sub, // -x (wrapping)
-                Instruction::LocalGet(0),
-                Instruction::LocalGet(0),
-                Instruction::I32Const(0),
-                Instruction::I32LtS,
-                Instruction::Select, // x < 0 ? -x : x
-            ],
-        )?;
-
-        // `integer ^ integer` and `integer:64 ^ integer`: exact powers
-        // (the MIR builder calls these for `^` on integer operands).
-        for (name, wide) in [("math.pow.i32", false), ("math.pow.i64", true)] {
-            let ty = if wide { WasmType::I64 } else { WasmType::I32 };
-            register_stdlib_function_with_locals(
-                codegen,
-                name,
-                &[ty, ty],
-                Some(ty),
-                &[ty], // 2: result
-                Self::generate_integer_pow(wide),
-            )?;
-        }
+        // `math.abs(integer)` and the integer powers `^` calls raise
+        // "integer overflow", so they are registered after the error
+        // handling runtime (`register_checked_integer_functions`).
 
         // Math.max(number a, number b) -> number
         let max_impl = vec![
@@ -378,14 +349,95 @@ impl MathClass {
         ]
     }
 
-    /// `base ^ exponent` on i32 (`wide == false`) or i64 operands, by
-    /// repeated squaring. Multiplication wraps like `*` does. A negative
-    /// exponent gives the integer part of `1 / base^-exponent`: 1 for base
-    /// 1, ±1 for base -1, 0 otherwise, and a division-by-zero trap for
-    /// base 0, as `1 / 0` does.
+    /// The integer helpers that raise "integer overflow": `math.abs.i32`
+    /// (`math.abs(integer)`) and the exact integer powers `math.pow.i32`,
+    /// `math.pow.u32`, `math.pow.i64` and `math.pow.u64` (the MIR builder
+    /// calls these for `^` on integer operands).
     ///
-    /// Locals: 0 base, 1 exponent (parameters), 2 result.
-    fn generate_integer_pow(wide: bool) -> Vec<Instruction<'static>> {
+    /// They raise through `__err_raise`, so they are registered once the
+    /// error-handling runtime exists (`register_error_handling_operations`).
+    pub fn register_checked_integer_functions(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<(), CompilerError> {
+        let err_raise = codegen.get_function_index("__err_raise").ok_or_else(|| {
+            CompilerError::codegen_error(
+                "checked integer math requires __err_raise, which was not registered".to_string(),
+                None,
+                None,
+            )
+        })?;
+        let overflow = codegen.get_or_create_string_offset("integer overflow")? as i32;
+        let division_by_zero = codegen.get_or_create_string_offset("division by zero")? as i32;
+
+        // math.abs(integer x) -> integer. The absolute value of the smallest
+        // integer is outside integer: "integer overflow", as `-x` raises.
+        register_stdlib_function(
+            codegen,
+            "math.abs.i32",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            vec![
+                Instruction::LocalGet(0),
+                Instruction::I32Const(i32::MIN),
+                Instruction::I32Eq,
+                Instruction::If(wasm_encoder::BlockType::Empty),
+                Instruction::I32Const(overflow),
+                Instruction::Call(err_raise),
+                Instruction::I32Const(0),
+                Instruction::Return,
+                Instruction::End,
+                Instruction::I32Const(0),
+                Instruction::LocalGet(0),
+                Instruction::I32Sub, // -x
+                Instruction::LocalGet(0),
+                Instruction::LocalGet(0),
+                Instruction::I32Const(0),
+                Instruction::I32LtS,
+                Instruction::Select, // x < 0 ? -x : x
+            ],
+        )?;
+
+        for (name, wide, unsigned) in [
+            ("math.pow.i32", false, false),
+            ("math.pow.u32", false, true),
+            ("math.pow.i64", true, false),
+            ("math.pow.u64", true, true),
+        ] {
+            let ty = if wide { WasmType::I64 } else { WasmType::I32 };
+            register_stdlib_function_with_locals(
+                codegen,
+                name,
+                &[ty, ty],
+                Some(ty),
+                // 2: result, 3: the 64-bit product
+                &[ty, WasmType::I64],
+                Self::generate_integer_pow(wide, unsigned, overflow, division_by_zero, err_raise),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// `base ^ exponent` on i32 (`wide == false`) or i64 operands, exact:
+    /// a result outside the type (`unsigned`: `0..=MAX`) raises "integer
+    /// overflow" and gives 0. A negative exponent (signed types) gives the
+    /// integer part of `1 / base^-exponent`: 1 for base 1, ±1 for base -1, 0
+    /// otherwise, and "division by zero" for base 0, as `1 / 0` does.
+    ///
+    /// The bases 0, 1 and -1 have closed forms. Any other base leaves the
+    /// type within 64 multiplications, so the loop multiplies once per
+    /// exponent step and stops at the first overflow. 32-bit products are
+    /// formed in i64; i64 products are checked by dividing back (the running
+    /// result is never 0 or -1, so the division cannot trap).
+    ///
+    /// Locals: 0 base, 1 exponent (parameters), 2 result, 3 product.
+    fn generate_integer_pow(
+        wide: bool,
+        unsigned: bool,
+        overflow: i32,
+        division_by_zero: i32,
+        err_raise: u32,
+    ) -> Vec<Instruction<'static>> {
         use wasm_encoder::BlockType;
         let c = |v: i64| {
             if wide {
@@ -401,19 +453,87 @@ impl MathClass {
                 narrow
             }
         };
+        let raise = |message: i32| {
+            vec![
+                Instruction::I32Const(message),
+                Instruction::Call(err_raise),
+                c(0),
+                Instruction::Return,
+            ]
+        };
         let lt_s = pick(Instruction::I32LtS, Instruction::I64LtS);
         let eq = pick(Instruction::I32Eq, Instruction::I64Eq);
         let eqz = pick(Instruction::I32Eqz, Instruction::I64Eqz);
         let and = pick(Instruction::I32And, Instruction::I64And);
+        let sub = pick(Instruction::I32Sub, Instruction::I64Sub);
         let mul = pick(Instruction::I32Mul, Instruction::I64Mul);
-        let shr_u = pick(Instruction::I32ShrU, Instruction::I64ShrU);
-        let div_s = pick(Instruction::I32DivS, Instruction::I64DivS);
-        vec![
+        let ne = pick(Instruction::I32Ne, Instruction::I64Ne);
+        let div = match (wide, unsigned) {
+            (false, false) => Instruction::I32DivS,
+            (false, true) => Instruction::I32DivU,
+            (true, false) => Instruction::I64DivS,
+            (true, true) => Instruction::I64DivU,
+        };
+        // `even exponent ? 1 : -1`, returned.
+        let parity_sign = || {
+            vec![
+                c(1),
+                c(-1),
+                Instruction::LocalGet(1),
+                c(1),
+                and.clone(),
+                eqz.clone(),
+                Instruction::Select,
+                Instruction::Return,
+                Instruction::End,
+            ]
+        };
+        let mut body = vec![];
+        if !unsigned {
             // Negative exponent.
-            Instruction::LocalGet(1),
-            c(0),
-            lt_s,
+            body.extend([
+                Instruction::LocalGet(1),
+                c(0),
+                lt_s,
+                Instruction::If(BlockType::Empty),
+                Instruction::LocalGet(0),
+                c(1),
+                eq.clone(),
+                Instruction::If(BlockType::Empty),
+                c(1),
+                Instruction::Return,
+                Instruction::End,
+                Instruction::LocalGet(0),
+                c(-1),
+                eq.clone(),
+                Instruction::If(BlockType::Empty),
+            ]);
+            body.extend(parity_sign());
+            body.extend([
+                Instruction::LocalGet(0),
+                eqz.clone(),
+                Instruction::If(BlockType::Empty),
+            ]);
+            body.extend(raise(division_by_zero));
+            body.extend([
+                Instruction::End,
+                c(0),
+                Instruction::Return,
+                Instruction::End,
+            ]);
+        }
+        // 0 ^ n is 1 for n == 0 and 0 otherwise; 1 ^ n is 1.
+        body.extend([
+            Instruction::LocalGet(0),
+            eqz.clone(),
             Instruction::If(BlockType::Empty),
+            c(1),
+            c(0),
+            Instruction::LocalGet(1),
+            eqz.clone(),
+            Instruction::Select,
+            Instruction::Return,
+            Instruction::End,
             Instruction::LocalGet(0),
             c(1),
             eq.clone(),
@@ -421,63 +541,92 @@ impl MathClass {
             c(1),
             Instruction::Return,
             Instruction::End,
-            Instruction::LocalGet(0),
-            c(-1),
-            eq,
-            Instruction::If(BlockType::Empty),
-            // even exponent ? 1 : -1
-            c(1),
-            c(-1),
-            Instruction::LocalGet(1),
-            c(1),
-            and.clone(),
-            eqz.clone(),
-            Instruction::Select,
-            Instruction::Return,
-            Instruction::End,
-            Instruction::LocalGet(0),
-            eqz.clone(),
-            Instruction::If(BlockType::Empty),
-            // 0 ^ negative is a division by zero.
-            c(1),
-            Instruction::LocalGet(0),
-            div_s,
-            Instruction::Return,
-            Instruction::End,
-            c(0),
-            Instruction::Return,
-            Instruction::End,
-            // result = 1; while exponent != 0: square-and-multiply.
+        ]);
+        if !unsigned {
+            // (-1) ^ n is 1 for even n and -1 for odd n.
+            body.extend([
+                Instruction::LocalGet(0),
+                c(-1),
+                eq,
+                Instruction::If(BlockType::Empty),
+            ]);
+            body.extend(parity_sign());
+        }
+        // result = 1; one checked multiplication per exponent step.
+        body.extend([
             c(1),
             Instruction::LocalSet(2),
             Instruction::Block(BlockType::Empty),
             Instruction::Loop(BlockType::Empty),
             Instruction::LocalGet(1),
-            eqz.clone(),
-            Instruction::BrIf(1),
-            Instruction::LocalGet(1),
-            c(1),
-            and,
             eqz,
-            Instruction::I32Eqz,
-            Instruction::If(BlockType::Empty),
-            Instruction::LocalGet(2),
-            Instruction::LocalGet(0),
-            mul.clone(),
-            Instruction::LocalSet(2),
-            Instruction::End,
+            Instruction::BrIf(1),
+        ]);
+        if wide {
+            // product = result * base; overflow when product / result != base.
+            body.extend([
+                Instruction::LocalGet(2),
+                Instruction::LocalGet(0),
+                mul,
+                Instruction::LocalTee(3),
+                Instruction::LocalGet(2),
+                div,
+                Instruction::LocalGet(0),
+                ne,
+                Instruction::If(BlockType::Empty),
+            ]);
+            body.extend(raise(overflow));
+            body.extend([
+                Instruction::End,
+                Instruction::LocalGet(3),
+                Instruction::LocalSet(2),
+            ]);
+        } else {
+            let extend = if unsigned {
+                Instruction::I64ExtendI32U
+            } else {
+                Instruction::I64ExtendI32S
+            };
+            body.extend([
+                Instruction::LocalGet(2),
+                extend.clone(),
+                Instruction::LocalGet(0),
+                extend,
+                Instruction::I64Mul,
+                Instruction::LocalTee(3),
+            ]);
+            if unsigned {
+                body.extend([
+                    Instruction::I64Const(i64::from(u32::MAX)),
+                    Instruction::I64GtU,
+                ]);
+            } else {
+                body.extend([
+                    Instruction::LocalGet(3),
+                    Instruction::I32WrapI64,
+                    Instruction::I64ExtendI32S,
+                    Instruction::I64Ne,
+                ]);
+            }
+            body.push(Instruction::If(BlockType::Empty));
+            body.extend(raise(overflow));
+            body.extend([
+                Instruction::End,
+                Instruction::LocalGet(3),
+                Instruction::I32WrapI64,
+                Instruction::LocalSet(2),
+            ]);
+        }
+        body.extend([
             Instruction::LocalGet(1),
             c(1),
-            shr_u,
+            sub,
             Instruction::LocalSet(1),
-            Instruction::LocalGet(0),
-            Instruction::LocalGet(0),
-            mul,
-            Instruction::LocalSet(0),
             Instruction::Br(0),
             Instruction::End,
             Instruction::End,
             Instruction::LocalGet(2),
-        ]
+        ]);
+        body
     }
 }

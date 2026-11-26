@@ -78,6 +78,11 @@ pub const SYM_BUILTIN_MATH_POW_I64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE +
 /// the values, not the boxes).
 pub const SYM_BUILTIN_LIST_ADD_BOXED: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 16);
 
+/// `integer:32u ^ integer`: exact unsigned power on u32 (`math.pow.u32`).
+pub const SYM_BUILTIN_MATH_POW_U32: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 17);
+/// `integer:64u ^ integer`: exact unsigned power on u64 (`math.pow.u64`).
+pub const SYM_BUILTIN_MATH_POW_U64: SymbolId = SymbolId(SYNTHETIC_BUILTIN_BASE + 18);
+
 /// Base for MIR-synthesized watch handler IDs (one per watch block target).
 pub const SYM_WATCH_HANDLER_BASE: usize = 0x4001_0000;
 

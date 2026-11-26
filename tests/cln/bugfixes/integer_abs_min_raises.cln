@@ -1,0 +1,26 @@
+// Test: bugfixes/integer_abs_min_raises
+// Semantic: semantic-rules.md RUN003 — integer arithmetic never wraps: the
+//   absolute value of the smallest integer is outside integer and raises the
+//   catchable error "integer overflow", as unary minus of it does (issue #50)
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   -1
+//   7
+//   caught: integer overflow
+//   2147483647
+//   5
+//   0
+
+start:
+	integer min = -2147483648
+	integer b = math.abs(min) onError -1
+	print(b)
+	integer a = math.abs(-2147483647 - 1) onError 7
+	print(a)
+	integer c = math.abs(min) onError:
+		print("caught: " + error)
+	integer nearMin = -2147483647
+	print(math.abs(nearMin))
+	integer five = -5
+	print(math.abs(five))
+	print(math.abs(0))

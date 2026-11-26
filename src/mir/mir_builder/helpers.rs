@@ -54,6 +54,7 @@ impl MirBuilder {
                     "__err_raise"
                         | "__number_to_integer"
                         | "__number_to_integer64"
+                        | "math.abs.i32"
                         | "string.toInteger"
                         | "string.toNumber"
                         | "string.toBoolean"

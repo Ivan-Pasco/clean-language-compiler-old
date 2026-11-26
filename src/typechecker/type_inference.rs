@@ -3969,7 +3969,7 @@ impl<'a> TypeInference<'a> {
     }
 
     /// The value of a constant integer expression (literals combined with
-    /// `+`, `-`, `*` and unary `-`), or None when it is not constant or an
+    /// `+`, `-`, `*`, `^` and unary `-`), or None when it is not constant or an
     /// operand already overflowed (reported there).
     fn constant_integer_value(expression: &TastExpression) -> Option<i128> {
         let value = match &expression.kind {
@@ -3993,6 +3993,8 @@ impl<'a> TypeInference<'a> {
                     BinaryOperator::Add => a + b,
                     BinaryOperator::Subtract => a - b,
                     BinaryOperator::Multiply => a.checked_mul(b)?,
+                    // A negative exponent is not a constant integer power.
+                    BinaryOperator::Power => a.checked_pow(u32::try_from(b).ok()?)?,
                     _ => return None,
                 }
             }
@@ -4029,6 +4031,16 @@ impl<'a> TypeInference<'a> {
             } => {
                 Self::constant_integer_value(left).is_some()
                     && Self::constant_integer_value(right).is_some()
+            }
+            // `a ^ b` with a non-negative constant exponent (a negative one
+            // is not an integer power of constants).
+            TastExpressionKind::BinaryOperation {
+                operator: BinaryOperator::Power,
+                left,
+                right,
+            } => {
+                Self::constant_integer_value(left).is_some()
+                    && Self::constant_integer_value(right).is_some_and(|exponent| exponent >= 0)
             }
             _ => false,
         };
