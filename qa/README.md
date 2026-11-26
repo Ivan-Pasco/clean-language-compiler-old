@@ -12,7 +12,6 @@ This folder contains quality assurance documentation, testing guides, and analys
 qa/
 ├── README.md                    # This file
 ├── docs/                        # QA documentation and guides
-│   ├── BULLETPROOF_TESTING_STRATEGY.md
 │   └── TESTING_GUIDE.md
 ├── scripts/                     # QA automation scripts
 │   └── run_tests.sh            # Test runner interface
@@ -21,18 +20,6 @@ qa/
 ```
 
 ## 📚 Documentation
-
-### docs/BULLETPROOF_TESTING_STRATEGY.md
-Comprehensive testing methodology and quality standards for the Clean Language Compiler.
-
-**Key Topics**:
-- Specification-driven testing principles
-- Zero tolerance quality standards (100% compilation/execution rates)
-- Multi-layer testing approach (unit, integration, property-based, performance)
-- Automated quality gates
-- Coverage requirements
-
-**Target Audience**: Development team, QA engineers, and stakeholders
 
 ### docs/TESTING_GUIDE.md
 Practical step-by-step testing instructions and workflows.
@@ -95,9 +82,9 @@ python3 qa/tools/error_analysis.py
 ## 🔗 Related Documentation
 
 - **Main Testing Strategy**: `tests/UNIFIED_TESTING_STRATEGY.md`
-- **Language Specification**: `documentation/Clean_Language_Specification.md`
+- **Language Specification**: `../foundation/docs/specification 1.0/` (start at `README.md`)
 - **Project Guidelines**: `CLAUDE.md`
-- **Development Guide**: `documentation/development-guide.md`
+- **Development Guide**: `../foundation/docs/compiler/development-guide.md`
 
 ## 📝 Notes
 
@@ -118,8 +105,7 @@ For immediate testing:
 
 2. **Run comprehensive tests**:
    ```bash
-   cd scripts
-   ./comprehensive_test_runner.sh
+   ./scripts/comprehensive_test_runner.sh
    ```
 
 3. **Review unified strategy**:

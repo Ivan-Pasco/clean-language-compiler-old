@@ -8,16 +8,14 @@ This directory contains quality assurance automation and scripts for the Clean L
 tests/qa/
 ├── README.md           # This file
 └── scripts/            # QA automation scripts
-    ├── run_comprehensive_test.sh
     ├── validate_all_wasm.sh
-    ├── generate_progress_report.sh
-    └── categorize_errors.py
+    └── generate_progress_report.sh
 ```
 
 ## Integration with Existing Infrastructure
 
 This QA directory complements:
-- `tests/cln/` - Test source files (179+ .cln files)
+- `tests/cln/` - Test source files (1054 .cln files as of 0.33.189)
 - `tests/output/` - Compiled WASM output
 - `scripts/` - Main project scripts (comprehensive_test_runner.sh, etc.)
 - `.claude/agents/` - Agent configurations for testing

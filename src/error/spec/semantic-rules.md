@@ -1,8 +1,8 @@
 # Clean Language Semantic Rules
 
 **Authority:** This file is the single source of truth for semantic rules (Principle 3).
-**Version:** 1.1.0
-**Date:** 2026-04-19
+**Version:** 1.2.0
+**Date:** 2026-11-26
 
 Every rule has a numbered code. When the compiler rejects code for a semantic reason, the error message must include the rule code. A diagnostic without a code is incomplete (Principle 4).
 
@@ -10,8 +10,24 @@ Every rule has a numbered code. When the compiler rejects code for a semantic re
 
 ## Error Code Ranges
 
-| Range | Category | Phase |
+These are the codes this file defines a rule for, by category. `error-codes.md` is the full registry; codes PLUGIN006–PLUGIN016 are defined in the typed-emission contract (`framework/contracts/typed-emission.md`), not here.
+
+| Codes | Category | Phase |
 |-------|----------|-------|
+| SYN001–SYN008, SYN100–SYN101 | Syntax (parser) | Parsing |
+| SEM001–SEM014 | Semantic (type, scope, access, capabilities) | HIR validation, resolver, type checker |
+| SCOPE001–SCOPE005 | Scope rules | Resolver |
+| FUNC001–FUNC012 | Function rules | HIR validation, resolver |
+| CLASS001–CLASS008 | Class rules | HIR validation |
+| IDX001–IDX004 | Index access rules | Type checker |
+| STATE001–STATE005 | State rules | Type checker, runtime |
+| IMPORT001–IMPORT004 | Import rules | Module resolver |
+| PLUGIN001, PLUGIN002, PLUGIN018 | Plugin rules | Plugin loader, plugin expansion |
+| COM001–COM006 | Compilation (codegen, module) | Code generation |
+| BLD-LAYOUT, BLD-MANIFEST | Build (multi-file) | Project layout discovery |
+| RUN001–RUN005 | Runtime (execution) | WASM execution |
+
+-------|----------|-------|
 | SYN001–SYN008 | Syntax (parser) | Parsing |
 | SEM001–SEM010 | Semantic (type, scope, access) | HIR validation, resolver, type checker |
 | SCOPE001–SCOPE005 | Scope rules | Resolver |
@@ -329,25 +345,47 @@ For a subclass, the help line reads: `` Private members are not inherited: `{sub
 ### SEM006 — Inheritance Error
 A class inheritance declaration is invalid.
 
+A missing parent class, or a parent that is not a class (such as `integer`), is CLASS001, not SEM006.
+
 **Applies to:**
-- Parent class does not exist
-- Parent is not a class type (e.g., trying to inherit from a primitive)
 - A method that overrides a parent's public method has different parameter types or a different return type — `"Method '{method}' of class '{class}' overrides '{parent}.{method}' with a different signature"`
 - A method that overrides a parent's public method is not under `public:` — `"Method '{method}' of class '{class}' overrides the public method '{parent}.{method}' but is private"`. (A subclass method named like a parent's *private* method is a new method, not an override.)
 
 **Example (fails — SEM006):**
 ```clean
-class Child is NonExistentParent    // parent not defined
-    integer x
+class Animal
+	functions:
+		public:
+			string speak()
+				return "..."
+
+class Dog is Animal
+	functions:
+		public:
+			integer speak()      // overrides Animal.speak with a different return type
+				return 1
 ```
 
-### SEM007 — Generic Type Error
-A generic or polymorphic type operation is invalid.
+### SEM007 — Unresolved Name
+A name cannot be resolved, or a check failed that has no more specific code.
+
+The registry first described SEM007 as a generic-type error (bad type arguments, tuple sizes, union types). Those cases cannot happen: the language has no user-defined generics, tuples or union types (type-system.md §10). This section describes what the compiler emits SEM007 for today.
 
 **Applies to:**
-- Incompatible type arguments
-- Tuple size mismatch
-- Union type incompatibility
+- A variable that is not declared — `"Undefined variable '{name}'"` (also inside string interpolation)
+- A call to a function that is not declared — `"Function '{name}' not found"`
+- A call to a function a module does not define — `"Function '{fn}' not found in module '{module}'"`
+- `req`, `res` or `session` used outside a frame.server endpoint handler
+- An unknown pattern name in a `validate` block `match:` constraint — `"Unknown pattern name '{name}' in validate match constraint. Valid patterns: …"`
+- Any other validation error raised without its own code
+
+Several of these overlap SEM002 (undefined symbol) and SEM010 (unknown pattern name). The compiler is expected to move them to those codes (review finding M-12); until then they are reported as SEM007.
+
+**Example (fails — SEM007):**
+```clean
+start:
+	print(y)    // Undefined variable 'y'
+```
 
 ### SEM008 — Inheritance Cycle
 A class inherits from itself directly or indirectly, creating a cycle.
@@ -369,21 +407,21 @@ FooBar x = 42    // FooBar is not a defined type
 ---
 
 ### SEM010 — Unknown Pattern Name
-The string literal passed to `.matches()` does not refer to a built-in pattern name or a name provided by an imported pattern pack.
+The string literal passed to `.matches()` does not refer to a built-in pattern name.
 
 **Condition:** The argument to `.matches()` must be a string literal (not a variable), and its value must be a known pattern name. This is validated at compile time; no runtime lookup is performed.
 
 **Built-in names:** `"email"`, `"url"`, `"uuid"`, `"phone"`, `"date"`, `"integer"`, `"number"`, `"alphanumeric"`.
 
-**Extended names:** available after importing a pattern pack, e.g. `import: validate.patterns.financial` unlocks `"iban"`, `"ssn"`, `"creditCard"`.
+There are no other pattern names. Pattern packs (`import: validate.patterns.financial`, mentioned in `grammar.ebnf` §8) are not implemented: that import is a syntax error (finding A8-16).
 
 **Example (fails — SEM010):**
 ```clean
-boolean ok = someString.matches("postcode")   // "postcode" not in scope — missing import
+boolean ok = someString.matches("postcode")   // "postcode" is not a built-in pattern
 boolean ok = someString.matches("notapattern") // no such built-in pattern
 ```
 
-**Fix:** Use a built-in pattern name, or add the corresponding `import:` for the pattern pack that provides the name.
+**Fix:** Use a built-in pattern name.
 
 **Also fails — SEM010:** passing a variable instead of a string literal:
 ```clean
@@ -640,12 +678,44 @@ Every parameter must be satisfied by exactly one positional or named argument. A
 integer result = add(1, a: 1, b: 2)    // "a" covered twice (positionally and by name)
 ```
 
+### FUNC012 — Method-Style Call on a Standalone Function
+A function declared in a `functions:` block is called with method syntax, `value.fn(args)`. Standalone functions are called as `fn(value, args)`; method syntax is only for built-in type methods and class methods.
+
+**Message:** `` "`{name}` is a standalone function — call it as `{name}(value, args)` not `value.{name}(args)`" ``
+
+**Example (fails — FUNC012):**
+```clean
+start:
+	Box b = Box()
+	print(b.twice())     // twice is a top-level function, not a Box method
+
+class Box
+	integer n = 1
+
+functions:
+	integer twice(Box b)
+		return 2
+```
+
+Not yet implemented for receivers of a built-in type: `4.twice()` with a top-level `twice` is reported as FUNC001 ("Method 'twice' not found on a integer value"). See finding A8-3.
+
 ---
 
 ## Class Rules
 
 ### CLASS001 — Parent Class Must Exist
-When a class uses `is ParentName` for inheritance, the parent class must be defined.
+When a class uses `is ParentName` for inheritance, the parent must be a class defined in the program. A parent that is not a class, such as a primitive type, is reported the same way.
+
+**Message:** `"Parent class '{name}' is not defined"`
+
+**Example (fails — CLASS001):**
+```clean
+class Child is NonExistentParent    // parent not defined
+	integer x = 0
+
+class Count is integer              // integer is not a class
+	integer x = 0
+```
 
 ### CLASS002 — Duplicate Field in Class
 Field names within a class must be unique.
@@ -749,11 +819,16 @@ calls that perform I/O or mutate state.
 **Example (fails — STATE001):**
 ```clean
 state:
-    integer count = 0
-        guard print("checking") else "no side effects allowed"
+	integer count = 0
+		guard value + 1 else "must be boolean"         // not boolean
+
+	integer size = 0
+		guard file.exists("x.txt") else "no I/O"       // I/O call in a guard
 ```
 
-**Message:** `"Guard condition must be a pure boolean expression"`
+**Messages:**
+- `"Guard condition for state variable '{name}' must be boolean, found {type}"`
+- `"Guard expression must be pure — found I/O call '{call}'. Guards cannot have side effects."` A call to a `file.`, `db.`, `http.` or `console.` function counts as I/O.
 
 **Runtime behavior:** If the guard condition evaluates to `false` at runtime,
 the state update is rejected and the state variable retains its previous value.
@@ -880,7 +955,7 @@ A referenced plugin is not installed. Install with `cleen plugin add <name>`.
 A plugin attempts to register a function or block handler that conflicts with an existing registration.
 
 ### PLUGIN018 — Assemble-Typed Illegal Bridge
-A structural typed-emission bridge (`_emit_function`, `_emit_class_full`, `_emit_stmt_from_source`, `_emit_expr_from_source`, `_emit_statement_into_start`, `_emit_statement_inline`, `_emit_external`, `_emit_state_block`, `_emit_route`, `_emit_helpers_batch`, `_emit_class_methods_from_spec`, or any `batch.*` builder) was called from inside a plugin's `assemble_typed` hook. Inside `assemble_typed`, only `_inject_source_file` is legal. See [`plugins/contracts/assemble.md`](plugins/contracts/assemble.md) §6.2 for the full illegal-bridge list and the rationale. Emitted at the first illegal call site; the sticky-error flag (typed-emission.md §3.15) prevents cascading duplicates.
+A structural typed-emission bridge (`_emit_function`, `_emit_class_full`, `_emit_stmt_from_source`, `_emit_expr_from_source`, `_emit_statement_into_start`, `_emit_statement_inline`, `_emit_external`, `_emit_state_block`, `_emit_route`, `_emit_helpers_batch`, `_emit_class_methods_from_spec`, or any `batch.*` builder) was called from inside a plugin's `assemble_typed` hook. Inside `assemble_typed`, only `_inject_source_file` is legal. See [`framework/contracts/assemble.md`](framework/contracts/assemble.md) §6.2 for the full illegal-bridge list and the rationale. Emitted at the first illegal call site; the sticky-error flag (typed-emission.md §3.15) prevents cascading duplicates.
 
 ---
 

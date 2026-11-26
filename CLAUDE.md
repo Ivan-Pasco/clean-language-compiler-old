@@ -14,19 +14,19 @@ Development guidance for the Clean Language compiler.
 
 **CRITICAL: Before writing ANY Clean Language code, call `get_quick_reference` from the clean-language MCP server.** This gives you the correct, up-to-date syntax. Do NOT write Clean code from memory — always verify against the MCP tools.
 
-Available MCP tools: `get_quick_reference`, `check`, `compile`, `parse`, `get_specification`, `list_functions`, `list_types`, `list_builtins`, `list_plugins`, `get_architecture`, `explain_error`
+Main MCP tools: `get_quick_reference`, `check`, `compile`, `parse`, `get_specification`, `list_functions`, `list_types`, `list_builtins`, `list_plugins`, `get_architecture`, `explain_error`. The server has 29 tools; the full list is in [`foundation/docs/compiler/mcp-onboarding.md`](../foundation/docs/compiler/mcp-onboarding.md).
 
-The MCP server is configured in `.mcp.json` at the project root.
+The MCP server is configured in `.mcp.json` (this folder and the parent folder); it runs `~/.cleen/bin/cln mcp-server`.
 
 ## Language Specification
 
 The **single source of truth** for the Clean Language is:
-- **[Language Specification](./documentation/Clean_Language_Specification.md)** — prose specification
+- **[Language Specification](../foundation/docs/specification%201.0/README.md)** — prose specification (`foundation/docs/specification 1.0/`)
 - **[`foundation/spec/grammar/grammar.ebnf`](../foundation/spec/grammar/grammar.ebnf)** — formal EBNF grammar (authoritative for syntax)
 - **[`foundation/spec/semantic-rules.md`](../foundation/spec/semantic-rules.md)** — numbered semantic rules
 - **[`foundation/spec/type-system.md`](../foundation/spec/type-system.md)** — type hierarchy and compatibility
 - **[`foundation/spec/stdlib-reference.md`](../foundation/spec/stdlib-reference.md)** — built-in function signatures
-- **[`foundation/spec/plugins/`](../foundation/spec/plugins/)** — plugin grammar extensions (EBNF)
+- **[`foundation/spec/framework/grammar/`](../foundation/spec/framework/grammar/)** — plugin grammar extensions (EBNF)
 
 When resolving syntax ambiguity, `foundation/spec/grammar/grammar.ebnf` takes precedence. If something is not in the spec, propose a spec change before implementing it. When something is added, update both the prose spec and the formal EBNF.
 
@@ -40,7 +40,7 @@ The compiler generates WASM imports — it does NOT implement runtime functions.
 - **[Host Bridge](../foundation/spec/platform/HOST_BRIDGE.md)** — Layer 2 portable functions
 - **[Memory Model](../foundation/spec/platform/MEMORY_MODEL.md)** — WASM memory layout
 - **[Server Extensions](../foundation/spec/platform/SERVER_EXTENSIONS.md)** — Layer 3 HTTP functions
-- **[Architecture Boundaries](../foundation/management/ARCHITECTURE_BOUNDARIES.md)** — component responsibilities
+- **[Architecture Boundaries](../foundation/docs/governance/ARCHITECTURE_BOUNDARIES.md)** — component responsibilities
 
 **Rule of thumb:** If a function needs I/O, network, or database, it belongs in a plugin declaration, NOT in the compiler registry.
 
@@ -48,13 +48,13 @@ The compiler generates WASM imports — it does NOT implement runtime functions.
 
 The built-in functions, classes and namespaces are registered in the resolver's global symbol table (`GlobalSymbolTable::add_builtins`); MCP `list_builtins` reads the same table. `src/builtins/registry.rs` only holds the `BuiltinType` enum used by the bridge-function ABI.
 
-- Language built-ins: print, printl, input
-- Math operations: abs, sqrt, pow, sin, cos
-- Type conversions: toString, toInteger
-- Namespaces: Math.*, String.*, Integer.*
-- Pure WASM operations: json.*
+- Global functions: print, printl, println, input, input_integer, input_number, input_string, input_yesNo, error (bare abs/sqrt/pow/min/max/toString are not built-ins — use `math.*` and `.toString()`, spec 17 one-name rule)
+- Static class: Integer.parse
+- Lowercase namespaces (18 in 0.33.189): math.*, string.*, list.*, json.*, validator.*, input.*, file.*, fs.*, http.*, crypto.*, jwt.*, db.*, auth.*, req.*, session.*, server.*, env.*, time.*
+- Mostly pure WASM (implemented in the module): string.*, list.*, json.*, validator.*, math.* — but some math functions are host imports (e.g. `math.sin` → `math_sin`), as are `print`, `input` and number/text conversions (`float_to_string`, ...)
+- I/O namespaces (file.*, fs.*, http.*, crypto.*, jwt.*, db.*, ...) are names the compiler registers so it can type calls; they lower to bridge imports that the host implements. The compiler emits the import, never the implementation.
 
-Everything else comes from plugin `[bridge]` declarations in `plugin.toml`.
+Run MCP `list_builtins` for the current list. Everything else comes from plugin `[bridge]` declarations in `plugin.toml`.
 
 ### Bridge Function Call-Site Resolution
 
@@ -77,7 +77,9 @@ cargo build
 
 # Test
 cargo test
-cargo test --test integration
+cargo test --lib
+cargo test --test <name>        # one file from tests/*.rs, e.g. specification_parser_tests
+python3 scripts/check_regressions.py
 
 # Compile a file
 cargo run --bin cln -- compile file.cln -o output.wasm
@@ -86,6 +88,8 @@ cargo run --bin cln -- compile file.cln -o output.wasm
 cargo run --bin cln -- debug file.cln --show-ast
 cargo run --bin debug_wasm -- file.wasm
 ```
+
+Every `cln` subcommand, flag, environment variable and exit code: [`foundation/docs/compiler/cli-reference.md`](../foundation/docs/compiler/cli-reference.md).
 
 ## Automated Workflows
 
@@ -96,23 +100,24 @@ cargo run --bin debug_wasm -- file.wasm
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| Parser | `src/parser/` | Pest-based parser with error recovery |
+| Lexer | `src/lexer/` | Token stream with indentation tokens |
+| Parser | `src/parser/` | Token-driven recursive-descent parser (`token_parser/`); the Pest grammar only parses fragments |
 | HIR | `src/hir/` | High-level intermediate representation |
 | Resolver | `src/resolver/` | Name resolution and symbol management |
 | Type Checker | `src/typechecker/` | Type inference and checking |
 | MIR | `src/mir/` | Mid-level IR, optimization target |
 | Code Generation | `src/codegen/` | WASM output via `wasm-encoder` |
-| Builtins | `src/builtins/` | Built-in function registry |
+| Builtins | `src/builtins/` | `BuiltinType` enum for the bridge ABI (built-ins are registered in `src/resolver/symbol_table.rs`) |
 | Plugins | `src/plugins/` | Plugin system (plugin.toml parsing) |
 
-Full documentation: [documentation/](./documentation/)
+Full documentation: [`foundation/docs/compiler/`](../foundation/docs/compiler/) (start with `compilation-pipeline.md`)
 
 ## Development Workflow
 
-1. Update grammar in `src/parser/grammar.pest` if needed
+1. Update the token parser in `src/parser/token_parser/` if needed (`src/parser/grammar.pest` only for fragment parsing)
 2. Extend AST in `src/ast/mod.rs`
 3. Add parsing logic in `src/parser/`
-4. Implement semantic analysis in `src/semantic/`
+4. Implement semantic analysis in `src/hir/` (validation), `src/resolver/` and `src/typechecker/`
 5. Add code generation in `src/codegen/`
 6. Write tests, update documentation and spec
 7. Errors found → file a GitHub issue (`cln report` prints the command)

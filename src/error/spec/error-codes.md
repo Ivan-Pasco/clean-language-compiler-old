@@ -1,8 +1,8 @@
 # Clean Language Error Code Registry
 
 **Authority:** This file is the master index of every diagnostic the compiler can emit.
-**Version:** 1.0.0
-**Date:** 2026-04-19
+**Version:** 1.1.0
+**Date:** 2026-11-26
 
 Every diagnostic the compiler emits carries a unique code. This file provides a navigable index of all codes, their categories, severity levels, and cross-references. For full rule definitions — conditions, examples, and messages — see `spec/semantic-rules.md`.
 
@@ -67,11 +67,15 @@ Emitted during HIR validation, name resolution, and type checking.
 | SEM003 | `SymbolRedefinition` | Symbol declared more than once in the same scope | Error | semantic-rules.md §SEM003 |
 | SEM004 | `InvalidOperationForType` | Operator or operation applied to an unsupported type | Error | semantic-rules.md §SEM004 |
 | SEM005 | `AccessViolation` | Private member accessed from outside its allowed scope | Error | semantic-rules.md §SEM005 |
-| SEM006 | `InheritanceError` | Class inheritance declaration is invalid | Error | semantic-rules.md §SEM006 |
-| SEM007 | `GenericTypeError` | Generic or polymorphic type operation is invalid | Error | semantic-rules.md §SEM007 |
+| SEM006 | `InheritanceError` | A method override is invalid: its signature differs from the parent's public method, or it is not under `public:` | Error | semantic-rules.md §SEM006 |
+| SEM007 | `UnresolvedName` | Undefined variable or function, unknown `validate` pattern, or another validation error with no specific code | Error | semantic-rules.md §SEM007 |
 | SEM008 | `InheritanceCycle` | Class inherits from itself directly or indirectly | Error | semantic-rules.md §SEM008 |
 | SEM009 | `InvalidTypeSpecification` | Type name does not refer to a valid type | Error | semantic-rules.md §SEM009 |
 | SEM010 | `InvalidMatchPattern` | Argument to `string.matches()` is not one of the allowed pattern names | Error | semantic-rules.md §SEM010 |
+| SEM011 | `MissingCapabilityMethod` | A class claims `can C` but does not implement one of C's required methods | Error | semantic-rules.md §SEM011 |
+| SEM012 | `UndefinedCapability` | A class claims a capability that is not declared | Error | semantic-rules.md §SEM012 |
+| SEM013 | `CapabilityMethodSignatureMismatch` | A class implements a capability method with the wrong signature | Error | semantic-rules.md §SEM013 |
+| SEM014 | `CapabilityDefaultUnknownMember` | A capability default body uses a method that is not part of the same capability | Error | semantic-rules.md §SEM014 |
 
 ### Scope Codes (SCOPE)
 
@@ -102,7 +106,7 @@ Emitted during HIR validation of function definitions and call sites.
 | FUNC009 | `DuplicateNamedArgument` | Same named argument label appears more than once in a call | Error | semantic-rules.md §FUNC009 |
 | FUNC010 | `PositionalAfterNamed` | Positional argument appears after a named argument in a call | Error | semantic-rules.md §FUNC010 |
 | FUNC011 | `NamedArgCoverageError` | Named argument count or coverage does not match parameter count | Error | semantic-rules.md §FUNC011 |
-| FUNC012 | `MethodCallOnStandaloneFunction` | A method-call syntax (`receiver.fn()`) was used on a plain function that is not a method | Error | Emitted by resolver when dot-call notation is applied to a non-method symbol |
+| FUNC012 | `MethodCallOnStandaloneFunction` | Method syntax (`value.fn()`) used to call a function declared in a `functions:` block | Error | semantic-rules.md §FUNC012 |
 
 ### Class Codes (CLASS)
 
@@ -110,7 +114,7 @@ Emitted during HIR validation of class definitions.
 
 | Code | Name | Short Description | Severity | Defined In |
 |------|------|-------------------|----------|------------|
-| CLASS001 | `ParentClassNotFound` | Parent class named in `is ParentName` is not defined | Error | semantic-rules.md §CLASS001 |
+| CLASS001 | `ParentClassNotFound` | Parent named in `is ParentName` is not a class defined in the program (also for a primitive such as `integer`) | Error | semantic-rules.md §CLASS001 |
 | CLASS002 | `DuplicateField` | Two fields in the same class share a name | Error | semantic-rules.md §CLASS002 |
 | CLASS003 | `DuplicateMethod` | Two methods in the same class share a name | Error | semantic-rules.md §CLASS003 |
 | CLASS004 | `MissingConstructor` | Class is instantiated but has no constructor | Error | semantic-rules.md §CLASS004 |
@@ -211,18 +215,38 @@ Not emitted by the compiler. Raised during WASM execution by the host runtime.
 
 ## Diagnostic Format
 
-When the compiler emits a diagnostic, the message follows this format:
+The command-line compiler prints each diagnostic in this form:
 
 ```
-<file>:<line>:<column>: <severity> [<CODE>] <message>
+error[<CODE>]: <message>
+  --> <file>:<line>:<column>
+   |
+ <n> | <source line>
+     |         ^
+     |         <message, shortened>
+   |
+  help: <hint, when there is one>
 ```
+
+A warning starts with `warning[<CODE>]`. After the last diagnostic the compiler prints a summary (`Summary: 1 error found`).
 
 **Example:**
 ```
-main.cln:12:5: error [SEM001] type mismatch: expected 'integer', got 'string'
+error[SEM004]: Type annotation 'integer' contradicts the inferred type 'string' for variable 'x'
+  --> main.cln:2:10
+   |
+   1 | start:
+   2 | 	integer x = "hello"
+     | 	        ^
+     | 	        Type annotation 'integer' contradicts the infer...
+   3 | 	print(x)
+   |
+  help: Change the type annotation to 'string' or change the initializer to produce a 'integer'
 ```
 
-Every compiler-produced diagnostic must include a code. A diagnostic without a code is incomplete and violates Principle 4.
+With `--json` (for example `cln check --json file.cln`), each diagnostic is an object with `severity`, `message`, `file`, `line`, `column`, `code` and, when known, `byte_start`.
+
+Every compiler-produced diagnostic must include a code. A diagnostic without a code is incomplete and violates Principle 4. Known gaps: plugin errors carry their code inside the message text and `code` is `null` in JSON (finding A8-8).
 
 ---
 
@@ -234,7 +258,7 @@ The following code numbers are reserved for future use. Do not assign them witho
 |-------|--------|
 | SYN009–SYN099 | Reserved |
 | SYN102–SYN199 | Reserved (extension range for AI-metadata syntax codes) |
-| SEM011–SEM099 | Reserved |
+| SEM015–SEM099 | Reserved |
 | SCOPE006–SCOPE099 | Reserved |
 | FUNC013–FUNC099 | Reserved |
 | CLASS009–CLASS099 | Reserved |

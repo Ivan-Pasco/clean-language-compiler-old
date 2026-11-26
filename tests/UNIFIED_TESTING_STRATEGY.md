@@ -9,7 +9,7 @@ This unified strategy combines proven QA methodology with modern intelligent age
 
 ### **1. Existing Test Priority Rule** ⭐
 - **ALWAYS search for existing tests FIRST** before creating new ones
-- Use existing tests in `tests/cln/` to validate functionality (353+ organized test files)
+- Use existing tests in `tests/cln/` to validate functionality (1054 `.cln` files in 31 category folders as of 0.33.189; see `tests/README.md`)
 - Only create new tests when gaps are identified in coverage
 - Leverage proven test infrastructure with intelligent enhancement
 
@@ -28,7 +28,7 @@ This unified strategy combines proven QA methodology with modern intelligent age
 ### **4. Test Header Citation Convention**
 
 Every `.cln` test should declare which spec rules it exercises in its header comment.
-This is how `/coverage` measures spec-implementation citation coverage. The required
+This is how `scripts/spec_coverage.py` measures spec-implementation citation coverage. The required
 forms:
 
 ```
@@ -41,11 +41,12 @@ forms:
 ```
 
 **Citation rules:**
-- `Grammar:` MUST cite production names from `foundation/spec/grammar.ebnf`
-- `Semantic:` MUST cite rule codes from `foundation/spec/semantic-rules.md`
-  (SYN001–SYN101, SEM001–SEM010, SCOPE001–SCOPE005, FUNC001–FUNC011,
-  CLASS001–CLASS006, IDX001–IDX004, STATE001–STATE005, IMPORT001–IMPORT004,
-  PLUGIN001–PLUGIN002, COM001–COM006, RUN001–RUN005). Never invent new codes
+- `Grammar:` MUST cite production names from `foundation/spec/grammar/grammar.ebnf`
+- `Semantic:` MUST cite rule codes from `foundation/spec/semantic-rules.md` /
+  `foundation/spec/error-codes.md` (prefixes SYN, SEM, SCOPE, FUNC, CLASS, IDX,
+  STATE, IMPORT, PLUGIN, COM, BLD, RUN). The registry grows, so do not copy
+  ranges here: `cln explain <CODE>` checks one code, and `cln explain XYZ` or the
+  MCP `list_error_codes` tool lists them all. Never invent new codes
   without developer approval (Principle 25).
 - For regression markers that don't fit any existing code, cite the closest
   existing code and append the tracking marker in parens:
@@ -58,9 +59,9 @@ forms:
   ```
 
   The parenthesized tracking ID preserves the historical fingerprint while the
-  canonical code keeps the citation valid for `/coverage`. Tracking IDs that recur
-  enough to warrant a formalized spec code should be raised in `TASKS.md` for
-  developer approval rather than added unilaterally.
+  canonical code keeps the citation valid for `scripts/spec_coverage.py`. Tracking IDs that recur
+  enough to warrant a formalized spec code should be raised as a GitHub issue
+  (label `compiler-old`) for developer approval rather than added unilaterally.
 
 ### **5. Every App Bug Becomes a Bugfix Test**
 
@@ -172,10 +173,11 @@ find tests/cln/ -name "*.cln" -exec grep -l "failing_feature" {} \;
 
 # Analyze test coverage by category
 ls tests/cln/core/          # Core language features (CRITICAL)
-ls tests/cln/functions/     # Function-related tests (HIGH)
-ls tests/cln/oop/          # Object-oriented features (HIGH)
-ls tests/cln/data-structures/ # Arrays, matrices, etc. (MEDIUM)
+ls tests/cln/functions/ tests/cln/language/functions/   # Function-related tests (HIGH)
+ls tests/cln/language/classes/ tests/cln/core/capabilities/   # Object-oriented features (HIGH)
+ls tests/cln/core/collections/ tests/cln/stdlib/list/   # Lists, matrices, pairs (MEDIUM)
 ls tests/cln/integration/   # Integration tests (VALIDATION)
+ls tests/cln/bugfixes/      # Regression pins — check before writing a new one
 ```
 
 #### **2.2 Error Classification & Agent Assignment**
@@ -185,7 +187,7 @@ For each unique error pattern:
 2. **Classify Impact**: CRITICAL/HIGH/MEDIUM priority
 3. **Identify Root Cause**: Parser/semantic/codegen issue?
 4. **Assign Appropriate Agent**: Based on error type and complexity
-5. **Document in TASKS.md**: Add with priority level
+5. **File a GitHub issue**: `cln report` prints the `gh issue create` command (label `compiler-old`); do not add to TASKS.md, which is historical
 
 **Error Pattern Examples with Agent Assignment**:
 ```
@@ -310,7 +312,7 @@ Before moving to next phase:
 - [ ] All CRITICAL errors resolved
 - [ ] Success rate improved by minimum 10%
 - [ ] No regressions in previously passing tests
-- [ ] All fixes documented in TASKS.md
+- [ ] All fixes tracked as GitHub issues and pinned by a `tests/cln/bugfixes/` test
 - [ ] All implementations production-grade (no placeholders)
 
 #### **5.2 Success Metrics & KPIs**
@@ -351,7 +353,7 @@ When encountering difficult implementations, use proven escalation:
 ```bash
 # USER TYPES: "test"
 # Automatically executes this unified strategy with:
-# 1. Existing test prioritization (353+ files)
+# 1. Existing test prioritization (1054 .cln files)
 # 2. Intelligent agent integration
 # 3. Proven QA methodology
 # 4. Production-grade quality standards
@@ -365,26 +367,35 @@ When encountering difficult implementations, use proven escalation:
 # Quick test trigger
 ./scripts/test.sh
 
-# QA-specific procedures
-./tests/qa/scripts/run_comprehensive_test.sh
+# Compile and execute every file
+./scripts/comprehensive_test.sh
+
+# Regression pins
+python3 scripts/check_regressions.py
 ```
 
 ### **Automated Quality Assurance**
 ```bash
-# Error categorization with agent assignment
-python3 tests/qa/scripts/categorize_errors.py test_output.log
+# Error pattern analysis
+python3 qa/tools/error_analysis.py
 
 # Progress tracking with KPIs
 ./tests/qa/scripts/generate_progress_report.sh
 
-# Syntax compliance validation
-python3 tests/qa/scripts/validate_syntax_compliance.py tests/cln/
+# Validate every WASM in tests/output/
+./tests/qa/scripts/validate_all_wasm.sh
+
+# Spec-rule citation coverage
+python3 scripts/spec_coverage.py
+
+# Test-quality guards (R1–R4, C1–C3)
+python3 scripts/check_test_quality.py
 ```
 
 ## 📈 **INTEGRATION WITH EXISTING INFRASTRUCTURE**
 
 ### **Leveraging Proven Test Suite**
-- **353+ test files** organized in `tests/cln/` directory
+- **1054 `.cln` test files** organized in `tests/cln/` directory, plus 155 Rust test files in `tests/*.rs`
 - **Proven QA methodology** with 100% success rate achievement
 - **Existing QA procedures** in `tests/qa/` directory
 - **Production-grade quality standards** already established
@@ -472,11 +483,11 @@ The number of remaining baseline files is reported at the end of every
 
 **📋 USAGE**: When user types "test", execute this unified strategy automatically using proven QA methodology enhanced with intelligent agent integration for systematic problem resolution.**
 
-**🔗 REPLACES**:
-- `tests/COMPREHENSIVE_TESTING_STRATEGY.md` (automation + agent integration)
-- `tests/COMPREHENSIVE_QA_PROCEDURE.md` (proven methodology + detailed procedures)
+**🔗 REPLACES** (both removed; this file is the only strategy document):
+- the former `tests/COMPREHENSIVE_TESTING_STRATEGY.md` (automation + agent integration)
+- the former `tests/COMPREHENSIVE_QA_PROCEDURE.md` (proven methodology + detailed procedures)
 
 **📚 INTEGRATION**:
 - Links to `tests/qa/` directory for existing automation tools
-- Uses `tests/cln/` organized test structure (353+ files)
+- Uses `tests/cln/` organized test structure (1054 files)
 - Connects to `scripts/` directory for execution automation
