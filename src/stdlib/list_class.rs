@@ -33,9 +33,9 @@ use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 
 /// Byte offset of the first element.
-const DATA: i32 = 16;
+pub(crate) const DATA: i32 = 16;
 
-fn mem(offset: u64, align: u32) -> MemArg {
+pub(crate) fn mem(offset: u64, align: u32) -> MemArg {
     MemArg {
         offset,
         align,
@@ -60,7 +60,7 @@ pub(crate) enum Elem {
 }
 
 impl Elem {
-    fn stride(self) -> i32 {
+    pub(crate) fn stride(self) -> i32 {
         match self {
             Elem::F64 | Elem::I64 => 8,
             Elem::I32 | Elem::Str | Elem::Boxed => 4,
@@ -75,7 +75,7 @@ impl Elem {
         }
     }
 
-    fn load(self) -> Instruction<'static> {
+    pub(crate) fn load(self) -> Instruction<'static> {
         match self {
             Elem::F64 => Instruction::F64Load(mem(DATA as u64, 3)),
             Elem::I64 => Instruction::I64Load(mem(DATA as u64, 3)),
@@ -83,7 +83,7 @@ impl Elem {
         }
     }
 
-    fn store(self) -> Instruction<'static> {
+    pub(crate) fn store(self) -> Instruction<'static> {
         match self {
             Elem::F64 => Instruction::F64Store(mem(DATA as u64, 3)),
             Elem::I64 => Instruction::I64Store(mem(DATA as u64, 3)),
@@ -94,7 +94,11 @@ impl Elem {
 
 /// Push the address `list + index * stride` (element offset is folded into the
 /// load/store `MemArg`).
-fn elem_addr(list_local: u32, index_local: u32, elem: Elem) -> Vec<Instruction<'static>> {
+pub(crate) fn elem_addr(
+    list_local: u32,
+    index_local: u32,
+    elem: Elem,
+) -> Vec<Instruction<'static>> {
     vec![
         Instruction::LocalGet(list_local),
         Instruction::LocalGet(index_local),
@@ -148,7 +152,7 @@ fn emit_alloc_like(
 
 /// Allocate a fresh list (type id `LIST_TYPE_ID`, no behavior flags) holding
 /// `len_local` elements of `stride` bytes; capacity is the slot count.
-fn emit_alloc_fresh(
+pub(crate) fn emit_alloc_fresh(
     malloc: u32,
     len_local: u32,
     dst_local: u32,

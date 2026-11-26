@@ -495,7 +495,6 @@ impl MirCodeGenerator<'_> {
             "math.pi",
             "math.e",
             "math.tau",
-            "matrix.determinant",
             "string.toNumber",
             "integer.toNumber",
             "boolean.toNumber",
@@ -529,12 +528,24 @@ impl MirCodeGenerator<'_> {
             "string.toBoolean",
             "integer.toBoolean",
             "number.toBoolean",
-            "matrix.rows",
-            "matrix.cols",
-            "matrix.size",
         ] {
             self.function_return_types
                 .insert(name.to_string(), MirType::I32);
+        }
+
+        // Matrix methods and operators (src/stdlib/matrix_class.rs).
+        use crate::stdlib::matrix_class::{
+            MATRIX_COUNT_FUNCTIONS, MATRIX_NUMBER_FUNCTIONS, MATRIX_POINTER_FUNCTIONS,
+        };
+        for (names, return_type) in [
+            (MATRIX_NUMBER_FUNCTIONS, MirType::F64),
+            (MATRIX_COUNT_FUNCTIONS, MirType::I32),
+            (MATRIX_POINTER_FUNCTIONS, MirType::I32),
+        ] {
+            for name in names {
+                self.function_return_types
+                    .insert(name.to_string(), return_type.clone());
+            }
         }
 
         tracing::debug!(

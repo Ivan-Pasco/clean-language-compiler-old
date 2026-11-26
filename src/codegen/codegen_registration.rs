@@ -887,6 +887,12 @@ impl super::CodeGenerator {
         ListManager::new().register_functions(self)
     }
 
+    /// Register the matrix methods and operators (`matrix.*`,
+    /// `src/stdlib/matrix_class.rs`). Needs `__malloc` and `__err_raise`.
+    pub(crate) fn register_matrix_operations(&mut self) -> Result<(), CompilerError> {
+        crate::stdlib::matrix_class::register_functions(self)
+    }
+
     /// Register HTTP operation functions using HttpClass
     pub(crate) fn register_http_operations(&mut self) -> Result<(), CompilerError> {
         use crate::stdlib::http_class::HttpClass;

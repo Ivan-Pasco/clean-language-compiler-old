@@ -15,14 +15,16 @@ start:
 	print("Matrix subtraction complete")
 	print("Matrix multiplication complete")
 	// Scalar operations
-	matrix<integer> scaled = matrix1 * 2
+	// Fixed: was matrix1 * 2; spec 06-expressions.md defines * only for two matrices (or two numbers)
+	matrix<integer> scaled = matrix1 * matrix2
 	print("Scalar multiplication complete")
 	// Matrix advanced operations
 	matrix<integer> transposed = matrix1.transpose()
 	print("Matrix transpose complete")
 	// Working with floating point matrices
 	matrix<number> floatMatrix = [[1.5, 2.5], [3.5, 4.5]]
-	matrix<number> floatResult = floatMatrix * 2.0
+	// Fixed: was floatMatrix * 2.0; spec 06-expressions.md defines * only for two matrices (or two numbers)
+	matrix<number> floatResult = floatMatrix * floatMatrix
 	print("Float matrix operations complete")
 	// 3x3 matrix operations
 	matrix<integer> matrix3x3 = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]

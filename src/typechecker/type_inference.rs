@@ -6143,6 +6143,58 @@ impl<'a> TypeInference<'a> {
             }
         }
 
+        // Matrix arithmetic: `matrix + matrix`, `matrix - matrix` and
+        // `matrix * matrix` of the same element type (06-expressions.md
+        // §Matrix Operations); nothing else is defined for a matrix.
+        let is_matrix = |t: &ConcreteType| matches!(t, ConcreteType::Matrix(_));
+        let is_text = |t: &ConcreteType| matches!(t, ConcreteType::String);
+        if (is_matrix(left_type) || is_matrix(right_type))
+            && matches!(
+                operator,
+                HirBinaryOp::Add
+                    | HirBinaryOp::Subtract
+                    | HirBinaryOp::Multiply
+                    | HirBinaryOp::Divide
+                    | HirBinaryOp::Modulo
+                    | HirBinaryOp::Power
+            )
+            && !(matches!(operator, HirBinaryOp::Add)
+                && (is_text(left_type) || is_text(right_type)))
+        {
+            if matches!(
+                operator,
+                HirBinaryOp::Add | HirBinaryOp::Subtract | HirBinaryOp::Multiply
+            ) {
+                if let (ConcreteType::Matrix(left_elem), ConcreteType::Matrix(right_elem)) =
+                    (left_type, right_type)
+                {
+                    if left_elem == right_elem
+                        && matches!(**left_elem, ConcreteType::Integer | ConcreteType::Number)
+                    {
+                        return Ok(left_type.clone());
+                    }
+                }
+            }
+            self.errors.push(CompilerError::Validation {
+                context: Box::new(
+                    crate::error::ErrorContext::new(
+                        format!(
+                            "Incompatible operand types '{}' and '{}' for a matrix operator",
+                            left_type, right_type
+                        ),
+                        Some(
+                            "A matrix can be added to, subtracted from or multiplied by another matrix of the same element type (integer or number)"
+                                .to_string(),
+                        ),
+                        crate::error::ErrorType::Validation,
+                        Some(location.clone()),
+                    )
+                    .with_error_code("SEM004"),
+                ),
+            });
+            return Ok(ConcreteType::Unknown);
+        }
+
         match operator {
             HirBinaryOp::Add => {
                 // Addition is overloaded: numeric addition OR string concatenation
@@ -6169,12 +6221,6 @@ impl<'a> TypeInference<'a> {
                                 Ok(ConcreteType::Number)
                             }
 
-                            // Matrix-matrix addition: matrix<T> + matrix<T> -> matrix<T>
-                            (ConcreteType::Matrix(left_elem), ConcreteType::Matrix(right_elem)) => {
-                                Ok(ConcreteType::Matrix(Box::new(
-                                    left_elem.common_supertype(right_elem),
-                                )))
-                            }
                             _ => {
                                 // Try to constrain both operands to be numeric
                                 self.add_constraint(TypeConstraint::Subtype {
@@ -6229,25 +6275,6 @@ impl<'a> TypeInference<'a> {
                 match (left_type, right_type) {
                     // Integer-integer operations return integer
                     (ConcreteType::Integer, ConcreteType::Integer) => Ok(ConcreteType::Integer),
-
-                    // Matrix-scalar operations: matrix<T> op scalar -> matrix<T>
-                    (ConcreteType::Matrix(element_type), scalar_type)
-                        if scalar_type.is_numeric() =>
-                    {
-                        Ok(ConcreteType::Matrix(element_type.clone()))
-                    }
-
-                    // Scalar-matrix operations: scalar op matrix<T> -> matrix<T>
-                    (scalar_type, ConcreteType::Matrix(element_type))
-                        if scalar_type.is_numeric() =>
-                    {
-                        Ok(ConcreteType::Matrix(element_type.clone()))
-                    }
-
-                    // Matrix-matrix operations: matrix<T> op matrix<T> -> matrix<T>
-                    (ConcreteType::Matrix(left_elem), ConcreteType::Matrix(right_elem)) => Ok(
-                        ConcreteType::Matrix(Box::new(left_elem.common_supertype(right_elem))),
-                    ),
 
                     _ => {
                         // For other numeric combinations, enforce Number constraint
@@ -6688,6 +6715,14 @@ impl<'a> TypeInference<'a> {
 
             (T::Boolean, "toString") => none(T::String),
 
+            // Matrix methods (stdlib-reference.md "Matrix Methods"):
+            // `inverse` and `determinant` are numeric, so the inverse is
+            // always a `matrix<number>`.
+            (T::Matrix(_), "rows" | "cols") => none(T::Integer),
+            (T::Matrix(_), "transpose") => none(receiver.clone()),
+            (T::Matrix(_), "determinant") => none(T::Number),
+            (T::Matrix(_), "inverse") => none(T::Matrix(Box::new(T::Number))),
+
             (
                 T::String,
                 "toString" | "toUpperCase" | "toLowerCase" | "trim" | "trimStart" | "trimEnd",
@@ -6844,6 +6879,23 @@ impl<'a> TypeInference<'a> {
             ConcreteType::String => "string",
             ConcreteType::Array(_) => "list",
             ConcreteType::Pairs(_, _) => "pairs",
+            ConcreteType::Matrix(element) => {
+                // `determinant` and `inverse` compute with numbers.
+                if matches!(method, "determinant" | "inverse")
+                    && !matches!(**element, ConcreteType::Integer | ConcreteType::Number)
+                {
+                    self.errors.push(CompilerError::semantic_error_with_code(
+                        format!(
+                            "'{}' needs a matrix of integer or number, not '{}'",
+                            method, receiver
+                        ),
+                        None,
+                        Some(location.clone()),
+                        "SEM004",
+                    ));
+                }
+                "matrix"
+            }
             _ => return,
         };
         let Some(signature) = Self::builtin_method_signature(receiver, method) else {

@@ -67,6 +67,9 @@ impl MirBuilder {
                         | crate::stdlib::json_class::ANY_LENGTH
                         | crate::stdlib::json_class::ANY_CONVERT
                 ) || name.starts_with("__any_to_instance")
+                    // matrix sizes, shape, singular and overflow errors
+                    || (name.starts_with("matrix.")
+                        && !matches!(name.as_str(), "matrix.rows" | "matrix.cols"))
                     || name.starts_with(crate::typechecker::tast::INTEGER_FIT_PREFIX)
                     // a rule on a validator without a field
                     || crate::stdlib::validator::RULE_FUNCTIONS.contains(&name.as_str())
@@ -587,6 +590,52 @@ impl MirBuilder {
             ConcreteType::Optional(inner) if inner.is_primitive_value() => 4,
             ConcreteType::Optional(inner) => self.get_type_byte_size(inner),
         }
+    }
+
+    /// The matrix function implementing `operation` (`add`, `sub`, `mul`,
+    /// `transpose`, `determinant`, `inverse`, `rows`, `cols`) for a matrix of
+    /// `element`: `number` elements use the `.f64` body, `integer:64` the
+    /// `.i64` one (`transpose` only), everything else the 4-byte body.
+    pub(super) fn matrix_function_name(operation: &str, element: &ConcreteType) -> String {
+        match (operation, element) {
+            ("rows" | "cols", _) => format!("matrix.{operation}"),
+            (_, ConcreteType::Number) => format!("matrix.{operation}.f64"),
+            ("transpose", ConcreteType::IntegerSized { bits: 64, .. }) => {
+                "matrix.transpose.i64".to_string()
+            }
+            _ => format!("matrix.{operation}"),
+        }
+    }
+
+    /// Call the matrix function `name` on `arguments`; the result has the
+    /// type `result_type`.
+    pub(super) fn emit_matrix_call(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        name: String,
+        arguments: Vec<ValueId>,
+        result_type: &ConcreteType,
+        location: &SourceLocation,
+    ) -> ValueId {
+        let result_id = ValueId(context.function.next_value_id);
+        context.function.next_value_id += 1;
+        let mir_type = self.convert_concrete_type(result_type);
+        self.register_temp_local(context, result_id, mir_type, location.clone());
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: Some(result_id),
+                operation: MirOperation::Call {
+                    function: MirOperand::NamedFunction {
+                        name,
+                        symbol_id: SymbolId(0),
+                    },
+                    arguments: arguments.into_iter().map(MirOperand::Value).collect(),
+                },
+                location: location.clone(),
+            },
+        );
+        result_id
     }
 
     /// List methods whose namespace form `list.<method>(items, ...)` takes

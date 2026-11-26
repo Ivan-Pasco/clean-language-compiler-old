@@ -1,0 +1,32 @@
+// Test: bugfixes/matrix_shape_errors_raise
+// Grammar: binary_expression, method_call, on_error_block
+// Semantic: 14-error-handling.md (catchable runtime errors)
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   matrix sizes do not match
+//   matrix sizes do not match
+//   matrix is not square
+//   matrix is singular
+//   integer overflow
+//   after
+//
+// Regression: wrong-sized operands trapped or read outside the matrix; a
+// singular inverse produced garbage.
+
+start:
+	matrix<integer> a = [[1, 2], [3, 4]]
+	matrix<integer> b = [[1, 2, 3]]
+	matrix<number> n1 = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+	matrix<number> sing = [[1.0, 2.0], [2.0, 4.0]]
+	matrix<integer> big = [[2000000000, 0], [0, 2000000000]]
+	matrix<integer> sum = a + b onError:
+		printl(error)
+	matrix<integer> prod = b * b onError:
+		printl(error)
+	number d = n1.determinant() onError:
+		printl(error)
+	matrix<number> inv = sing.inverse() onError:
+		printl(error)
+	matrix<integer> over = big + big onError:
+		printl(error)
+	printl("after")

@@ -1,0 +1,14 @@
+// Test: bugfixes/matrix_unknown_method_rejected
+// Grammar: method_call
+// Semantic: FUNC001 / stdlib-reference.md Matrix Methods
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   Method 'trace' not found on a matrix value
+//
+// Regression: any method name called on a matrix was accepted and lowered to
+// a call that printed the matrix.
+
+start:
+	matrix<integer> a = [[1, 2], [3, 4]]
+	print(a.trace())

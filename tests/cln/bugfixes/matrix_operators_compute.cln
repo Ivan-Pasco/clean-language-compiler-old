@@ -1,0 +1,33 @@
+// Test: bugfixes/matrix_operators_compute
+// Grammar: binary_expression
+// Semantic: 06-expressions.md Matrix Operations
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   [[6,8],[10,12]]
+//   [[-4,-4],[-4,-4]]
+//   [[19,22],[43,50]]
+//   [[19.0,22.0],[43.0,50.0]]
+//   [[4.0,5.0],[3.0,2.0]]
+//   [[58,64],[139,154]]
+//   [[1,0],[0,1]]
+//
+// Regression: `A + B` printed [], `A * B` and `A - B` trapped with an
+// out-of-bounds memory access.
+
+start:
+	matrix<integer> a = [[1, 2], [3, 4]]
+	matrix<integer> b = [[5, 6], [7, 8]]
+	print(a + b)
+	print(a - b)
+	print(a * b)
+	matrix<number> x = [[1.0, 2.0], [3.0, 4.0]]
+	matrix<number> y = [[5.0, 6.0], [7.0, 8.0]]
+	print(x * y)
+	matrix<number> p = [[1.0, 2.0], [3.0, 4.0]]
+	matrix<number> q = [[3.0, 3.0], [0.0, -2.0]]
+	print(p + q)
+	matrix<integer> r = [[1, 2, 3], [4, 5, 6]]
+	matrix<integer> s = [[7, 8], [9, 10], [11, 12]]
+	print(r * s)
+	matrix<integer> i2 = [[1, 0], [0, 1]]
+	print(i2 * i2)

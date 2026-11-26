@@ -13,7 +13,8 @@ start:
 
 		// Matrix properties and methods
 		integer rows = mat1.rows()
-		integer cols = mat1.columns()
+		// Fixed: was using .columns(), spec 16-standard-library / stdlib-reference names it .cols()
+		integer cols = mat1.cols()
 
 		// Matrix utility operations
 		matrix<integer> transposed = mat1.transpose()

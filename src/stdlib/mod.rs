@@ -7,6 +7,7 @@ pub mod list_behavior;
 pub mod list_class;
 pub mod list_ops;
 pub mod math_class;
+pub mod matrix_class;
 pub mod method_style;
 pub mod string_class;
 pub mod validator;

@@ -393,6 +393,31 @@ impl MirBuilder {
                     return Ok(result_id);
                 }
 
+                // `A + B`, `A - B` and `A * B` on two matrices.
+                if let (
+                    ConcreteType::Matrix(element),
+                    BinaryOperator::Add | BinaryOperator::Subtract | BinaryOperator::Multiply,
+                ) = (&left.expr_type, operator)
+                {
+                    let name = Self::matrix_function_name(
+                        match operator {
+                            BinaryOperator::Add => "add",
+                            BinaryOperator::Subtract => "sub",
+                            _ => "mul",
+                        },
+                        element,
+                    );
+                    let left_id = self.build_expression(context, left)?;
+                    let right_id = self.build_expression(context, right)?;
+                    return Ok(self.emit_matrix_call(
+                        context,
+                        name,
+                        vec![left_id, right_id],
+                        &expression.expr_type,
+                        &expression.location,
+                    ));
+                }
+
                 // `==`, `!=` and `is` on an optional primitive compare its
                 // value, and none only equals none.
                 if let Some(result) = self.build_optional_comparison(
@@ -1597,6 +1622,29 @@ impl MirBuilder {
                     actual_type = ?receiver_actual_type,
                     "Method call receiver"
                 );
+
+                // `rows`, `cols`, `transpose`, `determinant` and `inverse` of a
+                // matrix (src/stdlib/matrix_class.rs).
+                if let ConcreteType::Matrix(element) = &receiver_actual_type {
+                    if matches!(
+                        method_name.as_str(),
+                        "rows" | "cols" | "transpose" | "determinant" | "inverse"
+                    ) {
+                        let name = Self::matrix_function_name(method_name, element);
+                        let result_type = match method_name.as_str() {
+                            "rows" | "cols" => ConcreteType::Integer,
+                            "determinant" => ConcreteType::Number,
+                            _ => expression.expr_type.clone(),
+                        };
+                        return Ok(self.emit_matrix_call(
+                            context,
+                            name,
+                            vec![receiver_id],
+                            &result_type,
+                            &expression.location,
+                        ));
+                    }
+                }
 
                 // `obj.toString()` on a class that declares no `toString()`
                 // (nor inherits one) is the class name (07-statements.md

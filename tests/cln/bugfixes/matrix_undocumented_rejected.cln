@@ -1,0 +1,15 @@
+// Test: bugfixes/matrix_undocumented_rejected
+// Grammar: binary_expression
+// Semantic: SEM004 / 06-expressions.md Matrix Operations
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   Incompatible operand types
+//
+// Regression: `matrix * 2` and other undocumented matrix operations were
+// accepted and produced garbage; only matrix + - * matrix is documented.
+
+start:
+	matrix<integer> a = [[1, 2], [3, 4]]
+	matrix<integer> b = a * 2
+	print(b)

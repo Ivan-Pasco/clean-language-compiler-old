@@ -948,6 +948,14 @@ impl MirCodeGenerator<'_> {
                 .register_list_operations()
                 .map_err(|e| vec![e])?;
 
+            // Matrix methods and operators: only when the program calls one.
+            if self.wasm_generator.has_reachable_prefix("matrix.") {
+                debug_mir!("DEBUG MIR: Registering native matrix operations");
+                self.wasm_generator
+                    .register_matrix_operations()
+                    .map_err(|e| vec![e])?;
+            }
+
             debug_mir!("DEBUG MIR: Registering native pairs operations");
             self.wasm_generator
                 .register_pairs_operations()
