@@ -1,0 +1,20 @@
+// Test: bugfixes/private_name_module_a_private_names
+// Semantic: module imported by private_names_per_file_no_collision.cln; its
+//   private `helper` and `state: calls` share names with the other modules
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   module a start
+
+start:
+	print("module a start")
+
+state:
+	integer calls = 100
+
+functions:
+	integer helper()
+		calls = calls + 1
+		return 1
+	public:
+		integer fromA()
+			return helper() + calls

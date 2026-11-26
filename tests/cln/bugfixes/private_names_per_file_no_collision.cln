@@ -1,0 +1,35 @@
+// Test: bugfixes/private_names_per_file_no_collision
+// Grammar: import_block, function_declaration_line, state_declaration
+// Semantic: 18-modules-and-imports.md Visibility Model — everything a file
+//   declares is private to that file, so equal private names in different
+//   files (or the importing file) are separate and never SEM003/SEM007
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   module b start
+//   module a start
+//   102
+//   203
+//   3
+//   7
+//   103
+//
+// Regression: private `helper` / `state: calls` in two modules and in the
+// importer collided (SEM003 / SEM007).
+
+import:
+	private_name_module_a_private_names
+	private_name_module_b_private_names
+
+start:
+	print(fromA())
+	print(fromB())
+	print(helper())
+	print(calls)
+	print(fromA())
+
+state:
+	integer calls = 7
+
+functions:
+	integer helper()
+		return 3

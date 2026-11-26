@@ -13,6 +13,7 @@ use crate::error::CompilerError;
 
 pub mod capability_defaults;
 pub mod hir_builder;
+pub mod private_scope;
 pub mod validation;
 
 #[cfg(test)]
