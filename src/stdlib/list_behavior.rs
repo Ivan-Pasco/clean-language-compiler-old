@@ -20,8 +20,34 @@ pub struct ListBehaviorManager;
 
 // Behavior flag bits
 pub(crate) const BEHAVIOR_LINE: i32 = 0x01; // FIFO queue behavior
-const BEHAVIOR_PILE: i32 = 0x02; // LIFO stack behavior
+pub(crate) const BEHAVIOR_PILE: i32 = 0x02; // LIFO stack behavior
 pub(crate) const BEHAVIOR_UNIQUE: i32 = 0x04; // Unique elements only
+
+/// Pushes an i32 that is non-zero when `remove()` / `peek()` act on the FRONT
+/// of the list whose pointer is in `list_local`, and zero when they act on
+/// the back (spec 04-type-system.md, Behavior Type Syntax): `.line` takes the
+/// front; `.unique` without `.pile` takes its default position, the front;
+/// `.pile` and a plain list take the back.
+pub(crate) fn front_access_condition(list_local: u32) -> Vec<Instruction<'static>> {
+    let flags = || MemArg {
+        offset: 12,
+        align: 2,
+        memory_index: 0,
+    };
+    vec![
+        Instruction::LocalGet(list_local),
+        Instruction::I32Load(flags()),
+        Instruction::I32Const(BEHAVIOR_LINE),
+        Instruction::I32And,
+        Instruction::LocalGet(list_local),
+        Instruction::I32Load(flags()),
+        Instruction::I32Const(BEHAVIOR_PILE | BEHAVIOR_UNIQUE),
+        Instruction::I32And,
+        Instruction::I32Const(BEHAVIOR_UNIQUE),
+        Instruction::I32Eq,
+        Instruction::I32Or,
+    ]
+}
 
 impl ListBehaviorManager {
     pub fn new() -> Self {
@@ -782,18 +808,11 @@ impl ListBehaviorManager {
             Instruction::If(BlockType::Result(ValType::I32)),
             Instruction::I32Const(0), // Return 0 if empty
             Instruction::Else,
-            // Load behavior flags
-            Instruction::LocalGet(0),
-            Instruction::I32Load(MemArg {
-                offset: 12,
-                align: 2,
-                memory_index: 0,
-            }),
-            Instruction::LocalSet(1), // behavior_flags
-            // Check for line behavior (FIFO - peek at front)
-            Instruction::LocalGet(1),
-            Instruction::I32Const(BEHAVIOR_LINE),
-            Instruction::I32And,
+            // Front access (.line, or .unique without .pile): peek at front
+        ]
+        .into_iter()
+        .chain(front_access_condition(0))
+        .chain([
             Instruction::If(BlockType::Result(ValType::I32)),
             // Get first element at offset 16 (header size)
             Instruction::LocalGet(0),
@@ -803,7 +822,7 @@ impl ListBehaviorManager {
                 memory_index: 0,
             }),
             Instruction::Else,
-            // Default and pile behavior - peek at end (last element)
+            // Pile and plain lists - peek at end (last element)
             // element_ptr = list_ptr + 16 + (size - 1) * 4
             Instruction::LocalGet(0),  // list_ptr
             Instruction::I32Const(16), // Header size
@@ -826,7 +845,8 @@ impl ListBehaviorManager {
             }),
             Instruction::End,
             Instruction::End,
-        ]
+        ])
+        .collect()
     }
 
     /// Generate WASM for list.size operation

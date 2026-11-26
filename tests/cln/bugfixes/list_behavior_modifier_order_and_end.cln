@@ -1,0 +1,47 @@
+// Test: bugfixes/list_behavior_modifier_order_and_end
+// Grammar: list_behavior
+// Semantic: spec 04-type-system.md Behavior Type Syntax - modifiers in any order; .unique removes from the front, .pile.unique from the back
+// Fixed in: compiler 0.33.190
+// Expected output:
+// 1
+// Alice
+// Alice
+// ["Bob","Charlie"]
+// 30
+// 30
+// [10,20]
+// 1
+// 7
+//
+// Regression: `.pile.unique` was rejected as out of canonical order, and
+// `.unique` remove()/peek() took the back element instead of the front.
+
+start:
+	list<integer>.pile.unique uniqueStack = []
+	uniqueStack.add(1)
+	print(uniqueStack.size())
+
+	list<string>.unique visitors = []
+	visitors.add("Alice")
+	visitors.add("Bob")
+	visitors.add("Alice")
+	visitors.add("Charlie")
+	print(visitors.peek())
+	print(visitors.remove())
+	print(visitors)
+
+	list<integer>.pile.unique stack = []
+	stack.add(10)
+	stack.add(20)
+	stack.add(10)
+	stack.add(30)
+	print(stack.peek())
+	print(stack.remove())
+	print(stack)
+
+	list<integer>.unique.line uq = []
+	uq.add(7)
+	uq.add(7)
+	uq.add(9)
+	print(uq.size() - 1)
+	print(uq.peek())

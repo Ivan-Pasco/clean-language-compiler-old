@@ -1498,11 +1498,8 @@ impl TokenParser {
                     let inner_type = self.parse_type()?;
                     self.skip_whitespace();
                     self.expect(&TokenKind::Greater)?; // expect '>'
-                                                       // Consume optional list_behavior suffix.
-                                                       // Canonical order: .line then .unique then .pile
-                                                       // Any other ordering is a parse error (grammar.ebnf list_behavior).
-                    let behavior_order = ["line", "unique", "pile"];
-                    let mut last_index: i32 = -1;
+                                                       // Consume optional list_behavior suffix: any order,
+                                                       // each modifier at most once (grammar.ebnf list_behavior).
                     let mut has_line = false;
                     let mut has_unique = false;
                     let mut has_pile = false;
@@ -1514,33 +1511,31 @@ impl TokenParser {
                         self.bump(); // consume '.'
                         if let TokenKind::Identifier(kw) = self.current_kind() {
                             let kw = kw.clone();
-                            if let Some(idx) = behavior_order.iter().position(|&s| s == kw.as_str())
-                            {
-                                let idx = idx as i32;
-                                if idx <= last_index {
-                                    return Err(CompilerError::parse_error(
-                                        format!(
-                                            "List behavior modifier '.{}' is out of canonical order. \
-                                             Modifiers must follow the order: .line → .unique → .pile",
-                                            kw
-                                        ),
-                                        Some(self.current().location.clone()),
-                                        Some("Use the canonical order: .line.unique.pile (omitting unused modifiers)".to_string()),
-                                    ));
+                            let seen = match kw.as_str() {
+                                "line" => &mut has_line,
+                                "unique" => &mut has_unique,
+                                "pile" => &mut has_pile,
+                                _ => {
+                                    // Not a behavior keyword — restore cursor (method call follows)
+                                    self.cursor = saved;
+                                    break;
                                 }
-                                match kw.as_str() {
-                                    "line" => has_line = true,
-                                    "unique" => has_unique = true,
-                                    "pile" => has_pile = true,
-                                    _ => {}
-                                }
-                                last_index = idx;
-                                self.bump(); // consume the behavior keyword
-                            } else {
-                                // Not a behavior keyword — restore cursor (method call follows)
-                                self.cursor = saved;
-                                break;
+                            };
+                            if *seen {
+                                return Err(CompilerError::parse_error(
+                                    format!(
+                                        "List behavior modifier '.{}' appears more than once",
+                                        kw
+                                    ),
+                                    Some(self.current().location.clone()),
+                                    Some(
+                                        "Each of .line, .unique and .pile may appear at most once"
+                                            .to_string(),
+                                    ),
+                                ));
                             }
+                            *seen = true;
+                            self.bump(); // consume the behavior keyword
                         } else {
                             self.cursor = saved;
                             break;

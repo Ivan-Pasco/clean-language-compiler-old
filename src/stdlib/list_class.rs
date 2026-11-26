@@ -27,7 +27,7 @@ use crate::codegen::LIST_TYPE_ID;
 use crate::error::CompilerError;
 use crate::mir::mir_types::AnyTypeTag;
 use crate::stdlib::json_class::JSON_TAG_NUMBER;
-use crate::stdlib::list_behavior::{BEHAVIOR_LINE, BEHAVIOR_UNIQUE};
+use crate::stdlib::list_behavior::{front_access_condition, BEHAVIOR_UNIQUE};
 use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
 use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
@@ -272,13 +272,8 @@ fn gen_peek_8byte(elem: Elem) -> Vec<Instruction<'static>> {
         _ => ValType::F64,
     };
     let mut v = emit_halt_if_empty(0, 1);
-    v.extend([
-        Instruction::LocalGet(0),
-        Instruction::I32Load(mem(12, 2)),
-        Instruction::I32Const(BEHAVIOR_LINE),
-        Instruction::I32And,
-        Instruction::If(BlockType::Result(result)),
-    ]);
+    v.extend(front_access_condition(0));
+    v.push(Instruction::If(BlockType::Result(result)));
     v.extend(gen_end_element(elem, false).into_iter().skip(7));
     v.push(Instruction::Else);
     v.extend(gen_end_element(elem, true).into_iter().skip(7));
@@ -862,13 +857,9 @@ fn gen_remove(elem: Elem, at: RemoveAt) -> Vec<Instruction<'static>> {
                 Elem::I64 => Instruction::I64Const(0),
                 Elem::I32 | Elem::Str | Elem::Boxed => Instruction::I32Const(0),
             });
+            v.extend([Instruction::Return, Instruction::End]);
+            v.extend(front_access_condition(0));
             v.extend([
-                Instruction::Return,
-                Instruction::End,
-                Instruction::LocalGet(0),
-                Instruction::I32Load(mem(12, 2)),
-                Instruction::I32Const(BEHAVIOR_LINE),
-                Instruction::I32And,
                 Instruction::If(BlockType::Result(ValType::I32)),
                 Instruction::I32Const(0),
                 Instruction::Else,
