@@ -9,6 +9,9 @@
 //   an `any` pointer. `list<number>` methods read 4-byte slots of 8-byte
 //   elements, `lastIndexOf` was a stub returning -1, and `list.range` /
 //   `list.fill` wrote a 4-byte header instead of the 16-byte list header.
+// Fixed: list.range(2, 6) was expected to be half-open (4:25); the spec
+//   example `list.range(5, 1) // [5, 4, 3, 2, 1]` includes the end, so it is
+//   5:25 (compiler 0.33.190, issue #59).
 // Expected output:
 //   2
 //   5
@@ -26,7 +29,7 @@
 //   2
 //   3:3
 //   3:3.5
-//   4:25
+//   5:25
 //   3:7
 
 start:

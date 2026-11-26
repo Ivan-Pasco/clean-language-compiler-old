@@ -1,0 +1,12 @@
+// Test: bugfixes/list_join_argument_must_be_list
+// Grammar: namespace_function_call
+// Semantic: SEM001 — list.join takes (list<string>, string) (stdlib-reference.md §5)
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   Array<string>
+//
+// Regression: list.join("abc", ",") compiled and trapped with a memory fault.
+
+start:
+	print(list.join("abc", ","))

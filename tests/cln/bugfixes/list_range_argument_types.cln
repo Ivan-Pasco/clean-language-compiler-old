@@ -1,0 +1,15 @@
+// Test: bugfixes/list_range_argument_types
+// Grammar: namespace_function_call
+// Semantic: SEM001 — list.range takes (integer, integer) (stdlib-reference.md §5)
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   cannot be used as
+//
+// Regression: argument checking was switched off for the whole list.
+// namespace, so list.range("a", "b") compiled and gave a list sized by the
+// distance between two string pointers.
+
+start:
+	list<integer> r = list.range("a", "b")
+	print(r.length())

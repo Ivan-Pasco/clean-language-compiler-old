@@ -1,0 +1,13 @@
+// Test: bugfixes/list_fill_argument_types
+// Grammar: namespace_function_call
+// Semantic: SEM001 — list.fill takes (integer, value) (stdlib-reference.md §5)
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   cannot be used as
+//
+// Regression: list.fill("x", 1) compiled and built a 5848-element list.
+
+start:
+	list<integer> h = list.fill("x", 1)
+	print(h.length())

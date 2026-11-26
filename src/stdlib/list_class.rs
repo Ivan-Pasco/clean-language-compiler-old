@@ -996,19 +996,28 @@ fn gen_concat(malloc: u32, elem: Elem) -> Vec<Instruction<'static>> {
     v
 }
 
-/// `list.range(start, end)`: params (start, end); locals 2 = len, 3 = dst, 4 = i.
-/// Produces `start, start + 1, ..., end - 1` (empty when `end <= start`).
+/// `list.range(start, end)`: params (start, end); locals 2 = len, 3 = dst,
+/// 4 = i, 5 = step. Both ends are included and the list counts down when
+/// `start > end`: `range(5, 1)` is `[5, 4, 3, 2, 1]`, `range(1, 5)` is
+/// `[1, 2, 3, 4, 5]` (16-standard-library.md, List Module).
 fn gen_range(malloc: u32) -> Vec<Instruction<'static>> {
     let mut v = vec![
+        // step = end >= start ? 1 : -1
+        Instruction::I32Const(1),
+        Instruction::I32Const(-1),
+        Instruction::LocalGet(1),
+        Instruction::LocalGet(0),
+        Instruction::I32GeS,
+        Instruction::Select,
+        Instruction::LocalSet(5),
+        // len = (end - start) * step + 1
         Instruction::LocalGet(1),
         Instruction::LocalGet(0),
         Instruction::I32Sub,
-        Instruction::LocalTee(2),
-        Instruction::I32Const(0),
-        Instruction::LocalGet(2),
-        Instruction::I32Const(0),
-        Instruction::I32GtS,
-        Instruction::Select,
+        Instruction::LocalGet(5),
+        Instruction::I32Mul,
+        Instruction::I32Const(1),
+        Instruction::I32Add,
         Instruction::LocalSet(2),
     ];
     v.extend(emit_alloc_fresh(malloc, 2, 3, 4));
@@ -1026,6 +1035,8 @@ fn gen_range(malloc: u32) -> Vec<Instruction<'static>> {
     v.extend([
         Instruction::LocalGet(0),
         Instruction::LocalGet(4),
+        Instruction::LocalGet(5),
+        Instruction::I32Mul,
         Instruction::I32Add,
         Elem::I32.store(),
         Instruction::LocalGet(4),
@@ -1839,7 +1850,7 @@ impl ListClass {
             "list.range",
             &i32x(2),
             Some(WasmType::I32),
-            &i32x(3),
+            &i32x(4),
             gen_range(malloc),
         )?;
         for (name, elem) in [

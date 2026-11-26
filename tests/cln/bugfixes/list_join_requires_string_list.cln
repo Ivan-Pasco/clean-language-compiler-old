@@ -1,0 +1,15 @@
+// Test: bugfixes/list_join_requires_string_list
+// Grammar: namespace_function_call
+// Semantic: SEM001 — list.join(items, sep) is the same operation as
+//   string.join and takes a list<string> (stdlib-reference.md §5)
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   cannot be used as
+//
+// Regression: list.join on list<integer> compiled and returned ",," because
+// every element was read as a string pointer.
+
+start:
+	list<integer> nums = [1, 2, 3]
+	print("[" + list.join(nums, ",") + "]")

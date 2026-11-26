@@ -1,0 +1,19 @@
+// Test: bugfixes/list_range_inclusive_and_descending
+// Grammar: namespace_function_call
+// Semantic: 16-standard-library.md List Module — `list.range(5, 1)` is
+//   [5, 4, 3, 2, 1]: both ends included, counting down when start > end
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   [5,4,3,2,1]
+//   [1,2,3,4,5]
+//   [3]
+//   [-1,0,1]
+//
+// Regression: list.range was half-open and ascending only, so range(5, 1)
+// was empty and range(1, 5) stopped at 4.
+
+start:
+	printl(list.range(5, 1))
+	printl(list.range(1, 5))
+	printl(list.range(3, 3))
+	printl(list.range(-1, 1))

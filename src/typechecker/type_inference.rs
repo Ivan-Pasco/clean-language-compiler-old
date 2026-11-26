@@ -6430,6 +6430,17 @@ impl<'a> TypeInference<'a> {
                     .symbol_table
                     .get_symbol(function_symbol_id)
                     .is_some_and(|s| s.name == "toString");
+                if is_generic_list_fn {
+                    // The element type is generic, so the registered
+                    // `list<number>` placeholder is not checked; every other
+                    // parameter is (stdlib-reference.md §5).
+                    let list_fn = self
+                        .symbol_table
+                        .get_symbol(function_symbol_id)
+                        .map(|s| s.name.clone())
+                        .unwrap_or_default();
+                    self.check_generic_list_fn_arguments(&list_fn, arguments, location);
+                }
                 if !is_generic_list_fn && !is_variadic_print_fn {
                     for (param_type, arg) in parameters.iter().zip(arguments.iter_mut()) {
                         if is_to_string && arg.expr_type.is_numeric() {
@@ -6457,6 +6468,32 @@ impl<'a> TypeInference<'a> {
                 None,
                 Some(location.clone()),
             )),
+        }
+    }
+
+    /// Argument checks for the `list.` namespace functions whose element type
+    /// is generic (stdlib-reference.md §5): `range` takes two integers, `fill`
+    /// takes an integer size, `join` takes a `list<string>` and a string
+    /// (the same operation as `string.join`).
+    fn check_generic_list_fn_arguments(
+        &mut self,
+        function_name: &str,
+        arguments: &mut [TastExpression],
+        location: &SourceLocation,
+    ) {
+        let expected: Vec<Option<ConcreteType>> = match function_name {
+            "list.range" => vec![Some(ConcreteType::Integer), Some(ConcreteType::Integer)],
+            "list.fill" => vec![Some(ConcreteType::Integer), None],
+            "list.join" => vec![
+                Some(ConcreteType::Array(Box::new(ConcreteType::String))),
+                Some(ConcreteType::String),
+            ],
+            _ => return,
+        };
+        for (target, arg) in expected.iter().zip(arguments.iter_mut()) {
+            if let Some(target) = target {
+                self.require_assignable(arg, target, location);
+            }
         }
     }
 
