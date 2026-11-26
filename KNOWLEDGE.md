@@ -374,3 +374,15 @@ Literals: a decimal literal above `i64::MAX` lexes as `UnsignedIntegerLiteral` (
 **Limits (boxed-any ABI):** tag 1 holds a signed i64 and JSON integers outside ±2^53 decode as numbers (BOXED_ANY_ABI §2, D1), so an `integer:64u` above `i64::MAX` boxed into `any` (text of a collection, JSON) is a number (`1.8446744073709552e+19`) and a JSON integer above 2^53 read into a `list<integer:64u>` is the nearest double. Exact values need an ABI tag for unsigned 64-bit integers in every host.
 
 **Regression:** `tests/cln/bugfixes/unsigned_32_values_above_signed_maximum.cln`, `unsigned_64_values_above_signed_maximum.cln`.
+
+---
+
+## 27. List Index Errors (RUN006) and the Implicit `base()`
+
+**What (RUN006, spec decision C2):** a list index outside `0..length-1` raises the catchable error `index <i> is out of range for a list of length <n>` for `xs[i]`, `xs[i] = v`, `.get(i)`, `.set(i, v)` and `.remove(i)`; uncaught it prints the message and stops like `error(...)`. `__list_index_error(list, index)` (`stdlib/list_class.rs`, `gen_index_error`) builds the message and calls `__err_raise`; it is out of line so the hot path is one unsigned compare (`index >=u length` also covers a negative index) and a branch. `get`, `set` and `remove(index)` raise and return the zero value; the compiled read `xs[i]` (`emit_list_element_address`) raises, then points the address at the list header (always readable) so the `Load` after it is harmless. The MIR builder follows the read's `GetElementPtr` with `add_error_check` and `add_instruction` follows the list calls (names in its `may_raise` list) with an `ErrorCheck`, so a region (or a caller's region) unwinds. `has_side_effects` keeps an `is_array` `GetElementPtr` even when its value is unused: an unused `xs[5]` still raises.
+
+**Not RUN006:** `.pop()` / `.removeLast()` on an empty list, `.first()` / `.last()` / `.peek()` on an empty list, `.insert(index, v)` outside `0..=length` and `charCodeAt` still halt (`Unreachable`); the spec lists only the five forms above.
+
+**What (CLASS009, spec decision C3):** a child constructor that never calls `base(...)` gets `base()` inserted as its first statement (`Resolver::add_implicit_base_call`, before `resolve_class`), so the parent's constructor runs; when the parent's constructor has a parameter without a default the compiler reports CLASS009 instead. Only source-declared constructors are changed: a class without a constructor still gets the empty default one (no parent call). A parent without a constructor is called through its default constructor (empty body); the call does not climb past the direct parent.
+
+**Regression:** `tests/cln/bugfixes/list_index_out_of_range_is_catchable.cln`, `list_index_read_out_of_bounds_halts.cln`, `child_constructor_runs_parent_constructor_automatically.cln`, `class009_child_constructor_must_call_base_with_arguments.cln`.

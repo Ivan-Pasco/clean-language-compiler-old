@@ -1522,11 +1522,90 @@ impl NameResolver {
         let mut resolved_classes = Vec::new();
 
         for class in classes {
-            let class = Self::with_list_behavior_prologue(class, classes);
+            let had_constructor = class.constructor.is_some();
+            let mut class = Self::with_list_behavior_prologue(class, classes);
+            if had_constructor {
+                self.add_implicit_base_call(&mut class, classes);
+            }
             resolved_classes.push(self.resolve_class(class)?);
         }
 
         Ok(resolved_classes)
+    }
+
+    /// A child constructor runs its parent's constructor before its own code
+    /// (15-classes-and-objects.md "Calling the Parent Constructor"). When the
+    /// constructor does not call `base(...)` itself, the parent's constructor
+    /// runs first, as if `base()` were the first statement; that needs the
+    /// parent's constructor to take no required arguments, otherwise the
+    /// compiler cannot supply them: CLASS009.
+    fn add_implicit_base_call(&mut self, class: &mut HirClass, classes: &[HirClass]) {
+        let Some(parent_name) = class.parent.as_ref() else {
+            return;
+        };
+        let Some(parent) = classes.iter().find(|k| &k.name == parent_name) else {
+            return;
+        };
+        let Some(constructor) = class.constructor.as_mut() else {
+            return;
+        };
+        if Self::block_calls_base(&constructor.body) {
+            return;
+        }
+        if let Some(parent_constructor) = &parent.constructor {
+            let required: Vec<String> = parent_constructor
+                .parameters
+                .iter()
+                .filter(|p| p.default_value.is_none())
+                .map(|p| format!("{} {}", hir_type_text(&p.param_type), p.name))
+                .collect();
+            if !required.is_empty() {
+                self.error_with_code(
+                    &format!(
+                        "Constructor of '{}' must call base(...): the constructor of '{}' needs arguments ({})",
+                        class.name,
+                        parent.name,
+                        required.join(", ")
+                    ),
+                    "CLASS009",
+                    constructor.location.clone(),
+                );
+                return;
+            }
+        }
+        let location = constructor.location.clone();
+        constructor.body.statements.insert(
+            0,
+            HirStatement::Expression {
+                expression: HirExpression::BaseCall {
+                    arguments: Vec::new(),
+                    location: location.clone(),
+                },
+                location,
+            },
+        );
+    }
+
+    /// Whether `block` calls `base(...)`, at any depth of its statements.
+    fn block_calls_base(block: &HirBlock) -> bool {
+        block.statements.iter().any(|statement| match statement {
+            HirStatement::Expression {
+                expression: HirExpression::BaseCall { .. },
+                ..
+            } => true,
+            HirStatement::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::block_calls_base(then_branch)
+                    || else_branch.as_ref().is_some_and(Self::block_calls_base)
+            }
+            HirStatement::For { body, .. } | HirStatement::While { body, .. } => {
+                Self::block_calls_base(body)
+            }
+            _ => false,
+        })
     }
 
     /// `class` with its constructor starting by giving every list field

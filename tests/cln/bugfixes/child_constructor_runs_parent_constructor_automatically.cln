@@ -1,0 +1,123 @@
+// Test: bugfixes/child_constructor_runs_parent_constructor_automatically
+// Semantic: semantic-rules.md CLASS009 — a child constructor that does not
+//   call base(...) runs the parent's constructor first when that
+//   constructor takes no arguments (spec decision C3,
+//   15-classes-and-objects.md "Calling the Parent Constructor")
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   red
+//   2
+//   ready 2 on
+//   gold
+//   parent default
+//   child default
+//   order: parent child
+//   explicit: blue
+//   grandparent parent child
+//
+// Regression: a child constructor without base(...) silently skipped the
+// parent constructor, so the parent's fields kept their zero values.
+
+start:
+	Circle c = Circle(2.0)
+	print(c.color)
+	print(c.radius.toInteger())
+	Gadget g = Gadget(1)
+	print("ready " + g.level.toString() + " " + g.state)
+	Crown crown = Crown()
+	print(crown.metal)
+	Quiet q = Quiet()
+	print(q.mood)
+	print(q.own)
+	Traced t = Traced()
+	print("order: " + t.trail)
+	Painted p = Painted("blue")
+	print("explicit: " + p.color)
+	Third third = Third()
+	print(third.trail)
+
+class Shape
+	public:
+		string color
+
+	constructor()
+		color = "red"
+
+class Circle is Shape
+	public:
+		number radius
+
+	constructor(number radiusParam)
+		radius = radiusParam
+
+class Base
+	public:
+		string state
+		integer level
+
+	constructor()
+		state = "on"
+		level = 0
+
+class Gadget is Base
+	constructor(integer levelParam)
+		level = levelParam + 1
+
+class Jewel
+	public:
+		string metal
+
+class Crown is Jewel
+	constructor()
+		metal = "gold"
+
+class Calm
+	public:
+		string mood
+
+	constructor(string moodParam = "parent default")
+		mood = moodParam
+
+class Quiet is Calm
+	public:
+		string own
+
+	constructor()
+		own = "child default"
+
+class Tracked
+	public:
+		string trail
+
+	constructor()
+		trail = "parent"
+
+class Traced is Tracked
+	constructor()
+		trail = trail + " child"
+
+class Tinted
+	public:
+		string color
+
+	constructor(string colorParam)
+		color = colorParam
+
+class Painted is Tinted
+	constructor(string colorParam)
+		base(colorParam)
+
+class First
+	public:
+		string trail
+
+	constructor()
+		trail = "grandparent"
+
+class Second is First
+	constructor()
+		trail = trail + " parent"
+
+class Third is Second
+	constructor()
+		trail = trail + " child"

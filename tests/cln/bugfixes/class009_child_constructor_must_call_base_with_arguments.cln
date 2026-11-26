@@ -1,0 +1,30 @@
+// Test: bugfixes/class009_child_constructor_must_call_base_with_arguments
+// Semantic: semantic-rules.md CLASS009 — a child constructor that does not
+//   call base(...) while the parent's constructor needs arguments is a
+//   compile error (spec decision C3)
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   CLASS009
+//   Constructor of 'Badge' must call base(...): the constructor of 'Labeled' needs arguments (string labelParam)
+//
+// Regression: the compiler accepted the child constructor and never ran the
+// parent constructor, leaving the parent's fields at their zero values.
+
+start:
+	Badge b = Badge(3)
+	print(b.level)
+
+class Labeled
+	public:
+		string label
+
+	constructor(string labelParam)
+		label = labelParam
+
+class Badge is Labeled
+	public:
+		integer level
+
+	constructor(integer levelParam)
+		level = levelParam
