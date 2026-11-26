@@ -450,6 +450,34 @@ impl TokenParser {
                         Err(e) => self.errors.push(e),
                     }
                 }
+                TokenKind::At => {
+                    // `@attr` prefixes belong to the framework block that
+                    // follows them (grammar.ebnf `framework_block`).
+                    let attrs_start = self.cursor;
+                    let attrs_location = self.current().location.clone();
+                    match self.parse_framework_attributes() {
+                        Ok(_) => {
+                            if let Some(is_plugin_keyword) = self.at_framework_block_header() {
+                                self.cursor = attrs_start;
+                                match self.parse_framework_block_or_plugin(is_plugin_keyword) {
+                                    Ok(stmt) => statements.push(stmt),
+                                    Err(e) => self.errors.push(e),
+                                }
+                            } else {
+                                self.errors.push(CompilerError::parse_error(
+                                    "A framework attribute must be followed by a framework block"
+                                        .to_string(),
+                                    Some(attrs_location),
+                                    Some("Put the block header (e.g. 'endpoints:') on the line after the '@attribute'".to_string()),
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            self.errors.push(e);
+                            self.bump();
+                        }
+                    }
+                }
                 TokenKind::Identifier(name) => {
                     // Check for special top-level blocks first
                     // "external:" or "external \"module\":" is a WASM import block
@@ -651,6 +679,24 @@ impl TokenParser {
                 None,
             ))
         }
+    }
+
+    /// At the first token of a possible framework block header (after any
+    /// `@attribute` prefixes): `Some(is_plugin_keyword)` when it is one,
+    /// `None` otherwise. Mirrors the top-level block detection.
+    pub(super) fn at_framework_block_header(&self) -> Option<bool> {
+        let TokenKind::Identifier(name) = self.current_kind() else {
+            return None;
+        };
+        let is_plugin_keyword = self.plugin_keywords.contains(name);
+        let is_block = match self.peek_kind() {
+            Some(&TokenKind::Colon) => true,
+            Some(&TokenKind::StringLiteral(_)) | Some(&TokenKind::Identifier(_)) => {
+                is_plugin_keyword || matches!(self.look_ahead(2).kind, TokenKind::Colon)
+            }
+            _ => false,
+        };
+        is_block.then_some(is_plugin_keyword)
     }
 
     /// Look ahead at token N positions forward (rustc: look_ahead())

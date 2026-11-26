@@ -81,6 +81,23 @@ impl TokenParser {
                 let first_name = name.clone();
                 self.parse_identifier_statement(first_name)
             }
+            TokenKind::At => {
+                // `@attr` prefixes in front of a plugin block inside a body
+                // (grammar.ebnf `framework_block`).
+                let attrs_start = self.cursor;
+                let attrs_location = self.current().location.clone();
+                self.parse_framework_attributes()?;
+                if self.at_framework_block_header() == Some(true) {
+                    self.cursor = attrs_start;
+                    self.parse_framework_block_or_plugin(true)
+                } else {
+                    Err(CompilerError::parse_error(
+                        "A framework attribute must be followed by a framework block".to_string(),
+                        Some(attrs_location),
+                        Some("Put the plugin block header (e.g. 'html:') on the line after the '@attribute'".to_string()),
+                    ))
+                }
+            }
             TokenKind::StringLiteral(_)
             | TokenKind::IntegerLiteral(_)
             | TokenKind::NumberLiteral(_)

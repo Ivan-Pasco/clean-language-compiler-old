@@ -771,6 +771,19 @@ impl TokenParser {
             return self.parse_framework_block();
         }
 
+        // `@attr` prefixes in front of a plugin keyword block: collect them,
+        // parse the block that follows, and put them first in its attributes.
+        if matches!(self.current_kind(), TokenKind::At) {
+            let prefix_attrs = self.parse_framework_attributes()?;
+            let mut stmt = self.parse_framework_block_or_plugin(true)?;
+            if let Statement::FrameworkBlock { attributes, .. } = &mut stmt {
+                let mut merged = prefix_attrs;
+                merged.append(attributes);
+                *attributes = merged;
+            }
+            return Ok(stmt);
+        }
+
         // Plugin keyword with colon syntax (e.g., "component:" or "html:")
         // should use the standard framework block parser, not the plugin path.
         // The plugin path expects "keyword identifier" (e.g., "data User").
@@ -880,20 +893,19 @@ impl TokenParser {
         })
     }
 
-    /// Parse a framework block (e.g., endpoints:, data, component, screen "Name":)
-    /// Supports patterns: "identifier:", "identifier string:", "identifier identifier:"
-    /// These are captured as raw text for plugin expansion
-    pub(super) fn parse_framework_block(&mut self) -> Result<Statement, CompilerError> {
-        let start_location = self.current().location.clone();
-
-        // Collect zero or more @attribute prefixes before the block name.
-        // spec/grammar.ebnf: framework_block = { framework_attribute , NEWLINE } , NOT keyword , ...
-        // framework_attribute = "@" , identifier , [ "(" , attribute_arg_list , ")" ] ;
+    /// Parse zero or more `@attribute` prefixes (`@auth`, `@version("v2")`,
+    /// `@cache(ttl: 300)`) in front of a framework block.
+    /// grammar.ebnf: `framework_block = { framework_attribute , NEWLINE } , ...`
+    /// and `framework_attribute = "@" , identifier , [ "(" , attribute_arg_list , ")" ]`.
+    /// Attributes are collected generically (name plus the raw argument text
+    /// as written in the source) for the owning plugin to interpret.
+    pub(super) fn parse_framework_attributes(
+        &mut self,
+    ) -> Result<Vec<FrameworkAttribute>, CompilerError> {
         let mut prefix_attrs: Vec<FrameworkAttribute> = Vec::new();
         while matches!(self.current_kind(), TokenKind::At) {
             let attr_location = self.current().location.clone();
             self.bump(); // consume @
-                         // Expect an identifier immediately after @
             let attr_name = if let TokenKind::Identifier(name) = self.current_kind() {
                 let n = name.clone();
                 self.bump();
@@ -905,35 +917,46 @@ impl TokenParser {
                     None,
                 ));
             };
-            // Consume optional argument list: ( arg , arg , ... )
             let attr_value = if matches!(self.current_kind(), TokenKind::LeftParen) {
                 self.bump(); // consume (
-                             // Collect raw argument text up to the matching )
+                let args_start = self.current().location.byte_start;
                 let mut depth = 1i32;
-                let mut arg_text = String::new();
+                let mut args_end = args_start;
+                let mut token_text = String::new();
                 while depth > 0 {
                     match self.current_kind() {
-                        TokenKind::LeftParen => {
-                            depth += 1;
-                            arg_text.push('(');
-                            self.bump();
-                        }
+                        TokenKind::LeftParen => depth += 1,
                         TokenKind::RightParen => {
                             depth -= 1;
-                            if depth > 0 {
-                                arg_text.push(')');
+                            if depth == 0 {
+                                args_end = self.current().location.byte_start;
+                                break;
                             }
-                            self.bump();
                         }
-                        TokenKind::Eof => break,
-                        _ => {
-                            let tok_text = format!("{}", self.current_kind());
-                            arg_text.push_str(&tok_text);
-                            self.bump();
+                        TokenKind::Eof => {
+                            return Err(CompilerError::parse_error(
+                                format!(
+                                    "Unterminated argument list for attribute '@{}'",
+                                    attr_name
+                                ),
+                                Some(attr_location),
+                                Some("Close the attribute arguments with ')'".to_string()),
+                            ));
                         }
+                        _ => {}
                     }
+                    token_text.push_str(&format!("{}", self.current_kind()));
+                    self.bump();
                 }
-                Some(arg_text)
+                self.bump(); // consume the closing )
+                match (args_start, args_end) {
+                    (Some(start), Some(end))
+                        if start <= end && end <= self.source_content.len() =>
+                    {
+                        Some(self.source_content[start..end].trim().to_string())
+                    }
+                    _ => Some(token_text),
+                }
             } else {
                 None
             };
@@ -943,7 +966,29 @@ impl TokenParser {
                 location: Some(attr_location),
             });
             self.skip_whitespace();
+            // Inside a body the next line starts with an Indent token at
+            // the attribute's own level; the attribute and the block it
+            // prefixes share that level.
+            if matches!(self.current_kind(), TokenKind::Indent(_))
+                && matches!(
+                    self.peek_kind(),
+                    Some(TokenKind::At) | Some(TokenKind::Identifier(_))
+                )
+            {
+                self.bump();
+            }
         }
+        Ok(prefix_attrs)
+    }
+
+    /// Parse a framework block (e.g., endpoints:, data, component, screen "Name":)
+    /// Supports patterns: "identifier:", "identifier string:", "identifier identifier:"
+    /// These are captured as raw text for plugin expansion
+    pub(super) fn parse_framework_block(&mut self) -> Result<Statement, CompilerError> {
+        let start_location = self.current().location.clone();
+
+        // Collect zero or more @attribute prefixes before the block name.
+        let prefix_attrs = self.parse_framework_attributes()?;
 
         // Get the block name (first identifier)
         let block_name = if let TokenKind::Identifier(name) = self.current_kind() {
