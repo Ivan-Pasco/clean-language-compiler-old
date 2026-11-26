@@ -346,8 +346,16 @@ struct FunctionOrigin {
     block_location: Option<crate::ast::SourceLocation>,
 }
 
+/// Maximum number of expansion passes over one block chain
+/// (plugin-contract.md 5.5). A block still being expanded on pass
+/// `MAX_EXPANSION_PASSES + 1` is rejected with PLUGIN011.
+pub const MAX_EXPANSION_PASSES: usize = 8;
+
 pub struct PluginExpander<'a> {
     registry: &'a PluginRegistry,
+    /// How many framework-block expansions enclose the statements being
+    /// walked: the output of a block is pass `expansion_depth + 1`.
+    expansion_depth: usize,
     /// Track statistics for reporting
     blocks_expanded: usize,
     statements_generated: usize,
@@ -395,6 +403,7 @@ impl<'a> PluginExpander<'a> {
     pub fn new(registry: &'a PluginRegistry) -> Self {
         Self {
             registry,
+            expansion_depth: 0,
             blocks_expanded: 0,
             statements_generated: 0,
             pending_start: None,
@@ -833,7 +842,10 @@ impl<'a> PluginExpander<'a> {
                     // Top-level block: a plugin-generated start function is
                     // merged into the program's start function.
                     let expanded = self.expand_framework_block(block, StartPlacement::Program)?;
-                    result.extend(self.expand_statements_full(expanded)?);
+                    self.expansion_depth += 1;
+                    let nested = self.expand_statements_full(expanded);
+                    self.expansion_depth -= 1;
+                    result.extend(nested?);
                 }
                 other => {
                     // Use regular expansion for non-framework statements
@@ -874,7 +886,10 @@ impl<'a> PluginExpander<'a> {
                     // point, while helper functions, classes, capabilities,
                     // externals and state are still lifted to the program.
                     let expanded = self.expand_framework_block(block, StartPlacement::Inline)?;
-                    result.extend(self.expand_statements(expanded)?);
+                    self.expansion_depth += 1;
+                    let nested = self.expand_statements(expanded);
+                    self.expansion_depth -= 1;
+                    result.extend(nested?);
                 }
 
                 // Recursively expand nested statements
@@ -1090,6 +1105,16 @@ impl<'a> PluginExpander<'a> {
         if !self.registry.handles(&block.name) {
             return Err(PluginError::UnknownBlockType {
                 block_name: block.name,
+                location: block.location,
+            });
+        }
+        if self.expansion_depth >= MAX_EXPANSION_PASSES {
+            return Err(PluginError::ExpansionCycle {
+                plugin_name: self
+                    .plugin_name_for_block(&block.name)
+                    .unwrap_or_else(|| "<unknown>".to_string()),
+                block_name: block.name,
+                passes: MAX_EXPANSION_PASSES,
                 location: block.location,
             });
         }
@@ -1483,6 +1508,89 @@ mod tests {
 
         assert_eq!(result.statements.len(), 1);
         assert!(matches!(result.statements[0], Statement::Print { .. }));
+    }
+
+    /// A plugin whose expansion re-emits its own block never converges.
+    /// plugin-contract.md 5.5: at most 8 passes, then a diagnostic naming the
+    /// plugin and the block (PLUGIN011).
+    struct SelfEmittingPlugin;
+
+    impl FrameworkPlugin for SelfEmittingPlugin {
+        fn name(&self) -> &'static str {
+            "test.greet"
+        }
+
+        fn handles(&self) -> &'static [&'static str] {
+            &["greet"]
+        }
+
+        fn expand(&self, block: &FrameworkBlock) -> PluginResult<Vec<Statement>> {
+            Ok(vec![Statement::FrameworkBlock {
+                name: block.name.clone(),
+                content: block.content.clone(),
+                attributes: vec![],
+                location: block.location.clone(),
+                body_location: None,
+            }])
+        }
+    }
+
+    fn greet_block() -> Statement {
+        Statement::FrameworkBlock {
+            name: "greet".to_string(),
+            content: "hello".to_string(),
+            attributes: vec![],
+            location: None,
+            body_location: None,
+        }
+    }
+
+    #[test]
+    fn test_self_emitting_block_is_rejected_after_max_passes() {
+        let registry = PluginRegistry::builder()
+            .add(SelfEmittingPlugin)
+            .build()
+            .unwrap();
+
+        let mut expander = PluginExpander::new(&registry);
+        let err = expander
+            .expand_program(make_test_program(vec![greet_block()]))
+            .unwrap_err();
+        match err {
+            PluginError::ExpansionCycle {
+                ref plugin_name,
+                ref block_name,
+                passes,
+                ..
+            } => {
+                assert_eq!(plugin_name, "test.greet");
+                assert_eq!(block_name, "greet");
+                assert_eq!(passes, MAX_EXPANSION_PASSES);
+            }
+            other => panic!("expected ExpansionCycle, got {other:?}"),
+        }
+        assert!(err.to_string().contains("PLUGIN011"));
+    }
+
+    #[test]
+    fn test_self_emitting_block_nested_in_start_is_rejected() {
+        let registry = PluginRegistry::builder()
+            .add(SelfEmittingPlugin)
+            .build()
+            .unwrap();
+        let mut program = make_test_program(vec![]);
+        program.start_function = Some(Function::new(
+            "start".to_string(),
+            vec![],
+            crate::ast::Type::Void,
+            vec![greet_block()],
+            None,
+        ));
+        let mut expander = PluginExpander::new(&registry);
+        assert!(matches!(
+            expander.expand_program(program),
+            Err(PluginError::ExpansionCycle { .. })
+        ));
     }
 
     #[test]

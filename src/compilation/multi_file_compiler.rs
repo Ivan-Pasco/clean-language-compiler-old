@@ -1580,6 +1580,22 @@ impl MultiFileCompiler {
                         "SEM003",
                     );
                 }
+                if let crate::plugins::PluginError::ExpansionCycle {
+                    ref location,
+                    ref block_name,
+                    ..
+                } = e
+                {
+                    return CompilerError::semantic_error_with_code(
+                        e.to_string(),
+                        Some(format!(
+                            "Remove the '{}:' block from the plugin's own expansion output, or have the plugin emit the finished code instead",
+                            block_name
+                        )),
+                        location.clone(),
+                        "PLUGIN011",
+                    );
+                }
                 CompilerError::syntax_error(
                     e.to_string(),
                     Some("Plugin expansion failed".to_string()),

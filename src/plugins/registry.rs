@@ -50,6 +50,15 @@ pub enum PluginError {
         block_location: Option<SourceLocation>,
         user_location: SourceLocation,
     },
+    /// A block keeps expanding into further framework blocks past the
+    /// pass limit (plugin-contract.md 5.5), e.g. a plugin that re-emits its
+    /// own block on every pass (PLUGIN011).
+    ExpansionCycle {
+        plugin_name: String,
+        block_name: String,
+        passes: usize,
+        location: Option<SourceLocation>,
+    },
     /// Parse error in DSL content
     ParseError {
         message: String,
@@ -123,6 +132,22 @@ impl fmt::Display for PluginError {
                     name, user_location, plugin_name, name, block_name
                 )?;
                 if let Some(loc) = block_location {
+                    write!(f, " at {}", loc)?;
+                }
+                Ok(())
+            }
+            PluginError::ExpansionCycle {
+                plugin_name,
+                block_name,
+                passes,
+                location,
+            } => {
+                write!(
+                    f,
+                    "PLUGIN011: plugin '{}' keeps producing framework blocks: the '{}:' block was still being expanded after {} passes (a plugin must not re-emit its own block)",
+                    plugin_name, block_name, passes
+                )?;
+                if let Some(loc) = location {
                     write!(f, " at {}", loc)?;
                 }
                 Ok(())
