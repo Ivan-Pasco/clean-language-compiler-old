@@ -1,0 +1,89 @@
+// Test: bugfixes/number_to_integer_raises_when_value_does_not_fit
+// Semantic: type-system.md "Values Must Fit" — `.toInteger()` of a number, and
+//   an `any` holding a number converted to an integer, must fit or raise the
+//   catchable error "<value> does not fit in <type>"; NaN never fits
+//   (developer decision, Nov 2026: too-big numbers and NaN raise, no
+//   saturation, no NaN to 0)
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   -1
+//   -1
+//   -1
+//   caught: 3000000000 does not fit in integer
+//   -2
+//   2147483647
+//   -2147483648
+//   2147483647
+//   -2147483648
+//   -3
+//   -4
+//   -5
+//   -6
+//   caught: 300 does not fit in integer:8
+//   3000000000
+//   -7
+//   -8
+//   3
+//   -3
+//   3
+
+start:
+	number big = nid(3000000000.0)
+	integer a = big.toInteger() onError -1
+	print(a)
+	number z = nid(0.0)
+	number nan = z / z
+	integer b = nan.toInteger() onError -1
+	print(b)
+	any v = nid(3000000000.0)
+	integer c = v onError -1
+	print(c)
+	integer d = big.toInteger() onError:
+		print("caught: " + error)
+	integer e = nan.toInteger() onError -2
+	print(e)
+
+	// The edges of the integer range still convert (truncating toward zero).
+	integer top = nid(2147483647.9).toInteger() onError -9
+	print(top)
+	integer bottom = nid(-2147483648.9).toInteger() onError -9
+	print(bottom)
+	integer topExact = nid(2147483647.0).toInteger() onError -9
+	print(topExact)
+	integer bottomExact = nid(-2147483648.0).toInteger() onError -9
+	print(bottomExact)
+	integer over = nid(2147483648.0).toInteger() onError -3
+	print(over)
+	integer under = nid(-2147483649.0).toInteger() onError -4
+	print(under)
+	integer huge = nid(1.0e300).toInteger() onError -5
+	print(huge)
+	integer tiny = nid(-1.0e20).toInteger() onError -6
+	print(tiny)
+
+	// Sized integer targets: the number must fit the target type.
+	number three = nid(300.0)
+	integer:8 small = three.toInteger() onError:
+		print("caught: " + error)
+	any wide = nid(3000000000.0)
+	integer:64 w = wide
+	print(w)
+	any huge64 = nid(1.0e30)
+	integer:64 hw = huge64 onError -7
+	print(hw)
+	any nanAny = nan
+	integer na = nanAny onError -8
+	print(na)
+
+	// Numbers that fit still convert.
+	any fits = nid(3.7)
+	integer f = fits
+	print(f)
+	integer neg = nid(-3.7).toInteger() onError -9
+	print(neg)
+	integer ok = nid(3.7).toInteger()
+	print(ok)
+
+functions:
+	number nid(number v)
+		return v

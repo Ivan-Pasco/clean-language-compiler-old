@@ -9,8 +9,8 @@
 //   10000000000
 //   1
 //   0
-//   2147483647
-//   -2147483648
+//   -1
+//   -2
 //   -7
 //   true
 //   seven is true
@@ -23,7 +23,9 @@
 // Converting an `any` read the payload by guesswork: an integer box was read
 // as its low 32 bits (10000000000 became 1410065408), a boolean box read as a
 // number gave the bits of a denormal (5e-324), a number outside the integer
-// range trapped in i32.trunc_f64_s, `.toBoolean()` on an integer or number
+// range trapped in i32.trunc_f64_s (0.33.176 clamped it; since 0.33.190 it
+// raises the catchable "<value> does not fit in integer", as the spec and the
+// developer decision of Nov 2026 require), `.toBoolean()` on an integer or number
 // returned false, and a boolean target parsed the string "true" as an integer.
 
 start:
@@ -40,9 +42,9 @@ start:
 	number no = data.no
 	print(no)
 
-	integer huge = data.huge
+	integer huge = data.huge onError -1
 	print(huge)
-	integer tiny = data.tiny
+	integer tiny = data.tiny onError -2
 	print(tiny)
 	integer neg = data.neg
 	print(neg)

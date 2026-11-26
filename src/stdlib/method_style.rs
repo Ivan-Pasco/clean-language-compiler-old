@@ -95,7 +95,7 @@ impl MethodStyleManager {
         codegen: &mut CodeGenerator,
     ) -> Result<(), CompilerError> {
         use WasmType::{F64, I32};
-        let conversions: [(&str, WasmType, WasmType, Vec<Instruction<'static>>); 9] = [
+        let conversions: [(&str, WasmType, WasmType, Vec<Instruction<'static>>); 8] = [
             // A string is already a string.
             ("string.toString", I32, I32, vec![Instruction::LocalGet(0)]),
             (
@@ -111,13 +111,6 @@ impl MethodStyleManager {
                 vec![Instruction::LocalGet(0), Instruction::F64ConvertI32S],
             ),
             ("integer.toBoolean", I32, I32, Self::nonzero_i32()),
-            // Truncates toward zero; NaN and out-of-range values saturate.
-            (
-                "number.toInteger",
-                F64,
-                I32,
-                vec![Instruction::LocalGet(0), Instruction::I32TruncSatF64S],
-            ),
             ("number.toNumber", F64, F64, vec![Instruction::LocalGet(0)]),
             ("boolean.toBoolean", I32, I32, Self::nonzero_i32()),
             ("boolean.toInteger", I32, I32, Self::nonzero_i32()),

@@ -804,6 +804,33 @@ impl super::CodeGenerator {
             &native_stdlib::type_conversions::gen_string_to_boolean(raise, invalid_boolean),
         )?;
 
+        // `.toInteger()` of a number, and an `any` holding a number converted
+        // to an integer: NaN and out-of-range values raise
+        // "<value> does not fit in <type>" instead of saturating.
+        let float_to_string_idx = required(self, "float_to_string")?;
+        for (name, wide, type_name) in [
+            ("__number_to_integer", false, "integer"),
+            ("__number_to_integer64", true, "integer:64"),
+        ] {
+            let message =
+                self.get_or_create_string_offset(&format!(" does not fit in {type_name}"))?;
+            let idx = self.register_function(
+                name,
+                &[WasmType::F64],
+                Some(if wide { WasmType::I64 } else { WasmType::I32 }),
+                &native_stdlib::type_conversions::gen_number_to_integer(
+                    wide,
+                    float_to_string_idx,
+                    concat_idx,
+                    err_raise_idx,
+                    message,
+                ),
+            )?;
+            if !wide {
+                self.add_function_alias("number.toInteger", idx);
+            }
+        }
+
         // A wider integer stored into a sized integer (type-system.md §6):
         // `__integer_fit_<type>(value: i64) -> i64` raises "<value> does not
         // fit in <type>". Only modules that narrow a value call them, except

@@ -899,6 +899,70 @@ pub fn gen_string_to_boolean(raise: u32, invalid: u32) -> Vec<Instruction<'stati
     v
 }
 
+/// `__number_to_integer(value: f64) -> i32` (`wide == false`) and
+/// `__number_to_integer64(value: f64) -> i64` (`wide == true`): `.toInteger()`
+/// of a number, and an `any` holding a number converted to an integer. The
+/// number is truncated toward zero; NaN and a value whose truncation is
+/// outside the target raise `<value> does not fit in <type>` (`suffix_ptr`
+/// is the length-prefixed ` does not fit in <type>`) and return 0, instead
+/// of saturating (type-system.md "Values Must Fit").
+pub fn gen_number_to_integer(
+    wide: bool,
+    float_to_string: u32,
+    concat: u32,
+    err_raise: u32,
+    suffix_ptr: u32,
+) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        // NaN
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(0),
+        Instruction::F64Ne,
+        Instruction::LocalGet(0),
+    ];
+    if wide {
+        // Below -2^63, or at or above 2^63.
+        v.extend([
+            Instruction::F64Const(-9_223_372_036_854_775_808.0),
+            Instruction::F64Lt,
+        ]);
+    } else {
+        // Truncates to below i32::MIN, or to above i32::MAX.
+        v.extend([Instruction::F64Const(-2_147_483_649.0), Instruction::F64Le]);
+    }
+    v.extend([
+        Instruction::I32Or,
+        Instruction::LocalGet(0),
+        Instruction::F64Const(if wide {
+            9_223_372_036_854_775_808.0
+        } else {
+            2_147_483_648.0
+        }),
+        Instruction::F64Ge,
+        Instruction::I32Or,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(0),
+        Instruction::Call(float_to_string),
+        Instruction::I32Const(suffix_ptr as i32),
+        Instruction::Call(concat),
+        Instruction::Call(err_raise),
+        if wide {
+            Instruction::I64Const(0)
+        } else {
+            Instruction::I32Const(0)
+        },
+        Instruction::Return,
+        Instruction::End,
+        Instruction::LocalGet(0),
+        if wide {
+            Instruction::I64TruncF64S
+        } else {
+            Instruction::I32TruncF64S
+        },
+    ]);
+    v
+}
+
 /// The sized integer types a value is checked against when it is stored
 /// into one (`__integer_fit_*`): name suffix, Clean type name, range.
 pub const INTEGER_FIT_TARGETS: [(&str, &str, i64, i64); 9] = [

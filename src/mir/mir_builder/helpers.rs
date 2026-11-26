@@ -52,6 +52,8 @@ impl MirBuilder {
                 matches!(
                     name.as_str(),
                     "__err_raise"
+                        | "__number_to_integer"
+                        | "__number_to_integer64"
                         | "string.toInteger"
                         | "string.toNumber"
                         | "string.toBoolean"

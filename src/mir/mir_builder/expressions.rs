@@ -2614,31 +2614,18 @@ impl MirBuilder {
 
                             return Ok(result_id);
                         }
-                        // Number to Integer conversion (f64 -> i32)
+                        // Number to Integer conversion (f64 -> i32). A number
+                        // that is NaN or outside the integer range raises
+                        // "<value> does not fit in integer"
+                        // (`__number_to_integer`), so `onError` catches it.
                         (ConcreteType::Number, "toInteger") => {
-                            let result_id = ValueId(context.function.next_value_id);
-                            context.function.next_value_id += 1;
-
-                            // Register the result as i32
-                            self.register_temp_local(
+                            let result_id = self.emit_named_call(
                                 context,
-                                result_id,
+                                "__number_to_integer",
+                                vec![MirOperand::Value(receiver_id)],
                                 MirType::I32,
-                                expression.location.clone(),
+                                &expression.location,
                             );
-
-                            // Emit Cast instruction from F64 to I32
-                            let instruction = MirInstruction {
-                                dest: Some(result_id),
-                                operation: MirOperation::Cast {
-                                    value: MirOperand::Value(receiver_id),
-                                    target_type: MirType::I32,
-                                },
-                                location: expression.location.clone(),
-                            };
-
-                            self.add_instruction(context, instruction);
-
                             return Ok(result_id);
                         }
                         // Integer to Number conversion (i32/i64 -> f64). The Cast

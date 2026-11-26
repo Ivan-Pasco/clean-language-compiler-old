@@ -19,8 +19,9 @@
 //! no conversion dereferences address 0.
 //!
 //! Conversions follow `foundation/spec/type-system.md` §7 and
-//! `stdlib-reference.md` §3: numbers truncate toward zero and saturate at the
-//! integer range (`trunc_sat`, so NaN and out-of-range values never trap),
+//! `stdlib-reference.md` §3: numbers truncate toward zero, and NaN or a number
+//! outside the integer range raises "<value> does not fit in integer"
+//! (`__number_to_integer`, which `onError` catches),
 //! booleans convert to 0/1, strings are parsed as `.toInteger()` /
 //! `.toNumber()` parse them (text that is not a number in range raises an
 //! error `onError` catches), and null converts to zero.
@@ -192,6 +193,7 @@ impl MirCodeGenerator<'_> {
             AnyUnboxTarget::I32 => {
                 let string_to_int = self.any_runtime_function("__string_to_int")?;
                 let fit_integer = self.any_runtime_function("__integer_fit_integer")?;
+                let number_to_integer = self.any_runtime_function("__number_to_integer")?;
                 vec![
                     (AnyTypeTag::Null, vec![Instruction::I32Const(0)]),
                     // The i64 must fit in 32 bits ("... does not fit in integer").
@@ -205,7 +207,7 @@ impl MirCodeGenerator<'_> {
                     (AnyTypeTag::Boolean, i32_payload(ptr)),
                     (
                         AnyTypeTag::Number,
-                        then(f64_payload(ptr), &[Instruction::I32TruncSatF64S]),
+                        then(f64_payload(ptr), &[Instruction::Call(number_to_integer)]),
                     ),
                     (
                         AnyTypeTag::String,
@@ -219,6 +221,7 @@ impl MirCodeGenerator<'_> {
             }
             AnyUnboxTarget::I64 => {
                 let string_to_int64 = self.any_runtime_function("__string_to_int64")?;
+                let number_to_integer64 = self.any_runtime_function("__number_to_integer64")?;
                 vec![
                     (AnyTypeTag::Null, vec![Instruction::I64Const(0)]),
                     (AnyTypeTag::Integer, i64_payload(ptr)),
@@ -228,7 +231,7 @@ impl MirCodeGenerator<'_> {
                     ),
                     (
                         AnyTypeTag::Number,
-                        then(f64_payload(ptr), &[Instruction::I64TruncSatF64S]),
+                        then(f64_payload(ptr), &[Instruction::Call(number_to_integer64)]),
                     ),
                     (
                         AnyTypeTag::String,
