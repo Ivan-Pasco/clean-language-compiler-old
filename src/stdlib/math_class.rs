@@ -24,19 +24,17 @@ impl MathClass {
         // Core mathematical functions (basic arithmetic handled by operators)
         self.register_core_functions(codegen)?;
 
-        // `x.abs()` on a number or an integer (type-system.md §12) is the
-        // same function as `math.abs(x)`; the method form is lowered to
-        // `number.abs` / `integer.abs`.
-        for (method, function) in [("number.abs", "math.abs"), ("integer.abs", "math.abs.i32")] {
-            let index = codegen.get_function_index(function).ok_or_else(|| {
-                CompilerError::codegen_error(
-                    format!("'{function}' must be registered before '{method}'"),
-                    None,
-                    None,
-                )
-            })?;
-            codegen.add_function_alias(method, index);
-        }
+        // `x.abs()` on a number (type-system.md §12) is the same function as
+        // `math.abs(x)`. The integer form is aliased with `math.abs.i32` in
+        // `register_checked_integer_functions`.
+        let abs = codegen.get_function_index("math.abs").ok_or_else(|| {
+            CompilerError::codegen_error(
+                "'math.abs' must be registered before 'number.abs'".to_string(),
+                None,
+                None,
+            )
+        })?;
+        codegen.add_function_alias("number.abs", abs);
 
         // Rounding and precision functions
         self.register_rounding_functions(codegen)?;
@@ -411,6 +409,10 @@ impl MathClass {
                 Instruction::Select, // x < 0 ? -x : x
             ],
         )?;
+        // `x.abs()` on an integer (type-system.md §12) is `math.abs(x)`.
+        if let Some(index) = codegen.get_function_index("math.abs.i32") {
+            codegen.add_function_alias("integer.abs", index);
+        }
 
         for (name, wide, unsigned) in [
             ("math.pow.i32", false, false),
