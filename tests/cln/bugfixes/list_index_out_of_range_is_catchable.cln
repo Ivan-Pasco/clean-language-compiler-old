@@ -1,0 +1,98 @@
+// Test: bugfixes/list_index_out_of_range_is_catchable
+// Semantic: semantic-rules.md RUN006 — a list read, written or shrunk at an
+//   index outside 0..length-1 raises the catchable error
+//   "index <i> is out of range for a list of length <n>"
+//   (spec decision C2, 14-error-handling.md "Errors Raised by the Language")
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   in range: 10 20 30
+//   read: -1
+//   negative: -2
+//   message: index 5 is out of range for a list of length 3
+//   negative message: index -1 is out of range for a list of length 3
+//   number: -1.5
+//   i64: -7
+//   string: none
+//   get: -3
+//   write: unchanged 3
+//   set: caught index 3 is out of range for a list of length 3
+//   remove: caught index 4 is out of range for a list of length 3
+//   remove ok: 20 left 2
+//   from callee: -9
+//   callee message: index 8 is out of range for a list of length 3
+//   empty: caught index 0 is out of range for a list of length 0
+//   continues: 3
+//
+// Regression: an out-of-range list index trapped the program and no
+// `onError` could catch it. It is now an ordinary error: `onError`
+// catches it, uncaught it stops the program like `error(...)`.
+// (tests/test_list_index_read_bounds_halt.rs pins the uncaught case.)
+
+start:
+	list<integer> xs = [10, 20, 30]
+	print("in range: " + xs[0].toString() + " " + xs[1].toString() + " " + xs[2].toString())
+	integer five = 5
+	integer minusOne = -1
+	integer a = xs[five] onError -1
+	print("read: " + a.toString())
+	integer b = xs[minusOne] onError -2
+	print("negative: " + b.toString())
+	integer c = xs[five] onError:
+		print("message: " + error)
+	integer d = xs[minusOne] onError:
+		print("negative message: " + error)
+
+	list<number> ns = [1.5, 2.5]
+	number n = ns[five] onError -1.5
+	print("number: " + n.toString())
+	list<integer:64> ls = [1, 2]
+	integer:64 l = ls[five] onError -7
+	print("i64: " + l.toString())
+	list<string> ss = ["a", "b"]
+	string s = ss[five] onError "none"
+	print("string: " + s)
+
+	integer g = xs.get(three()) onError -3
+	print("get: " + g.toString())
+	writeOutside(xs)
+	setOutside(xs)
+	removeOutside(xs)
+	integer removed = xs.remove(1)
+	print("remove ok: " + removed.toString() + " left " + xs.length().toString())
+
+	integer viaCallee = readAt(xs, 7) onError -9
+	print("from callee: " + viaCallee.toString())
+	integer viaCalleeMessage = readAt([1, 2, 3], 8) onError:
+		print("callee message: " + error)
+	list<integer> empty = []
+	integer e = empty[0] onError:
+		print("empty: caught " + error)
+	integer total = 0
+	iterate k in 0 to 2
+		total = total + xs[k] onError 0
+	print("continues: " + (xs.length() + 1).toString())
+
+functions:
+	integer three()
+		return 3
+
+	integer readAt(list<integer> items, integer i)
+		return items[i]
+
+	writeOutside(list<integer> items)
+		items[5] = 1
+		print("not reached")
+		onError:
+			print("write: unchanged " + items.length().toString())
+
+	setOutside(list<integer> items)
+		items.set(three(), 1)
+		print("not reached")
+		onError:
+			print("set: caught " + error)
+
+	removeOutside(list<integer> items)
+		integer gone = items.remove(4)
+		print("not reached")
+		onError:
+			print("remove: caught " + error)

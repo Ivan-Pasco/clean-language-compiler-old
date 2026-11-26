@@ -74,7 +74,9 @@ start:
 	//List access
 	list<integer> numbers = [1, 2, 3, 4, 5]
 	integer first = numbers[0]
-	integer calculated_index = numbers[a - b]
+	// Fixed: was numbers[a - b], index 5 of a 5-element list, which raises
+	// RUN006 (index out of range); a - b - 1 is the last element.
+	integer calculated_index = numbers[a - b - 1]
 
 	//Complex nested expressions
 	boolean complex_expr = (a + b * 2) > (x * y) and (flag1 or flag2)

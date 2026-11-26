@@ -4142,6 +4142,9 @@ impl MirBuilder {
                         };
 
                         self.add_instruction(context, instruction);
+                        // An index outside the list raises RUN006 (the
+                        // address computation calls the raising function).
+                        self.add_error_check(context, &expression.location);
 
                         // Load the value from the array element pointer
                         let load_result_id = ValueId(context.function.next_value_id);

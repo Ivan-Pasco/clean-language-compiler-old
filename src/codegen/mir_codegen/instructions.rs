@@ -3361,8 +3361,8 @@ impl MirCodeGenerator<'_> {
 
     /// Address of `list[index]`, with the list pointer on the stack.
     ///
-    /// Halts when `index` is outside `0..length`, as `.get(index)` does
-    /// (stdlib-reference.md §5). The list header is 16 bytes (size,
+    /// Raises RUN006 when `index` is outside `0..length`, as `.get(index)`
+    /// does (14-error-handling.md "Errors Raised by the Language"). The list header is 16 bytes (size,
     /// capacity, type_id, flags; `native_stdlib::LIST_DATA_OFFSET`) and the
     /// stride comes from the element type the MIR builder puts in the
     /// destination's `Ptr<T>`: 8 bytes for f64/i64 elements, 4 otherwise.
@@ -3395,10 +3395,23 @@ impl MirCodeGenerator<'_> {
         self.load_operand(index)?;
         self.current_instructions
             .push(Instruction::LocalSet(index_local));
+        let index_error = self
+            .wasm_generator
+            .get_function_index(crate::stdlib::list_class::LIST_INDEX_ERROR)
+            .ok_or_else(|| {
+                CompilerError::codegen_error(
+                    "list element access requires __list_index_error, which was not registered"
+                        .to_string(),
+                    None,
+                    Some(instruction.location.clone()),
+                )
+            })?;
+        // One unsigned compare covers `index < 0 || index >= length`. Out of
+        // range, the error is raised (RUN006) and the access is pointed at
+        // the list header, which is always readable: the `ErrorCheck` after
+        // the access unwinds before the loaded value is used.
+        let to_header = -(crate::codegen::native_stdlib::LIST_DATA_OFFSET as i32 / element_stride);
         self.current_instructions.extend([
-            Instruction::LocalGet(index_local),
-            Instruction::I32Const(0),
-            Instruction::I32LtS,
             Instruction::LocalGet(index_local),
             Instruction::LocalGet(list_local),
             Instruction::I32Load(wasm_encoder::MemArg {
@@ -3406,10 +3419,13 @@ impl MirCodeGenerator<'_> {
                 align: 2,
                 memory_index: 0,
             }),
-            Instruction::I32GeS,
-            Instruction::I32Or,
+            Instruction::I32GeU,
             Instruction::If(BlockType::Empty),
-            Instruction::Unreachable,
+            Instruction::LocalGet(list_local),
+            Instruction::LocalGet(index_local),
+            Instruction::Call(index_error),
+            Instruction::I32Const(to_header),
+            Instruction::LocalSet(index_local),
             Instruction::End,
             Instruction::LocalGet(index_local),
             Instruction::I32Const(element_stride),

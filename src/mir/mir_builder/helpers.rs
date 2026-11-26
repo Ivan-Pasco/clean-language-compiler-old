@@ -71,6 +71,18 @@ impl MirBuilder {
                         | crate::typechecker::tast::STRING_TO_U64
                         | crate::typechecker::tast::STRING_TO_I64
                         | "__json_decode_v2_or_raise"
+                        // RUN006: an index outside the list
+                        | "list.get"
+                        | "list_get"
+                        | "__list_get_f64"
+                        | "__list_get_i64"
+                        | "list.set"
+                        | "list_set"
+                        | "list.set.f64"
+                        | "list.set.i64"
+                        | "list.removeAt"
+                        | "__list_removeAt_f64"
+                        | "__list_removeAt_i64"
                         | crate::stdlib::json_class::JSON_TO_CLN_LIST
                         | crate::stdlib::json_class::ANY_ITERABLE
                         | crate::stdlib::json_class::ANY_LENGTH
@@ -105,6 +117,28 @@ impl MirBuilder {
                     region_exit: context.error_regions.last().map(|r| r.exit_block),
                 },
                 location,
+            });
+        }
+    }
+
+    /// Follow the instruction just added with the `onError` unwinding check
+    /// (removed again when the program has no `onError` region): for an
+    /// operation the instruction selector emits inline and that may raise,
+    /// such as the bounds check of `list[index]`.
+    pub(super) fn add_error_check(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        location: &SourceLocation,
+    ) {
+        let region_exit = context.error_regions.last().map(|r| r.exit_block);
+        if let Some(block) = self
+            .current_block
+            .and_then(|id| context.function.blocks.get_mut(&id))
+        {
+            block.instructions.push(MirInstruction {
+                dest: None,
+                operation: MirOperation::ErrorCheck { region_exit },
+                location: location.clone(),
             });
         }
     }

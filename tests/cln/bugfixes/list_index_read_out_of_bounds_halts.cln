@@ -4,11 +4,16 @@
 //   0..length halts, as `.get(index)` does
 // Fixed in: compiler 0.33.183
 // Expected output:
+//   index 3 is out of range for a list of length 3
 //
-// The program halts at `xs[3]`, so the runner reports no completed output;
-// before the fix the read returned the memory after the list and the
-// program went on to print "0" and "after". In-bounds reads are pinned by
-// tests/test_list_index_read_bounds_halt.rs.
+// The program halts at `xs[3]`; before the fix the read returned the memory
+// after the list and the program went on to print "0" and "after".
+// In-bounds reads are pinned by tests/test_list_index_read_bounds_halt.rs.
+//
+// Fixed: the expectation was empty (an uncatchable trap). The index error is
+// now the catchable RUN006 (spec decision C2); uncaught it stops the program
+// like an uncaught error(...), printing its message first. Catching it is
+// pinned by list_index_out_of_range_is_catchable.cln.
 
 start:
 	list<integer> xs = [1, 2, 3]

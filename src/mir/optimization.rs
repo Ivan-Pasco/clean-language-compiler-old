@@ -653,8 +653,8 @@ impl OptimizationPass for DeadCodeEliminationPass {
 /// destination value, so it must stay even when that value is unused: memory
 /// and global writes, every kind of call (including dynamic capability
 /// dispatch), the `!` check (it halts on none even when its value is not
-/// used), a division that may divide by zero, source arithmetic that may
-/// overflow, and a short-circuit `and`/`or` whose right-hand side contains one
+/// used), a division that may divide by zero, a list element address that may
+/// be out of range, source arithmetic that may overflow, and a short-circuit `and`/`or` whose right-hand side contains one
 /// of those.
 fn has_side_effects(operation: &MirOperation) -> bool {
     match operation {
@@ -668,6 +668,9 @@ fn has_side_effects(operation: &MirOperation) -> bool {
             op: MirUnaryOp::Required,
             ..
         } => true,
+        // The address of a list element raises "index <i> is out of range
+        // ..." (RUN006) when the index is outside the list.
+        MirOperation::GetElementPtr { is_array: true, .. } => true,
         // Source `+`, `-`, `*` and `-x` raise "integer overflow" on integers.
         MirOperation::BinaryOp {
             op: MirBinaryOp::CheckedAdd | MirBinaryOp::CheckedSub | MirBinaryOp::CheckedMul,

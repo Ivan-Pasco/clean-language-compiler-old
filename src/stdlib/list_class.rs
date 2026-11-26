@@ -35,6 +35,9 @@ use wasm_encoder::{BlockType, Instruction, MemArg, ValType};
 /// Byte offset of the first element.
 pub(crate) const DATA: i32 = 16;
 
+/// The runtime function that raises RUN006 (`__list_index_error(list, index)`).
+pub(crate) const LIST_INDEX_ERROR: &str = "__list_index_error";
+
 pub(crate) fn mem(offset: u64, align: u32) -> MemArg {
     MemArg {
         offset,
@@ -817,8 +820,8 @@ fn gen_insert(elem: Elem, list_add: u32) -> Vec<Instruction<'static>> {
 /// Which element a remove operation takes out of the list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum RemoveAt {
-    /// `.remove(index)`: params (list, index). Halts when `index` is outside
-    /// `0..length`.
+    /// `.remove(index)`: params (list, index). Raises RUN006 when `index` is
+    /// outside `0..length`.
     Index,
     /// `.pop()` / `.removeLast()`: params (list). Halts on an empty list.
     Last,
@@ -832,7 +835,7 @@ enum RemoveAt {
 ///
 /// Locals: 1 = index (a parameter for [`RemoveAt::Index`]), 2 = len, 3 = j,
 /// 4 = removed element (i32 or f64).
-fn gen_remove(elem: Elem, at: RemoveAt) -> Vec<Instruction<'static>> {
+fn gen_remove(elem: Elem, at: RemoveAt, index_error: u32) -> Vec<Instruction<'static>> {
     let mut v = vec![
         Instruction::LocalGet(0),
         Instruction::I32Load(mem(0, 2)),
@@ -871,7 +874,16 @@ fn gen_remove(elem: Elem, at: RemoveAt) -> Vec<Instruction<'static>> {
             ]);
         }
     }
-    v.extend(emit_halt_if_out_of_bounds(1, 2));
+    if at == RemoveAt::Index {
+        v.extend(emit_raise_if_out_of_range(
+            1,
+            2,
+            index_error,
+            Some(zero_of(elem)),
+        ));
+    } else {
+        v.extend(emit_halt_if_out_of_bounds(1, 2));
+    }
     v.extend(elem_addr(0, 1, elem));
     v.push(elem.load());
     v.push(Instruction::LocalSet(4));
@@ -912,46 +924,109 @@ fn gen_remove(elem: Elem, at: RemoveAt) -> Vec<Instruction<'static>> {
     v
 }
 
-/// Trap unless `0 <= index < len` (spec: `.get`, `.set` and `.remove(index)`
-/// halt on an out-of-bounds index).
+/// Trap unless `0 <= index < len`. Used where the spec says the operation
+/// halts (`.pop()` on an empty list), not where it raises RUN006.
 fn emit_halt_if_out_of_bounds(index_local: u32, len_local: u32) -> Vec<Instruction<'static>> {
     vec![
         Instruction::LocalGet(index_local),
-        Instruction::I32Const(0),
-        Instruction::I32LtS,
-        Instruction::LocalGet(index_local),
         Instruction::LocalGet(len_local),
-        Instruction::I32GeS,
-        Instruction::I32Or,
+        Instruction::I32GeU,
         Instruction::If(BlockType::Empty),
         Instruction::Unreachable,
         Instruction::End,
     ]
 }
 
-/// `get(index)`: params (list, index); local 2 = len. Halts when `index` is
-/// outside `0..length`.
-fn gen_get(elem: Elem) -> Vec<Instruction<'static>> {
+/// The zero value of an element, returned after a raised error.
+fn zero_of(elem: Elem) -> Instruction<'static> {
+    match elem {
+        Elem::F64 => Instruction::F64Const(0.0),
+        Elem::I64 => Instruction::I64Const(0),
+        Elem::I32 | Elem::Str | Elem::Boxed => Instruction::I32Const(0),
+    }
+}
+
+/// Raise RUN006 unless `0 <= index < len` (one unsigned compare covers a
+/// negative index): `__list_index_error(list, index)` raises "index <i> is
+/// out of range for a list of length <n>", then the function returns `zero`
+/// (nothing for `set`) and the caller's `ErrorCheck` unwinds to the handler.
+/// The list is parameter 0.
+fn emit_raise_if_out_of_range(
+    index_local: u32,
+    len_local: u32,
+    index_error: u32,
+    zero: Option<Instruction<'static>>,
+) -> Vec<Instruction<'static>> {
+    let mut v = vec![
+        Instruction::LocalGet(index_local),
+        Instruction::LocalGet(len_local),
+        Instruction::I32GeU,
+        Instruction::If(BlockType::Empty),
+        Instruction::LocalGet(0),
+        Instruction::LocalGet(index_local),
+        Instruction::Call(index_error),
+    ];
+    v.extend(zero);
+    v.extend([Instruction::Return, Instruction::End]);
+    v
+}
+
+/// `__list_index_error(list, index)`: raise RUN006, "index <i> is out of
+/// range for a list of length <n>" (14-error-handling.md "Errors Raised by
+/// the Language"). Out of line so the bounds check on a list access stays a
+/// compare and a branch.
+pub(crate) fn gen_index_error(
+    int64_to_string: u32,
+    concat: u32,
+    err_raise: u32,
+    prefix: u32,
+    middle: u32,
+) -> Vec<Instruction<'static>> {
+    vec![
+        Instruction::I32Const(prefix as i32),
+        Instruction::LocalGet(1),
+        Instruction::I64ExtendI32S,
+        Instruction::Call(int64_to_string),
+        Instruction::Call(concat),
+        Instruction::I32Const(middle as i32),
+        Instruction::Call(concat),
+        Instruction::LocalGet(0),
+        Instruction::I32Load(mem(0, 2)),
+        Instruction::I64ExtendI32S,
+        Instruction::Call(int64_to_string),
+        Instruction::Call(concat),
+        Instruction::Call(err_raise),
+    ]
+}
+
+/// `get(index)`: params (list, index); local 2 = len. Raises RUN006 when
+/// `index` is outside `0..length`.
+fn gen_get(elem: Elem, index_error: u32) -> Vec<Instruction<'static>> {
     let mut v = vec![
         Instruction::LocalGet(0),
         Instruction::I32Load(mem(0, 2)),
         Instruction::LocalSet(2),
     ];
-    v.extend(emit_halt_if_out_of_bounds(1, 2));
+    v.extend(emit_raise_if_out_of_range(
+        1,
+        2,
+        index_error,
+        Some(zero_of(elem)),
+    ));
     v.extend(elem_addr(0, 1, elem));
     v.push(elem.load());
     v
 }
 
 /// `set(index, value)`: params (list, index, value); local 3 = len. Stores
-/// in place; halts when `index` is outside `0..length`.
-fn gen_set(elem: Elem) -> Vec<Instruction<'static>> {
+/// in place; raises RUN006 when `index` is outside `0..length`.
+fn gen_set(elem: Elem, index_error: u32) -> Vec<Instruction<'static>> {
     let mut v = vec![
         Instruction::LocalGet(0),
         Instruction::I32Load(mem(0, 2)),
         Instruction::LocalSet(3),
     ];
-    v.extend(emit_halt_if_out_of_bounds(1, 3));
+    v.extend(emit_raise_if_out_of_range(1, 3, index_error, None));
     v.extend(elem_addr(0, 1, elem));
     v.push(Instruction::LocalGet(2));
     v.push(elem.store());
@@ -1485,6 +1560,28 @@ impl ListClass {
             gen_str_cmp(),
         )?;
 
+        // RUN006: the out-of-line error `get`, `set`, `remove(index)` and
+        // the compiled `list[index]` access raise.
+        let int64_to_string = codegen
+            .get_function_index("__int64_to_string")
+            .ok_or_else(|| missing("__int64_to_string"))?;
+        let concat = codegen
+            .get_function_index("__string_concat")
+            .ok_or_else(|| missing("__string_concat"))?;
+        let err_raise = codegen
+            .get_function_index("__err_raise")
+            .ok_or_else(|| missing("__err_raise"))?;
+        let prefix = codegen.get_or_create_string_offset("index ")?;
+        let middle =
+            codegen.get_or_create_string_offset(" is out of range for a list of length ")?;
+        let index_error = register_stdlib_function(
+            codegen,
+            LIST_INDEX_ERROR,
+            &i32x(2),
+            None,
+            gen_index_error(int64_to_string, concat, err_raise, prefix, middle),
+        )?;
+
         // first / last
         for (name, last) in [("list.first", false), ("list.last", true)] {
             register_stdlib_function_with_locals(
@@ -1763,7 +1860,7 @@ impl ListClass {
                 &params,
                 Some(elem.wasm()),
                 &locals,
-                gen_remove(elem, at),
+                gen_remove(elem, at, index_error),
             )?;
             if elem != Elem::I32 {
                 codegen.record_wasm_return_type(name, Some(elem.wasm()));
@@ -1787,7 +1884,7 @@ impl ListClass {
                 &i32x(2),
                 Some(elem.wasm()),
                 &i32x(1),
-                gen_get(elem),
+                gen_get(elem, index_error),
             )?;
         }
         codegen.record_wasm_return_type("__list_get_f64", Some(WasmType::F64));
@@ -1798,7 +1895,7 @@ impl ListClass {
             &i32x(3),
             None,
             &i32x(1),
-            gen_set(Elem::I32),
+            gen_set(Elem::I32, index_error),
         )?;
         codegen.add_function_alias("list_set", set);
         for (name, elem) in [("list.set.f64", Elem::F64), ("list.set.i64", Elem::I64)] {
@@ -1808,7 +1905,7 @@ impl ListClass {
                 &[WasmType::I32, WasmType::I32, elem.wasm()],
                 None,
                 &i32x(1),
-                gen_set(elem),
+                gen_set(elem, index_error),
             )?;
         }
         for name in ["list.set", "list.set.f64", "list.set.i64"] {
