@@ -1498,7 +1498,19 @@ impl TokenParser {
                 self.skip_indentation();
 
                 // Parse import item
-                import_items.push(self.parse_import_item()?);
+                let item_location = self.current().location.clone();
+                let item = self.parse_import_item()?;
+                // IMPORT004: the same item (same name, same alias) twice.
+                if import_items
+                    .iter()
+                    .any(|seen: &ImportItem| seen.name == item.name && seen.alias == item.alias)
+                {
+                    return Err(CompilerError::import_duplicate_item(
+                        &item.name,
+                        Some(item_location),
+                    ));
+                }
+                import_items.push(item);
                 self.skip_whitespace();
             } else if matches!(self.current_kind(), TokenKind::Dedent(_)) {
                 // End of import block

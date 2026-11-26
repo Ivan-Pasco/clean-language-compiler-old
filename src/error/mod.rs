@@ -484,6 +484,21 @@ impl CompilerError {
         }
     }
 
+    /// IMPORT004: `item` appears more than once in an import list.
+    pub fn import_duplicate_item(item: &str, location: Option<SourceLocation>) -> Self {
+        CompilerError::Module {
+            context: Box::new(
+                ErrorContext::new(
+                    format!("Duplicate import item '{item}'"),
+                    Some("Remove the repeated line from the import: block".to_string()),
+                    ErrorType::Import,
+                    location,
+                )
+                .with_error_code("IMPORT004"),
+            ),
+        }
+    }
+
     /// IMPORT003: `symbol` is not exported by `module`.
     pub fn import_symbol_not_found(
         symbol: &str,

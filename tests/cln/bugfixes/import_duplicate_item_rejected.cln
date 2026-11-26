@@ -1,0 +1,15 @@
+// Test: bugfixes/import_duplicate_item_rejected
+// Semantic: IMPORT004 the same item twice in one import: block
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   IMPORT004
+//   Duplicate import item 'module_call_helpers'
+//   import_duplicate_item_rejected.cln:12:2
+
+import:
+	module_call_helpers
+	module_call_helpers
+
+start:
+	print(1)
