@@ -12,7 +12,8 @@
 use super::TokenParser;
 use crate::ast::{
     Capability, CapabilityMethod, Class, Constructor, Expression, Field, Function,
-    FunctionModifier, ImportItem, ListBehavior, Parameter, Statement, Type, Visibility,
+    FunctionModifier, ImportItem, ListBehavior, Parameter, SourceLocation, Statement, Type,
+    Visibility,
 };
 use crate::error::CompilerError;
 use crate::lexer::specification_token::TokenKind;
@@ -398,7 +399,10 @@ impl TokenParser {
 
         self.expect(&TokenKind::RightParen)?;
         self.skip_whitespace();
-        let body = self.parse_block(header_level)?;
+
+        let mut inputs = InputCollector::new(parameters);
+        let (body, description) = self.parse_function_body(header_level, &mut inputs)?;
+        let parameters = inputs.parameters;
 
         Ok(Function {
             name: func_name,
@@ -407,7 +411,7 @@ impl TokenParser {
             parameters,
             return_type,
             body,
-            description: None,
+            description,
             // Private by default per the 2026-06-25 visibility flip;
             // a function becomes Public only when it appears inside a
             // `public:` sub-section (parse_public_functions_section).
@@ -415,6 +419,159 @@ impl TokenParser {
             modifier: FunctionModifier::None,
             location: Some(start_location),
         })
+    }
+
+    /// A function body: an optional setup block (grammar.ebnf §6.2b
+    /// `setup_block`: `description "..."` and/or an `input` block of
+    /// parameter declarations), then the statements. Input declarations
+    /// extend or complete the header's parameter list in `inputs`.
+    fn parse_function_body(
+        &mut self,
+        header_level: usize,
+        inputs: &mut InputCollector,
+    ) -> Result<(Vec<Statement>, Option<String>), CompilerError> {
+        let level = match self.current_kind() {
+            TokenKind::Indent(level) if *level > header_level => *level,
+            _ => return Ok((self.parse_block(header_level)?, None)),
+        };
+        let mut description = None;
+        let mut setup = self.setup_item_after_indent();
+        self.bump(); // the body's first Indent
+        if setup == SetupItem::Description {
+            self.bump(); // 'description'
+            self.skip_whitespace();
+            match self.current_kind() {
+                TokenKind::StringLiteral(text) => {
+                    description = Some(text.clone());
+                    self.bump();
+                }
+                _ => {
+                    return Err(CompilerError::parse_error(
+                        "Expected string literal after 'description'".to_string(),
+                        Some(self.current().location.clone()),
+                        None,
+                    ))
+                }
+            }
+            self.skip_whitespace();
+            // The input block, if any, is on the next line.
+            setup = SetupItem::None;
+            if matches!(self.current_kind(), TokenKind::Indent(l) if *l == level)
+                && self.setup_item_after_indent() == SetupItem::InputBlock
+            {
+                self.bump(); // the input line's Indent
+                setup = SetupItem::InputBlock;
+            }
+        }
+        if setup == SetupItem::InputBlock {
+            self.parse_input_block(level, inputs)?;
+        }
+        let body = self.parse_block_statements(level, Some(inputs))?;
+        Ok((body, description))
+    }
+
+    /// Classifies the line after the Indent token at the cursor.
+    fn setup_item_after_indent(&self) -> SetupItem {
+        let mut next = self.cursor + 1;
+        match self.tokens.get(next).map(|t| &t.kind) {
+            Some(TokenKind::Description) => SetupItem::Description,
+            Some(TokenKind::Input) => {
+                next += 1;
+                while matches!(
+                    self.tokens.get(next).map(|t| &t.kind),
+                    Some(TokenKind::Comment(_) | TokenKind::BlockComment(_))
+                ) {
+                    next += 1;
+                }
+                if matches!(
+                    self.tokens.get(next).map(|t| &t.kind),
+                    Some(TokenKind::Newline | TokenKind::Indent(_) | TokenKind::Dedent(_))
+                ) {
+                    SetupItem::InputBlock
+                } else {
+                    SetupItem::None
+                }
+            }
+            _ => SetupItem::None,
+        }
+    }
+
+    /// `input_block`: the cursor is at `input`; each following deeper line is
+    /// one `type name [= default]` declaration.
+    fn parse_input_block(
+        &mut self,
+        body_level: usize,
+        inputs: &mut InputCollector,
+    ) -> Result<(), CompilerError> {
+        let input_token = self.bump(); // 'input'
+        self.skip_whitespace();
+        let declaration_level = match self.current_kind() {
+            TokenKind::Indent(level) if *level > body_level => *level,
+            _ => {
+                return Err(CompilerError::parse_error(
+                    "Expected at least one declaration under 'input'".to_string(),
+                    Some(input_token.location.clone()),
+                    Some(
+                        "Indent each declaration one level deeper: `integer width = 10`."
+                            .to_string(),
+                    ),
+                ))
+            }
+        };
+        while matches!(self.current_kind(), TokenKind::Indent(l) if *l == declaration_level) {
+            self.bump();
+            self.skip_whitespace();
+            let (name, type_, default_value, location) = self.parse_input_declaration()?;
+            inputs.declare(name, type_, default_value, location)?;
+            self.skip_whitespace();
+        }
+        Ok(())
+    }
+
+    /// `input_declaration`: `type name [= expression]`.
+    fn parse_input_declaration(
+        &mut self,
+    ) -> Result<(String, Type, Option<Expression>, SourceLocation), CompilerError> {
+        let type_ = self.parse_type()?;
+        self.skip_whitespace();
+        let name_token = self.expect_name()?;
+        let location = name_token.location.clone();
+        self.skip_whitespace();
+        let default_value = if self.eat(&TokenKind::Assign) {
+            self.skip_whitespace();
+            Some(self.parse_expression()?)
+        } else {
+            None
+        };
+        Ok((name_token.text.clone(), type_, default_value, location))
+    }
+
+    /// `input` followed by a type: a one-line input declaration, as opposed
+    /// to the `input(...)` call.
+    fn at_standalone_input_declaration(&self) -> bool {
+        matches!(self.current_kind(), TokenKind::Input)
+            && !matches!(
+                self.peek_kind(),
+                None | Some(
+                    TokenKind::LeftParen
+                        | TokenKind::Dot
+                        | TokenKind::Assign
+                        | TokenKind::Newline
+                        | TokenKind::Indent(_)
+                        | TokenKind::Dedent(_)
+                        | TokenKind::Eof
+                )
+            )
+    }
+
+    fn parse_standalone_input_declaration(
+        &mut self,
+        inputs: &mut InputCollector,
+    ) -> Result<(), CompilerError> {
+        self.bump(); // 'input'
+        self.skip_whitespace();
+        let (name, type_, default_value, location) = self.parse_input_declaration()?;
+        inputs.declare(name, type_, default_value, location)
     }
 
     pub(super) fn parse_class(&mut self) -> Result<Class, CompilerError> {
@@ -1714,7 +1871,7 @@ impl TokenParser {
         &mut self,
         header_level: usize,
     ) -> Result<Vec<Statement>, CompilerError> {
-        let mut statements = Vec::new();
+        let statements = Vec::new();
 
         let block_indent_level = match self.current_kind() {
             TokenKind::Indent(level) if *level > header_level => {
@@ -1754,6 +1911,21 @@ impl TokenParser {
                 ));
             }
         };
+
+        self.parse_block_statements(block_indent_level, None)
+    }
+
+    /// The statements of a block whose lines sit at `block_indent_level`
+    /// (the cursor is past the block's first Indent token). `inputs` is
+    /// `Some` only for a function body, where a one-line
+    /// `input type name [= default]` (grammar.ebnf
+    /// `standalone_input_declaration`) declares a parameter.
+    fn parse_block_statements(
+        &mut self,
+        block_indent_level: usize,
+        mut inputs: Option<&mut InputCollector>,
+    ) -> Result<Vec<Statement>, CompilerError> {
+        let mut statements = Vec::new();
 
         while !self.is_at_end() {
             self.skip_whitespace();
@@ -1813,6 +1985,16 @@ impl TokenParser {
                     ));
                 }
                 break;
+            }
+
+            if let Some(collector) = inputs.as_deref_mut() {
+                if self.at_standalone_input_declaration() {
+                    if let Err(e) = self.parse_standalone_input_declaration(collector) {
+                        self.errors.push(e);
+                        self.bump();
+                    }
+                    continue;
+                }
             }
 
             match self.parse_statement() {
@@ -1922,5 +2104,84 @@ impl TokenParser {
                 ))
             }
         }
+    }
+}
+
+/// Where a function body's first line leads: a `description`, an `input`
+/// block, or the statements.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SetupItem {
+    Description,
+    InputBlock,
+    None,
+}
+
+/// The parameters of a function being parsed: the header's parameter list,
+/// extended and completed by `input` declarations (grammar.ebnf §6.2b).
+pub(super) struct InputCollector {
+    pub(super) parameters: Vec<Parameter>,
+    /// Names declared through `input`; a name may be declared there once.
+    declared: std::collections::HashSet<String>,
+}
+
+impl InputCollector {
+    fn new(parameters: Vec<Parameter>) -> Self {
+        Self {
+            parameters,
+            declared: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Adds one input declaration. A name that is already a header parameter
+    /// is the same parameter: its type must agree, and the declaration may
+    /// supply the default the header leaves out. Any other name is a new
+    /// parameter, optional when it has a default.
+    fn declare(
+        &mut self,
+        name: String,
+        type_: Type,
+        default_value: Option<Expression>,
+        location: SourceLocation,
+    ) -> Result<(), CompilerError> {
+        if !self.declared.insert(name.clone()) {
+            return Err(CompilerError::parse_error(
+                format!("Duplicate input declaration '{name}'"),
+                Some(location),
+                None,
+            ));
+        }
+        match self.parameters.iter_mut().find(|p| p.name == name) {
+            Some(existing) => {
+                if existing.type_ != type_ {
+                    return Err(CompilerError::parse_error(
+                        format!(
+                            "Input declaration '{name}' has type {type_} but the parameter was declared {}",
+                            existing.type_
+                        ),
+                        Some(location),
+                        None,
+                    ));
+                }
+                if let Some(default_value) = default_value {
+                    if existing.default_value.is_some() {
+                        return Err(CompilerError::parse_error(
+                            format!("Parameter '{name}' already has a default value"),
+                            Some(location),
+                            Some(
+                                "Give the default in the header or in 'input', not both."
+                                    .to_string(),
+                            ),
+                        ));
+                    }
+                    existing.default_value = Some(default_value);
+                }
+            }
+            None => self.parameters.push(Parameter {
+                name,
+                type_,
+                default_value,
+            }),
+        }
+        Ok(())
     }
 }

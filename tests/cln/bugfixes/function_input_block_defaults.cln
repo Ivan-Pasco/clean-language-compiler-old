@@ -1,0 +1,37 @@
+// Test: bugfixes/function_input_block_defaults
+// Grammar: setup_block, input_block, input_declaration (§6.2b)
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   50
+//   12
+//   >> Hello
+//   >> HI
+//
+// Regression (#65): an `input` block under a function header was rejected by
+// the token parser (SYN001 "Unsupported statement type"). Input declarations
+// become parameters; a declaration with `= value` is a default used when the
+// caller leaves the argument out.
+
+start:
+	print(area())
+	print(area(3, 4))
+	print(formatMessage())
+	print(formatMessage("hi", ">> ", true))
+
+functions:
+	integer area()
+		input
+			integer width = 10
+			integer height = 5
+		return width * height
+
+	string formatMessage()
+		description "Format a message with optional parameters"
+		input
+			string text = "Hello"
+			string prefix = ">> "
+			boolean uppercase = false
+		if uppercase
+			return prefix + text.toUpperCase()
+		else
+			return prefix + text

@@ -1,0 +1,19 @@
+// Test: bugfixes/function_input_block_duplicate
+// Grammar: input_block (§6.2b)
+// Semantic: SEM001 — duplicate input declaration
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   Duplicate input declaration 'a'
+//
+// Regression (#65): the same name twice inside one input block is an error.
+
+start:
+	print(f(1))
+
+functions:
+	integer f()
+		input
+			integer a = 1
+			integer a = 2
+		return a

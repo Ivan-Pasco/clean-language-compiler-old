@@ -1,0 +1,19 @@
+// Test: bugfixes/function_input_block_standalone
+// Grammar: standalone_input_declaration (§6.2b)
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   25
+//   9
+//
+// Regression (#65): `input type name [= default]` on one line inside a
+// function body declares a parameter, like one entry of an input block.
+
+start:
+	print(scale())
+	print(scale(3, 3))
+
+functions:
+	integer scale()
+		input integer a = 5
+		input integer b = 5
+		return a * b

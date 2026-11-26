@@ -1,0 +1,37 @@
+// Test: bugfixes/function_input_block_redeclares_params
+// Grammar: setup_block, input_block, input_declaration (§6.2b)
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   30
+//   30
+//   7
+//
+// Regression (#65): spec 10 (Function Features) lists the header parameters
+// again inside `input`. A same-name, same-type declaration is the same
+// parameter, not a duplicate; a default given there applies to it.
+
+start:
+	print(multiply(5, 6))
+	print(calculate(10, 20))
+	print(withDefault(3))
+
+functions:
+	integer multiply(integer a, integer b)
+		description "Multiplies two integers"
+		input
+			integer a
+			integer b
+		return a * b
+
+	integer calculate(integer x, integer y)
+		description "Calculates something important"
+		input
+			integer x
+			integer y
+		return x + y
+
+	integer withDefault(integer a, integer b)
+		input
+			integer a
+			integer b = 4
+		return a + b
