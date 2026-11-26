@@ -1,0 +1,42 @@
+// Test: bugfixes/screen_watch_keeps_screen_state_access
+// Grammar: screen_block, screen_body_item (state_block | watch_block | functions_block)
+// Semantic: SCOPE004, SCOPE005 — a `watch` inside a screen observes screen state
+//   and does not end the screen body (spec §23 "State in Screens")
+// Regression: after `watch` in a screen body the screen ended, so the
+//   following `functions:` was top-level and lost access to screen state
+//   (SCOPE005); with the watch placed after `functions:` the watch target was
+//   not found (SCOPE004).
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   Home count: 1
+//   Home count: 2
+//   Settings dark: true
+//   Home count: 3
+
+start:
+	Home.increment()
+	Home.increment()
+	Settings.toggle()
+	Home.increment()
+
+screen Home:
+	state:
+		integer homeCount = 0
+
+	watch homeCount:
+		print("Home count: " + homeCount.toString())
+
+	functions:
+		void increment()
+			homeCount = homeCount + 1
+
+screen Settings:
+	state:
+		boolean dark = false
+
+	functions:
+		void toggle()
+			dark = not dark
+
+	watch dark:
+		print("Settings dark: " + dark.toString())

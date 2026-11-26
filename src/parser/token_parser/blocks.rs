@@ -3698,6 +3698,7 @@ impl TokenParser {
         let mut state: Option<crate::ast::StateBlock> = None;
         let mut watch_blocks: Vec<crate::ast::WatchBlock> = Vec::new();
         let mut functions: Vec<crate::ast::Function> = Vec::new();
+        let mut body_level: Option<usize> = None;
 
         // Parse indented body items until we dedent back to top level.
         while !self.is_at_end() {
@@ -3712,14 +3713,21 @@ impl TokenParser {
                 break;
             }
 
-            // A Dedent at the top-level indentation means we've exited the screen body
-            if matches!(self.current_kind(), TokenKind::Dedent(_)) {
+            // A Dedent below the screen body's own indentation means we've
+            // exited the screen. A Dedent back to the body level only closes
+            // a nested block (a `watch` body, say) and the screen continues.
+            if let TokenKind::Dedent(level) = self.current_kind() {
+                let level = *level;
                 self.bump();
+                if body_level.is_some_and(|body| level >= body) {
+                    continue;
+                }
                 break;
             }
 
             // Skip over Indent tokens entering the screen body
-            if let TokenKind::Indent(_) = self.current_kind() {
+            if let TokenKind::Indent(level) = self.current_kind() {
+                body_level.get_or_insert(*level);
                 self.bump();
                 self.skip_whitespace();
                 if self.is_at_end() {
