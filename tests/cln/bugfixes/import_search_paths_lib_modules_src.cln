@@ -1,0 +1,17 @@
+// Test: bugfixes/import_search_paths_lib_modules_src
+// Semantic: spec 18 Module Resolution searches ./lib/, ./modules/ and ./src/ next to the importing file
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   lib
+//   modules
+//   src
+
+import:
+	search_path_lib_helper
+	search_path_modules_helper
+	search_path_src_helper
+
+start:
+	print(from_lib())
+	print(from_modules())
+	print(from_src())

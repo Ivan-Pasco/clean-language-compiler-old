@@ -1172,7 +1172,7 @@ impl MultiFileCompiler {
                                 })
                         } else {
                             // Module import: search in standard paths
-                            self.resolve_module_import(&import, search_paths)
+                            self.resolve_module_import(&import, &file_path, search_paths)
                         };
 
                         match find_result {
@@ -1370,8 +1370,10 @@ impl MultiFileCompiler {
     fn resolve_module_import(
         &self,
         import: &ExtractedImport,
+        importing_file: &Path,
         search_paths: &[PathBuf],
     ) -> Result<Option<(String, PathBuf, String)>, CompilerError> {
+        let search_paths = &Self::module_search_paths(importing_file, search_paths);
         let name = import.name.as_str();
         let Some((module, symbol)) = name.split_once('.') else {
             if Self::is_builtin_module(name) {
@@ -1404,6 +1406,25 @@ impl MultiFileCompiler {
             ));
         }
         Ok(Some((module.to_string(), path, source)))
+    }
+
+    /// Where a module import written in `importing_file` is looked for (spec
+    /// 18 "Module Resolution"): the importing file's directory, its `lib/`,
+    /// `modules/` and `src/` subdirectories, then the configured paths.
+    fn module_search_paths(importing_file: &Path, configured: &[PathBuf]) -> Vec<PathBuf> {
+        let dir = importing_file.parent().unwrap_or(Path::new("."));
+        let mut paths = vec![
+            dir.to_path_buf(),
+            dir.join("lib"),
+            dir.join("modules"),
+            dir.join("src"),
+        ];
+        for path in configured {
+            if !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
+        paths
     }
 
     /// True when `ast` makes `symbol` visible to importers: a public function

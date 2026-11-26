@@ -1,0 +1,9 @@
+// Test: bugfixes/modules/search_path_modules_helper
+// Semantic: module found through the modules/ search path (spec 18 Module Resolution)
+// Fixed in: compiler 0.33.190
+// Expected output:
+
+functions:
+	public:
+		string from_modules()
+			return "modules"
