@@ -484,6 +484,28 @@ impl CompilerError {
         }
     }
 
+    /// IMPORT002: no search path provides module `module`.
+    pub fn import_module_not_found(
+        module: &str,
+        searched: &str,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        CompilerError::Module {
+            context: Box::new(
+                ErrorContext::new(
+                    format!("Module '{module}' not found"),
+                    Some(format!(
+                        "Searched in: {searched}. import: is for Clean source modules; \
+                         framework plugins are declared in a plugins: block"
+                    )),
+                    ErrorType::Import,
+                    location,
+                )
+                .with_error_code("IMPORT002"),
+            ),
+        }
+    }
+
     /// IMPORT004: `item` appears more than once in an import list.
     pub fn import_duplicate_item(item: &str, location: Option<SourceLocation>) -> Self {
         CompilerError::Module {

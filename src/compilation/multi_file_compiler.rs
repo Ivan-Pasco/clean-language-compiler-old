@@ -1452,9 +1452,9 @@ impl MultiFileCompiler {
             .map(|p| p.display().to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        CompilerError::module_error(
-            format!("Module '{}' not found", module_name),
-            Some(format!("Searched in: {}", search_str)),
+        CompilerError::import_module_not_found(
+            module_name,
+            &search_str,
             Some(import.location.clone()),
         )
     }

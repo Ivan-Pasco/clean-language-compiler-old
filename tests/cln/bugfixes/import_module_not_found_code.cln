@@ -1,0 +1,14 @@
+// Test: bugfixes/import_module_not_found_code
+// Semantic: IMPORT002 module not found, reported at the import line (was COM004 without a location)
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   IMPORT002
+//   Module 'no_such_module_anywhere' not found
+//   import_module_not_found_code.cln:11:2
+
+import:
+	no_such_module_anywhere
+
+start:
+	print(1)
