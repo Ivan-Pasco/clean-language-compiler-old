@@ -1560,22 +1560,6 @@ impl TokenParser {
             self.skip_whitespace();
         }
 
-        // Validate: reject plugin names in import: blocks
-        // Plugin names look like "frame.ui", "frame.data" (word.word format)
-        if Self::is_plugin_name(&name) {
-            return Err(CompilerError::parse_error(
-                format!(
-                    "Use 'plugins:' block for framework plugins like '{}'. Change 'import:' to 'plugins:'",
-                    name
-                ),
-                Some(first_token.location.clone()),
-                Some(format!(
-                    "Framework plugins should be declared in a plugins: block:\n\nplugins:\n    {}\n\nThe 'import:' block is for module imports, not plugins.",
-                    name
-                )),
-            ));
-        }
-
         // Check for alias (as ...)
         let alias = if let TokenKind::Identifier(id) = self.current_kind() {
             if id == "as" {

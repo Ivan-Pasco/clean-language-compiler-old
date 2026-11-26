@@ -1,0 +1,14 @@
+// Test: bugfixes/dotted_import_symbol_alias
+// Grammar: import_item (module_name "." module_name "as" module_name), spec 18 `Json.decode as jd`
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   helpers loaded
+//   14
+//   14
+
+import:
+	module_call_helpers.twice as tw
+
+start:
+	print(tw(7))
+	print(twice(7))

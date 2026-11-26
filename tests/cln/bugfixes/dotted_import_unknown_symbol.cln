@@ -1,0 +1,14 @@
+// Test: bugfixes/dotted_import_unknown_symbol
+// Semantic: IMPORT003 symbol not exported by the imported module
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   IMPORT003
+//   nosuch
+//   dotted_import_unknown_symbol.cln:11
+
+import:
+	module_call_helpers.nosuch
+
+start:
+	print(1)

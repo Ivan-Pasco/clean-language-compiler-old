@@ -185,7 +185,7 @@ impl ErrorReporter {
                 ErrorKind {
                     title: "Module Error",
                     default_code: None,
-                    prefer_code: false,
+                    prefer_code: true,
                     show_source: false,
                 },
                 c.blue,

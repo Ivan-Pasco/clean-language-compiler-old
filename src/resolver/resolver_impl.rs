@@ -64,6 +64,9 @@ pub struct NameResolver {
     /// `import: Module as M`) → the module's name. `M.fn(args)` on such a
     /// name binds to the module's function `fn`.
     module_namespaces: std::collections::HashMap<String, String>,
+    /// `import: Module.fn as alias` → `fn`: the name a single imported
+    /// function is also called by.
+    import_item_aliases: std::collections::HashMap<String, String>,
 }
 
 impl NameResolver {
@@ -86,6 +89,7 @@ impl NameResolver {
             pending_language_fn_defs: std::collections::HashMap::new(),
             language_fn_defaults: std::collections::HashMap::new(),
             module_namespaces: std::collections::HashMap::new(),
+            import_item_aliases: std::collections::HashMap::new(),
         }
     }
 
@@ -1207,6 +1211,11 @@ impl NameResolver {
         // sites can be resolved regardless of where they appear in the source.
         // `import: Module as M` makes the module callable as `M` only.
         for import in &hir.imports {
+            if let (Some(items), Some(alias)) = (&import.items, &import.alias) {
+                if let [item] = items.as_slice() {
+                    self.import_item_aliases.insert(alias.clone(), item.clone());
+                }
+            }
             let namespace_name = match (&import.items, &import.alias) {
                 (None, Some(alias)) => alias.clone(),
                 _ => import.module_name.clone(),
@@ -2799,6 +2808,14 @@ impl NameResolver {
         arguments: &[HirExpression],
         location: &SourceLocation,
     ) -> Result<ResolvedHirExpression, ()> {
+        // `import: Module.fn as alias` makes `alias(...)` call `fn`.
+        let item_alias = self
+            .import_item_aliases
+            .get(function)
+            .filter(|_| self.symbol_table.lookup_symbol(function).is_none())
+            .cloned();
+        let function: &str = item_alias.as_deref().unwrap_or(function);
+
         // Inside a screen, an unqualified call names the screen's own
         // function (`Screen.fn`) before any app-level function.
         let screen_function = self.screen_scoped_symbol(function);

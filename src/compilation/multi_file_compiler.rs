@@ -29,8 +29,8 @@ struct ExtractedImport {
 
 /// Line and column (1-based, in characters) of the `import:` entry for
 /// `name` in `source`; `(1, 1)` when it cannot be found. File imports match
-/// the quoted path, module imports the module name before any `.member` or
-/// ` as alias`.
+/// the quoted path, module imports the (possibly dotted) item name before
+/// any ` as alias`.
 fn import_position(source: &str, name: &str, is_file_import: bool) -> (usize, usize) {
     let mut in_import_block = false;
     for (index, line) in source.lines().enumerate() {
@@ -52,7 +52,7 @@ fn import_position(source: &str, name: &str, is_file_import: bool) -> (usize, us
         let entry_name = if is_file_import {
             entry.trim_matches('"').split('"').next().unwrap_or("")
         } else {
-            entry.split([' ', '.']).next().unwrap_or("")
+            entry.split_whitespace().next().unwrap_or("")
         };
         if entry_name == name {
             // `find` returns a char boundary, so the prefix slice is valid.
@@ -1160,33 +1160,29 @@ impl MultiFileCompiler {
                     }
 
                     // Process each import
+                    let mut linked: HashSet<CompilationModuleId> = HashSet::new();
                     for import in imports {
-                        // Skip standard library modules (they're built-in)
-                        if !import.is_file_import && Self::is_builtin_module(&import.name) {
-                            continue;
-                        }
-
                         // Find the module file based on import type
                         let find_result = if import.is_file_import {
                             // File import: resolve relative to the importing file's directory,
                             // with fallback to search_paths (project root, lib/, etc.)
                             self.find_file_import(&import.name, &file_path, search_paths)
+                                .map(|(path, source)| {
+                                    Some((Self::derive_module_name(&path), path, source))
+                                })
                         } else {
                             // Module import: search in standard paths
-                            self.find_module_file(&import.name, search_paths)
+                            self.resolve_module_import(&import, search_paths)
                         };
 
                         match find_result {
-                            Ok((module_path, module_source)) => {
+                            // Built-in module (math, string, ...): nothing to load.
+                            Ok(None) => continue,
+                            Ok(Some((module_name, module_path, module_source))) => {
                                 // Derive a human-readable module name (basename stem).
                                 // add_module uses the canonical path as the true dedup
                                 // key and disambiguates the name when two different
                                 // files share the same stem.
-                                let module_name = if import.is_file_import {
-                                    Self::derive_module_name(&module_path)
-                                } else {
-                                    import.name.clone()
-                                };
 
                                 // Dedup by canonical path first; fall through to
                                 // add_module only for genuinely new files.
@@ -1201,8 +1197,14 @@ impl MultiFileCompiler {
                                         )
                                     };
 
-                                // Add to graph
-                                graph.add_dependency(current_id, dep_id, import.location.clone());
+                                // Add to graph (`utils.add` and `utils.mul` are one edge)
+                                if linked.insert(dep_id) {
+                                    graph.add_dependency(
+                                        current_id,
+                                        dep_id,
+                                        import.location.clone(),
+                                    );
+                                }
 
                                 // Queue for processing
                                 if !processed.contains(&dep_id) {
@@ -1291,14 +1293,12 @@ impl MultiFileCompiler {
         ))
     }
 
-    /// Extract import statements from source code
-    ///
-    /// This does a quick parse to find import declarations without full AST building
-    fn extract_imports(
+    /// Tokenize and parse `source` to an AST (Stages 1-2, no semantic analysis).
+    fn parse_ast(
         &self,
         source: &str,
         file_path: &Path,
-    ) -> Result<Vec<ExtractedImport>, CompilerError> {
+    ) -> Result<crate::ast::Program, CompilerError> {
         // Stage 1: Tokenize
         let source_code =
             SourceCode::new(source.to_string(), file_path.to_string_lossy().to_string());
@@ -1315,24 +1315,27 @@ impl MultiFileCompiler {
         if let Some(ref registry) = self.config.plugin_registry {
             parser.set_block_header_attributes(registry.get_block_header_attributes());
         }
-        let ast = parser.parse_program()?;
+        parser.parse_program()
+    }
+
+    /// Extract import statements from source code
+    ///
+    /// This does a quick parse to find import declarations without full AST building
+    fn extract_imports(
+        &self,
+        source: &str,
+        file_path: &Path,
+    ) -> Result<Vec<ExtractedImport>, CompilerError> {
+        let ast = self.parse_ast(source, file_path)?;
 
         // Extract imports from AST, preserving file import flag
         let mut seen = HashSet::new();
         let mut imports = Vec::new();
 
         for import in &ast.imports {
-            let key = if import.is_file_import {
-                // For file imports, use the full path as key
-                import.name.clone()
-            } else {
-                // For module imports, extract the module name (before the dot)
-                if let Some(dot_pos) = import.name.find('.') {
-                    import.name[..dot_pos].to_string()
-                } else {
-                    import.name.clone()
-                }
-            };
+            // Items are keyed by their full written name: `utils.add` and
+            // `utils.mul` are two items, resolved (and checked) one by one.
+            let key = import.name.clone();
 
             if !seen.contains(&key) {
                 seen.insert(key.clone());
@@ -1354,12 +1357,94 @@ impl MultiFileCompiler {
         Ok(imports)
     }
 
-    /// Find a module file in the search paths
+    /// Resolve one module-name import item to the file that provides it.
+    ///
+    /// grammar.ebnf `import_item` writes `module_name "." module_name` for two
+    /// different things (spec 18): a nested module path (`data.models` is
+    /// `data/models.cln`) and a single symbol of a module (`math.sqrt`). The
+    /// import block cannot tell them apart, so the file system decides: the
+    /// nested module file wins when it exists, otherwise the first name is the
+    /// module and the second a symbol it must export (IMPORT003).
+    ///
+    /// `Ok(None)` means a built-in module, which has no file to load.
+    fn resolve_module_import(
+        &self,
+        import: &ExtractedImport,
+        search_paths: &[PathBuf],
+    ) -> Result<Option<(String, PathBuf, String)>, CompilerError> {
+        let name = import.name.as_str();
+        let Some((module, symbol)) = name.split_once('.') else {
+            if Self::is_builtin_module(name) {
+                return Ok(None);
+            }
+            return match self.find_module_file(name, search_paths)? {
+                Some((path, source)) => Ok(Some((name.to_string(), path, source))),
+                None => Err(Self::module_not_found(name, search_paths, import)),
+            };
+        };
+
+        if let Some((path, source)) = self.find_module_file(name, search_paths)? {
+            return Ok(Some((name.to_string(), path, source)));
+        }
+        if Self::is_builtin_module(module) {
+            return Ok(None);
+        }
+        let Some((path, source)) = self.find_module_file(module, search_paths)? else {
+            return Err(Self::module_not_found(name, search_paths, import));
+        };
+
+        let ast = self.parse_ast(&source, &path)?;
+        // A module that declares `plugins:` may export symbols its plugins
+        // generate, which do not exist before expansion: do not judge those.
+        if ast.plugins.is_empty() && !Self::module_exports(&ast, symbol) {
+            return Err(CompilerError::import_symbol_not_found(
+                symbol,
+                module,
+                Some(import.location.clone()),
+            ));
+        }
+        Ok(Some((module.to_string(), path, source)))
+    }
+
+    /// True when `ast` makes `symbol` visible to importers: a public function
+    /// or public state variable, or any class (spec 18 "Visibility Model").
+    fn module_exports(ast: &crate::ast::Program, symbol: &str) -> bool {
+        ast.functions
+            .iter()
+            .any(|f| f.name == symbol && f.visibility == crate::ast::Visibility::Public)
+            || ast.state.as_ref().is_some_and(|s| {
+                s.declarations
+                    .iter()
+                    .any(|d| d.name == symbol && !d.is_private)
+            })
+            || ast.classes.iter().any(|c| c.name == symbol)
+    }
+
+    /// The error for a module that no search path provides.
+    fn module_not_found(
+        module_name: &str,
+        search_paths: &[PathBuf],
+        import: &ExtractedImport,
+    ) -> CompilerError {
+        let search_str = search_paths
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        CompilerError::module_error(
+            format!("Module '{}' not found", module_name),
+            Some(format!("Searched in: {}", search_str)),
+            Some(import.location.clone()),
+        )
+    }
+
+    /// Find a module file in the search paths; `Ok(None)` when no search path
+    /// has it.
     fn find_module_file(
         &self,
         module_name: &str,
         search_paths: &[PathBuf],
-    ) -> Result<(PathBuf, String), CompilerError> {
+    ) -> Result<Option<(PathBuf, String)>, CompilerError> {
         // Handle nested module names (e.g., "foo.bar" -> "foo/bar")
         let path_name = module_name.replace('.', "/");
 
@@ -1373,7 +1458,7 @@ impl MultiFileCompiler {
         for search_path in search_paths {
             for filename in &possible_filenames {
                 let full_path = search_path.join(filename);
-                if full_path.exists() {
+                if full_path.is_file() {
                     let source = fs::read_to_string(&full_path).map_err(|e| {
                         CompilerError::io_error(
                             format!(
@@ -1392,23 +1477,11 @@ impl MultiFileCompiler {
                             }),
                         )
                     })?;
-                    return Ok((full_path, source));
+                    return Ok(Some((full_path, source)));
                 }
             }
         }
-
-        // Module not found
-        let search_str = search_paths
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        Err(CompilerError::module_error(
-            format!("Module '{}' not found", module_name),
-            Some(format!("Searched in: {}", search_str)),
-            None,
-        ))
+        Ok(None)
     }
 
     /// Parse all modules in the compilation unit to HIR

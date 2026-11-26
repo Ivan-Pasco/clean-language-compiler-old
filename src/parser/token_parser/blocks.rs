@@ -2935,12 +2935,6 @@ impl TokenParser {
         Ok(plugin_names)
     }
 
-    /// Check if a name looks like a framework plugin name (e.g., "frame.ui", "frame.data")
-    /// Plugin names contain dots but don't end with ".cln" (which would be a file import)
-    pub(super) fn is_plugin_name(name: &str) -> bool {
-        name.contains('.') && !name.ends_with(".cln")
-    }
-
     /// Parse an external function block
     ///
     /// External blocks declare WASM imports (functions provided by the host runtime).

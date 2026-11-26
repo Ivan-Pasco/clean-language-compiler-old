@@ -1,0 +1,12 @@
+// Test: bugfixes/dotted_import_nested_path
+// Grammar: import_item (module_name "." module_name), spec 18 `data.models`
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   inner loaded
+//   7
+
+import:
+	dotted_import_modules.inner
+
+start:
+	print(seven())

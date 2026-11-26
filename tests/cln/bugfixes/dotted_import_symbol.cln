@@ -1,0 +1,12 @@
+// Test: bugfixes/dotted_import_symbol
+// Grammar: import_item (module_name "." module_name), spec 18 `math.sqrt`
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   helpers loaded
+//   14
+
+import:
+	module_call_helpers.twice
+
+start:
+	print(twice(7))

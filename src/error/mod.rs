@@ -484,6 +484,27 @@ impl CompilerError {
         }
     }
 
+    /// IMPORT003: `symbol` is not exported by `module`.
+    pub fn import_symbol_not_found(
+        symbol: &str,
+        module: &str,
+        location: Option<SourceLocation>,
+    ) -> Self {
+        CompilerError::Module {
+            context: Box::new(
+                ErrorContext::new(
+                    format!("Symbol '{symbol}' is not exported by module '{module}'"),
+                    Some(format!(
+                        "Only public functions, public state variables and classes of '{module}' can be imported"
+                    )),
+                    ErrorType::Import,
+                    location,
+                )
+                .with_error_code("IMPORT003"),
+            ),
+        }
+    }
+
     /// The structured context (message, location, code) carried by every
     /// variant except lexer and plugin errors.
     pub fn context(&self) -> Option<&ErrorContext> {

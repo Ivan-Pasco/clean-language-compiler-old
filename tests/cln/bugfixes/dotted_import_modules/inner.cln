@@ -1,0 +1,13 @@
+// Test: bugfixes/dotted_import_modules/inner
+// Semantic: nested module imported by dotted_import_nested_path.cln
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   inner loaded
+
+start:
+	print("inner loaded")
+
+functions:
+	public:
+		integer seven()
+			return 7
