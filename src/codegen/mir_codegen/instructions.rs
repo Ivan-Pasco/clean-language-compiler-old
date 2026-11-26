@@ -206,7 +206,25 @@ impl MirCodeGenerator<'_> {
                     self.current_instructions.extend(is_null);
                     self.current_instructions
                         .push(Instruction::If(wasm_encoder::BlockType::Empty));
-                    self.current_instructions.push(Instruction::Unreachable);
+                    // A none value: report the reference error (RUN004) and
+                    // stop; `onError` does not catch it (06-expressions.md).
+                    let fatal = self
+                        .wasm_generator
+                        .get_function_index("__err_fatal")
+                        .ok_or_else(|| {
+                            CompilerError::codegen_error(
+                                "`value!` requires __err_fatal, which was not registered"
+                                    .to_string(),
+                                None,
+                                None,
+                            )
+                        })?;
+                    let message = self
+                        .wasm_generator
+                        .get_or_create_string_offset("Reference error: `!` was applied to none")?;
+                    self.current_instructions
+                        .push(Instruction::I32Const(message as i32));
+                    self.current_instructions.push(Instruction::Call(fatal));
                     self.current_instructions.push(Instruction::End);
                 } else {
                     // Normal unary operation — need the operand MIR type so we

@@ -662,14 +662,14 @@ impl TokenParser {
             Vec<Field>,
             Vec<Function>,
             Option<Constructor>,
-            Vec<Expression>,
+            Vec<crate::ast::SourcedCondition<Expression>>,
         ),
         CompilerError,
     > {
         let mut fields = Vec::new();
         let mut methods = Vec::new();
         let mut constructor = None;
-        let mut invariants: Vec<Expression> = Vec::new();
+        let mut invariants: Vec<crate::ast::SourcedCondition<Expression>> = Vec::new();
 
         while !self.is_at_end()
             && !matches!(
@@ -1028,7 +1028,9 @@ impl TokenParser {
     ///
     /// Grammar:
     ///   always_block = "always" ":" newline indent { expression newline } dedent
-    pub(super) fn parse_invariant_block(&mut self) -> Result<Vec<Expression>, CompilerError> {
+    pub(super) fn parse_invariant_block(
+        &mut self,
+    ) -> Result<Vec<crate::ast::SourcedCondition<Expression>>, CompilerError> {
         self.expect(&TokenKind::Always)?;
         self.skip_whitespace();
         self.expect(&TokenKind::Colon)?;
@@ -1052,7 +1054,7 @@ impl TokenParser {
             1
         };
 
-        let mut conditions: Vec<Expression> = Vec::new();
+        let mut conditions: Vec<crate::ast::SourcedCondition<Expression>> = Vec::new();
 
         loop {
             self.skip_whitespace();
@@ -1100,7 +1102,7 @@ impl TokenParser {
             }
 
             // Parse the always: condition expression
-            let condition = self.parse_expression()?;
+            let condition = self.parse_expression_with_text()?;
             conditions.push(condition);
 
             // Consume trailing newline after expression

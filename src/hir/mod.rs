@@ -201,7 +201,7 @@ pub struct HirClass {
     /// Invariant conditions from the `always:` block.
     /// Each expression must evaluate to boolean.
     /// Checked after every public method call on the class (debug/contracts builds).
-    pub invariants: Vec<HirExpression>,
+    pub invariants: Vec<crate::ast::SourcedCondition<HirExpression>>,
     /// Capabilities claimed via the class header's `can C1, C2, ...` clause.
     /// Nominal — each name must resolve to an `HirCapability` in the program.
     /// Validation happens in the resolver (SEM011/012/013).
@@ -306,7 +306,7 @@ pub struct HirStateBlock {
     pub declarations: Vec<HirStateDeclaration>,
     pub computed: Vec<HirComputedDeclaration>,
     /// State invariants checked at operation boundaries
-    pub rules: Vec<HirExpression>,
+    pub rules: Vec<crate::ast::SourcedCondition<HirExpression>>,
     pub scope: HirStateScope,
     pub location: SourceLocation,
 }
@@ -442,6 +442,8 @@ pub enum HirStatement {
     /// Traps at runtime if condition is false
     Require {
         condition: HirExpression,
+        /// The condition as written in the source.
+        condition_text: String,
         location: SourceLocation,
     },
 
@@ -450,6 +452,8 @@ pub enum HirStatement {
     /// Debug builds emit a WASM trap if the condition is false; release builds strip it.
     Ensure {
         condition: HirExpression,
+        /// The condition as written in the source.
+        condition_text: String,
         location: SourceLocation,
     },
 }

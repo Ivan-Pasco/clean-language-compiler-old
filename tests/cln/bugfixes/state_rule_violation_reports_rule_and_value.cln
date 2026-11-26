@@ -1,0 +1,22 @@
+// Test: bugfixes/state_rule_violation_reports_rule_and_value
+// Grammar: state_block · rules_block
+// Semantic: 23-state-management.md "State Rules - Error on violation": a rule that
+//   is false when start: finishes prints "Rule violation: rule failed in state
+//   block", the rule as written and the value of each state variable it reads,
+//   then stops the program.
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   end of start
+//   Rule violation: rule failed in state block
+//     Rule: count >= 0
+//     Actual: count = -5
+
+start:
+	count = -5
+	print("end of start")
+
+state:
+	integer count = 0
+
+	rules:
+		count >= 0

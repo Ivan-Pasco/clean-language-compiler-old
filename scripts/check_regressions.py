@@ -162,9 +162,15 @@ def extract_runner_stdout(raw: str) -> list[str]:
     lines = raw.splitlines()
     try:
         start = lines.index(OUTPUT_MARKER_START) + 1
-        end = lines.index(OUTPUT_MARKER_END, start)
     except ValueError:
         return []
+    # A program that stops (an uncaught error, a broken contract) never
+    # prints the end marker: its output is everything it printed up to the
+    # stop (the runner's own error report goes to stderr).
+    try:
+        end = lines.index(OUTPUT_MARKER_END, start)
+    except ValueError:
+        end = len(lines)
     return [l.rstrip() for l in lines[start:end]]
 
 

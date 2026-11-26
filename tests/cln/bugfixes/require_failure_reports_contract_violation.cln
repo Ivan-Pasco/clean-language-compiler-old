@@ -1,0 +1,21 @@
+// Test: bugfixes/require_failure_reports_contract_violation
+// Grammar: require_statement
+// Semantic: 11-contracts.md "Error on violation", semantic-rules.md RUN005: a
+//   false `require` prints the contract violation (function, line of the
+//   require, the condition as written) and stops the program. It used to stop
+//   with a bare `unreachable` and no message.
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   5
+//   Contract violation: require failed at divide:20
+//     Expression: b != 0
+
+start:
+	print(divide(10, 2))
+	print(divide(1, 0))
+	print("not reached")
+
+functions:
+	integer divide(integer a, integer b)
+		require b != 0
+		return a / b

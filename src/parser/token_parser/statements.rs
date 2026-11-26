@@ -583,10 +583,11 @@ impl TokenParser {
         self.skip_whitespace();
 
         // Parse the condition expression
-        let condition = self.parse_expression()?;
+        let sourced = self.parse_expression_with_text()?;
 
         Ok(Statement::Require {
-            condition,
+            condition: sourced.condition,
+            condition_text: sourced.text,
             location: Some(require_token.location),
         })
     }
@@ -600,10 +601,11 @@ impl TokenParser {
         self.skip_whitespace();
 
         // Parse the condition expression — `result` is a special identifier in this context
-        let condition = self.parse_expression()?;
+        let sourced = self.parse_expression_with_text()?;
 
         Ok(Statement::Ensure {
-            condition,
+            condition: sourced.condition,
+            condition_text: sourced.text,
             location: Some(ensure_token.location),
         })
     }

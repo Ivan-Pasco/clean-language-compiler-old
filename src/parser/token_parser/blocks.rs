@@ -2482,8 +2482,8 @@ impl TokenParser {
                 self.current_kind(),
                 TokenKind::Newline | TokenKind::Indent(_) | TokenKind::Dedent(_)
             ) {
-                let rule_expr = self.parse_expression()?;
-                rules.push(rule_expr);
+                let rule = self.parse_expression_with_text()?;
+                rules.push(rule);
             }
 
             // Skip trailing newline

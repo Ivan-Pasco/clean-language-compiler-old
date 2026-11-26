@@ -116,7 +116,7 @@ pub struct ResolvedHirClass {
     pub constructor: Option<ResolvedHirConstructor>,
     pub methods: Vec<ResolvedHirMethod>,
     /// Resolved invariant conditions from the `always:` block.
-    pub invariants: Vec<ResolvedHirExpression>,
+    pub invariants: Vec<crate::ast::SourcedCondition<ResolvedHirExpression>>,
     /// Capability symbols this class conforms to via its `can C1, C2, ...`
     /// clause. Does NOT include capabilities inherited from a parent class —
     /// use `vtable_descriptors` on `ResolvedHirProgram` for the full
@@ -174,7 +174,7 @@ pub struct ResolvedHirStateBlock {
     /// Computed (derived) state declarations
     pub computed: Vec<ResolvedHirComputedDeclaration>,
     /// State invariants checked at operation boundaries
-    pub rules: Vec<ResolvedHirExpression>,
+    pub rules: Vec<crate::ast::SourcedCondition<ResolvedHirExpression>>,
     pub scope: HirStateScope,
     pub location: SourceLocation,
 }
@@ -323,6 +323,8 @@ pub enum ResolvedHirStatement {
     /// Traps at runtime if condition is false
     Require {
         condition: ResolvedHirExpression,
+        /// The condition as written in the source.
+        condition_text: String,
         location: SourceLocation,
     },
 
@@ -331,6 +333,8 @@ pub enum ResolvedHirStatement {
     /// Debug builds emit a WASM trap if the condition is false; release builds strip it.
     Ensure {
         condition: ResolvedHirExpression,
+        /// The condition as written in the source.
+        condition_text: String,
         location: SourceLocation,
     },
 }

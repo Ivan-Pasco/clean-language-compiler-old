@@ -1,0 +1,21 @@
+// Test: bugfixes/ensure_failure_reports_contract_violation
+// Grammar: ensure_statement
+// Semantic: 11-contracts.md "ensure", semantic-rules.md RUN005: a false `ensure`
+//   prints the contract violation when the function returns and stops the
+//   program.
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   5
+//   Contract violation: ensure failed at half:20
+//     Expression: result * 2 == a
+
+start:
+	print(half(10))
+	print(half(3))
+	print("not reached")
+
+functions:
+	integer half(integer a)
+		require a > 0
+		ensure result * 2 == a
+		return a / 2

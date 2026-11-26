@@ -275,14 +275,34 @@ impl MirBuilder {
 
         // Clone class for passing to methods (needed to avoid borrow checker issues)
         let class_for_methods = tast_class.clone();
-        let class_invariants = tast_class.invariants.clone();
+        let class_invariants: Vec<ContractCheck> = tast_class
+            .invariants
+            .iter()
+            .map(|invariant| ContractCheck {
+                condition: invariant.condition.clone(),
+                message: contract_violation_message(
+                    "always",
+                    &tast_class.name,
+                    invariant.line,
+                    &invariant.text,
+                ),
+            })
+            .collect();
 
-        // Build all constructors with class context (constructors can use 'this')
+        // Build all constructors with class context (constructors can use 'this').
+        // The `always:` invariants are checked when a constructor finishes
+        // (11-contracts.md); release builds do not check them.
         for constructor in tast_class.constructors {
+            self.pending_class_invariants = if self.release_mode {
+                Vec::new()
+            } else {
+                class_invariants.clone()
+            };
             match self.build_function_with_class_context(constructor, Some(&class_for_methods)) {
                 Ok(ctor_function) => functions.push(ctor_function),
                 Err(ctor_errors) => errors.extend(ctor_errors),
             }
+            self.pending_class_invariants.clear();
         }
 
         // Build all methods with class context.

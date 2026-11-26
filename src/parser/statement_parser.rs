@@ -484,10 +484,12 @@ fn parse_require_statement(
     let condition_expr = inner
         .next()
         .expect("invariant: require_stmt condition child");
+    let condition_text = condition_expr.as_str().trim().to_string();
     let condition = parse_expression(condition_expr)?;
 
     Ok(Statement::Require {
         condition,
+        condition_text,
         location: Some(ast_location),
     })
 }

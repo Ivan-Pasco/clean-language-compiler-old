@@ -162,7 +162,7 @@ pub struct TastClass {
     pub visibility: Visibility,
     /// Type-checked invariant conditions from the `always:` block.
     /// Each expression has been verified to be of boolean type.
-    pub invariants: Vec<TastExpression>,
+    pub invariants: Vec<crate::ast::SourcedCondition<TastExpression>>,
     pub location: SourceLocation,
 }
 
@@ -258,6 +258,8 @@ pub enum TastStatement {
     /// Traps at runtime if condition is false
     Require {
         condition: TastExpression,
+        /// The condition as written in the source.
+        condition_text: String,
         location: SourceLocation,
     },
 
@@ -266,6 +268,8 @@ pub enum TastStatement {
     /// Debug builds emit a WASM trap if the condition is false; release builds strip it.
     Ensure {
         condition: TastExpression,
+        /// The condition as written in the source.
+        condition_text: String,
         location: SourceLocation,
     },
 }
@@ -390,7 +394,7 @@ pub struct TastStateBlock {
     /// Computed (derived) state declarations whose bodies have been type-checked
     pub computed: Vec<TastComputedDeclaration>,
     /// State invariants checked at operation boundaries (after start:, frame:, handlers)
-    pub rules: Vec<TastExpression>,
+    pub rules: Vec<crate::ast::SourcedCondition<TastExpression>>,
     pub location: SourceLocation,
 }
 

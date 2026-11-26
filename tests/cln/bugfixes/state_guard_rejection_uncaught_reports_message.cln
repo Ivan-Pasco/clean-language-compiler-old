@@ -1,0 +1,23 @@
+// Test: bugfixes/state_guard_rejection_uncaught_reports_message
+// Grammar: state_guard
+// Semantic: 23-state-management.md "State Guards" (STATE001), semantic-rules.md
+//   STATE002: a false guard raises "State update rejected: <message>". With no
+//   onError the program stops and prints that message (it used to stop with a
+//   bare `unreachable` and no message).
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   before
+//   State update rejected: Count cannot be negative
+
+start:
+	print("before")
+	decrement()
+	print("not reached")
+
+state:
+	integer count = 0
+		guard value >= 0 else "Count cannot be negative"
+
+functions:
+	void decrement()
+		count = count - 1

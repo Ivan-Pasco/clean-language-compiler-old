@@ -1726,9 +1726,13 @@ impl NameResolver {
 
         // Resolve always: block expressions in class scope (fields are visible here)
         let mut resolved_invariants = Vec::new();
-        for invariant_expr in &class.invariants {
-            match self.resolve_expression(invariant_expr) {
-                Ok(resolved) => resolved_invariants.push(resolved),
+        for invariant in &class.invariants {
+            match self.resolve_expression(&invariant.condition) {
+                Ok(resolved) => resolved_invariants.push(crate::ast::SourcedCondition {
+                    condition: resolved,
+                    text: invariant.text.clone(),
+                    line: invariant.line,
+                }),
                 Err(()) => {
                     // Error already logged by resolve_expression; skip this condition
                 }
@@ -2030,9 +2034,13 @@ impl NameResolver {
 
         // Resolve state invariant rules
         let mut resolved_rules = Vec::new();
-        for rule_expr in &state_block.rules {
-            let resolved_rule = self.resolve_expression(rule_expr)?;
-            resolved_rules.push(resolved_rule);
+        for rule in &state_block.rules {
+            let resolved_rule = self.resolve_expression(&rule.condition)?;
+            resolved_rules.push(crate::ast::SourcedCondition {
+                condition: resolved_rule,
+                text: rule.text.clone(),
+                line: rule.line,
+            });
         }
 
         Ok(ResolvedHirStateBlock {
@@ -2296,17 +2304,20 @@ impl NameResolver {
 
             HirStatement::Require {
                 condition,
+                condition_text,
                 location,
             } => {
                 let resolved_condition = self.resolve_expression(condition)?;
                 Ok(ResolvedHirStatement::Require {
                     condition: resolved_condition,
+                    condition_text: condition_text.clone(),
                     location: location.clone(),
                 })
             }
 
             HirStatement::Ensure {
                 condition,
+                condition_text,
                 location,
             } => {
                 // `result` in ensure conditions is a synthetic variable that refers to the
@@ -2342,6 +2353,7 @@ impl NameResolver {
 
                 Ok(ResolvedHirStatement::Ensure {
                     condition: resolved_condition?,
+                    condition_text: condition_text.clone(),
                     location: location.clone(),
                 })
             }

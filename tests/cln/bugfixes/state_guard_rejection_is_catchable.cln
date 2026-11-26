@@ -1,0 +1,31 @@
+// Test: bugfixes/state_guard_rejection_is_catchable
+// Grammar: state_guard
+// Semantic: 23-state-management.md "State Guards" (STATE001), semantic-rules.md
+//   STATE002: a false guard rejects the update, the variable keeps its value and
+//   the error "State update rejected: <message>" is raised. It is an ordinary
+//   error, so onError catches it and the program goes on.
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   caught: State update rejected: Count cannot be negative
+//   0
+//   5
+//   caught: State update rejected: Count cannot be negative
+//   5
+
+start:
+	decrement() onError:
+		print("caught: " + error)
+	print(count)
+	count = 5
+	print(count)
+	count = -1 onError:
+		print("caught: " + error)
+	print(count)
+
+state:
+	integer count = 0
+		guard value >= 0 else "Count cannot be negative"
+
+functions:
+	void decrement()
+		count = count - 1

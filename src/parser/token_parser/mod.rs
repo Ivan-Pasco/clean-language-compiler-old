@@ -20,7 +20,7 @@ mod declarations;
 mod expressions;
 mod statements;
 
-use crate::ast::{Class, Program};
+use crate::ast::{Class, Expression, Program};
 use crate::error::CompilerError;
 use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
 use std::collections::{HashMap, HashSet};
@@ -622,6 +622,76 @@ impl TokenParser {
     /// Get the current token without consuming it
     pub(super) fn current(&self) -> &Token {
         &self.tokens[self.cursor.min(self.tokens.len() - 1)]
+    }
+
+    /// Parse an expression and also return it as written in the source: the
+    /// text of a contract condition (`require`, `ensure`, `always:`, state
+    /// `rules:`) that a contract violation message quotes.
+    pub(super) fn parse_expression_with_text(
+        &mut self,
+    ) -> Result<crate::ast::SourcedCondition<Expression>, CompilerError> {
+        let first = self.cursor.min(self.tokens.len() - 1);
+        let line = self.tokens[first].location.line;
+        let condition = self.parse_expression()?;
+        let text = self.source_text_of_tokens(first, self.cursor);
+        Ok(crate::ast::SourcedCondition {
+            condition,
+            text,
+            line,
+        })
+    }
+
+    /// The source text of the tokens `first..end`, without the layout and
+    /// comment tokens that trail them; a line break inside it (an expression
+    /// continued inside parentheses) is written as one space.
+    fn source_text_of_tokens(&self, first: usize, end: usize) -> String {
+        let is_layout = |kind: &TokenKind| {
+            matches!(
+                kind,
+                TokenKind::Newline
+                    | TokenKind::Indent(_)
+                    | TokenKind::Dedent(_)
+                    | TokenKind::Comment(_)
+                    | TokenKind::BlockComment(_)
+                    | TokenKind::Eof
+            )
+        };
+        let mut last = end.min(self.tokens.len());
+        while last > first && is_layout(&self.tokens[last - 1].kind) {
+            last -= 1;
+        }
+        if last <= first {
+            return String::new();
+        }
+        let last_token = &self.tokens[last - 1];
+        let span = match (
+            self.tokens[first].location.byte_start,
+            last_token.location.byte_start,
+        ) {
+            (Some(start), Some(last_start)) => {
+                // The token after the last one starts where the expression
+                // ends (plus the blank space before it).
+                let stop = self
+                    .tokens
+                    .get(last)
+                    .and_then(|t| t.location.byte_start)
+                    .unwrap_or(last_start + last_token.text.len());
+                self.source_content.get(start..stop.max(start))
+            }
+            _ => None,
+        };
+        let text = match span {
+            Some(text) => text.trim_end().to_string(),
+            None => self.tokens[first..last]
+                .iter()
+                .map(|t| t.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        };
+        text.split('\n')
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// Get the kind of the current token

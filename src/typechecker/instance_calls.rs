@@ -153,7 +153,7 @@ fn walk_program(program: &TastProgram, f: &mut dyn FnMut(&TastExpression) -> boo
             walk_expr(value, f);
         }
         for invariant in &class.invariants {
-            walk_expr(invariant, f);
+            walk_expr(&invariant.condition, f);
         }
     }
     if let Some(state) = &program.state {
@@ -164,7 +164,7 @@ fn walk_program(program: &TastProgram, f: &mut dyn FnMut(&TastExpression) -> boo
             walk_expr(&declaration.initializer, f);
         }
         for rule in &state.rules {
-            walk_expr(rule, f);
+            walk_expr(&rule.condition, f);
         }
     }
 }
@@ -226,7 +226,7 @@ fn walk_stmt(statement: &TastStatement, f: &mut dyn FnMut(&TastExpression) -> bo
     }
 }
 
-fn walk_expr(expression: &TastExpression, f: &mut dyn FnMut(&TastExpression) -> bool) {
+pub(crate) fn walk_expr(expression: &TastExpression, f: &mut dyn FnMut(&TastExpression) -> bool) {
     let visit_receiver = f(expression);
     match &expression.kind {
         TastExpressionKind::Literal { .. } | TastExpressionKind::Variable { .. } => {}

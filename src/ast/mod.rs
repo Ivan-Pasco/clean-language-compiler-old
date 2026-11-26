@@ -435,6 +435,9 @@ pub enum Statement {
     // Always checked at runtime (cannot be disabled)
     Require {
         condition: Expression,
+        /// The condition as written in the source, for the contract
+        /// violation message (`Expression: b != 0`).
+        condition_text: String,
         location: Option<SourceLocation>,
     },
 
@@ -444,6 +447,8 @@ pub enum Statement {
     // `--contracts` flag forces checks in release builds.
     Ensure {
         condition: Expression,
+        /// The condition as written in the source (see `Require`).
+        condition_text: String,
         location: Option<SourceLocation>,
     },
 
@@ -1064,7 +1069,7 @@ impl Class {
             }
         }
         for invariant in &mut self.invariants {
-            invariant.for_each_location_mut(f);
+            invariant.condition.for_each_location_mut(f);
         }
         if let Some(constructor) = &mut self.constructor {
             if let Some(location) = &mut constructor.location {
@@ -1460,12 +1465,24 @@ pub enum ResetTarget {
 // - rules: state invariants (configurable via build: block)
 // ============================================================================
 
+/// A contract condition together with its source text: what a contract
+/// violation message quotes (`Expression: b != 0`, `Rule: count >= 0`). The
+/// condition is an [`Expression`] in the AST and the matching expression type
+/// in each later stage.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct SourcedCondition<E> {
+    pub condition: E,
+    pub text: String,
+    /// The source line the condition is written on.
+    pub line: usize,
+}
+
 /// Rules block - declares state invariants that must always be true
 /// Must appear inside state: block, after all state declarations
 /// Requires build: block to configure when rules are checked
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct RulesBlock {
-    pub rules: Vec<Expression>,
+    pub rules: Vec<SourcedCondition<Expression>>,
     pub location: Option<SourceLocation>,
 }
 
@@ -1603,7 +1620,7 @@ pub struct Class {
     /// Class invariant expressions parsed from `always:` block.
     /// Each expression must evaluate to boolean.
     /// Checked after every public method call on the class (debug builds only).
-    pub invariants: Vec<Expression>,
+    pub invariants: Vec<SourcedCondition<Expression>>,
     /// Capabilities claimed via `can C1, C2, ...` clause on the class header.
     /// Nominal — each name must resolve to a `Capability` declaration.
     /// See Clean Language Specification §Capabilities and grammar.ebnf §6.4a.

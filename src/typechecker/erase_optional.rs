@@ -30,7 +30,7 @@ pub fn erase_optional(program: &mut TastProgram) {
             function_(method);
         }
         for invariant in &mut class.invariants {
-            expr(invariant);
+            expr(&mut invariant.condition);
         }
     }
     if let Some(start) = &mut program.start_function {
@@ -52,7 +52,7 @@ pub fn erase_optional(program: &mut TastProgram) {
             block(&mut computed.body);
         }
         for rule in &mut state.rules {
-            expr(rule);
+            expr(&mut rule.condition);
         }
     }
     for watch in &mut program.watch_blocks {

@@ -1,0 +1,16 @@
+// Test: bugfixes/required_assertion_on_none_reports_reference_error
+// Grammar: required_assertion
+// Semantic: 06-expressions.md "Required Assertion Operator", semantic-rules.md
+//   RUN004: `value!` on none halts with a reference error. It prints a message
+//   and stops the program; onError does not catch it. It used to stop with a
+//   bare `unreachable` and no message.
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   before
+//   Reference error: `!` was applied to none
+
+start:
+	string? e = none
+	print("before")
+	string s = e! onError "fallback"
+	print(s)

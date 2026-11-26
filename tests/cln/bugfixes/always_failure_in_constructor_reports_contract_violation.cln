@@ -1,0 +1,26 @@
+// Test: bugfixes/always_failure_in_constructor_reports_contract_violation
+// Grammar: class_body · always_block
+// Semantic: 11-contracts.md "always:": the invariant is checked when a
+//   constructor of the class finishes. A constructor that leaves it false
+//   prints the contract violation and stops the program.
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   ok
+//   Contract violation: always failed at Account:26
+//     Expression: balance >= 0
+
+start:
+	Account good = Account(5)
+	print("ok")
+	Account bad = Account(-5)
+	print("not reached")
+
+class Account
+	public:
+		integer balance
+
+	constructor(integer opening)
+		balance = opening
+
+	always:
+		balance >= 0

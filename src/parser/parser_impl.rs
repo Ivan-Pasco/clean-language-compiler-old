@@ -1089,8 +1089,14 @@ fn parse_rules_block(pair: Pair<Rule>) -> Result<crate::ast::RulesBlock, Compile
 
     for inner in pair.into_inner() {
         if inner.as_rule() == Rule::expression {
-            let expr = parse_expression(inner)?;
-            rules.push(expr);
+            let text = inner.as_str().trim().to_string();
+            let line = get_location(&inner).line;
+            let condition = parse_expression(inner)?;
+            rules.push(crate::ast::SourcedCondition {
+                condition,
+                text,
+                line,
+            });
         }
     }
 

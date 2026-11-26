@@ -1,0 +1,33 @@
+// Test: bugfixes/always_failure_reports_contract_violation
+// Grammar: class_body · always_block
+// Semantic: 11-contracts.md "always:", semantic-rules.md RUN005: an `always:`
+//   invariant is checked when a constructor or a method finishes, including a
+//   method with no return value. A false one prints the contract violation and
+//   stops the program.
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   3
+//   Contract violation: always failed at Account:28
+//     Expression: balance >= 0
+
+start:
+	Account acc = Account(5)
+	acc.take(2)
+	print(acc.balance)
+	acc.take(10)
+	print("not reached")
+
+class Account
+	public:
+		integer balance
+
+	constructor(integer opening)
+		balance = opening
+
+	always:
+		balance >= 0
+
+	functions:
+		public:
+			void take(integer amount)
+				balance = balance - amount

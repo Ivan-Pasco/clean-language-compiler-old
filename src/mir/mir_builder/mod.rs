@@ -37,7 +37,28 @@ mod optional;
 mod statements;
 mod types;
 
-use helpers::BranchArm;
+use helpers::{BranchArm, FatalReport};
+
+/// A condition checked when a function returns: an `ensure` of the function
+/// or an `always:` invariant of its class. `message` is the report printed
+/// when it is false (11-contracts.md "Error on violation").
+#[derive(Debug, Clone)]
+pub(super) struct ContractCheck {
+    pub(super) condition: TastExpression,
+    pub(super) message: String,
+}
+
+/// The report of a broken contract:
+/// `Contract violation: require failed at divide:2` and, on the next line,
+/// the condition as written.
+pub(super) fn contract_violation_message(
+    kind: &str,
+    owner: &str,
+    line: usize,
+    condition_text: &str,
+) -> String {
+    format!("Contract violation: {kind} failed at {owner}:{line}\n  Expression: {condition_text}")
+}
 
 /// MIR builder - converts TAST to MIR
 #[derive(Debug)]
@@ -66,7 +87,7 @@ pub struct MirBuilder {
 
     /// State invariant rules to be checked at operation boundaries
     /// These are evaluated at the end of start:, frame:, and handler functions
-    pub(super) state_rules: Vec<TastExpression>,
+    pub(super) state_rules: Vec<crate::ast::SourcedCondition<TastExpression>>,
 
     /// State guards - per-variable validation conditions
     /// Maps state variable name → (guard condition expression, value_symbol_id, error_message)
@@ -124,7 +145,7 @@ pub struct MirBuilder {
     /// Class always: condition expressions to be injected before every return in the
     /// currently-being-built class method.  Set by `build_class` before calling
     /// `build_function_with_class_context` and cleared afterwards.
-    pub(super) pending_class_invariants: Vec<TastExpression>,
+    pub(super) pending_class_invariants: Vec<ContractCheck>,
 
     /// When true, `always:` invariant checks are stripped from the output.
     /// Set via the `--release` CLI flag.  In release mode `pending_class_invariants`
@@ -187,7 +208,7 @@ pub(super) struct FunctionBuildContext {
     ///   4. The stored `result` value is returned.
     ///
     /// Only populated in debug / `--contracts` builds; empty in release builds.
-    pub(super) ensure_conditions: Vec<TastExpression>,
+    pub(super) ensure_conditions: Vec<ContractCheck>,
 
     /// `onError` regions being built in this function, innermost last.
     pub(super) error_regions: Vec<ErrorRegion>,

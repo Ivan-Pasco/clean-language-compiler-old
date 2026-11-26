@@ -1047,7 +1047,13 @@ impl HirBuilder {
         let invariants = class
             .invariants
             .iter()
-            .map(|expr| self.build_expression(expr))
+            .map(|invariant| -> Result<_, CompilerError> {
+                Ok(crate::ast::SourcedCondition {
+                    condition: self.build_expression(&invariant.condition)?,
+                    text: invariant.text.clone(),
+                    line: invariant.line,
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(HirClass {
@@ -2242,22 +2248,26 @@ impl HirBuilder {
 
             Statement::Require {
                 condition,
+                condition_text,
                 location,
             } => {
                 let hir_condition = self.build_expression(condition)?;
                 Ok(HirStatement::Require {
                     condition: hir_condition,
+                    condition_text: condition_text.clone(),
                     location: location.clone().unwrap_or_default(),
                 })
             }
 
             Statement::Ensure {
                 condition,
+                condition_text,
                 location,
             } => {
                 let hir_condition = self.build_expression(condition)?;
                 Ok(HirStatement::Ensure {
                     condition: hir_condition,
+                    condition_text: condition_text.clone(),
                     location: location.clone().unwrap_or_default(),
                 })
             }
@@ -2976,7 +2986,13 @@ impl HirBuilder {
             rules_block
                 .rules
                 .iter()
-                .map(|expr| self.build_expression(expr))
+                .map(|rule| -> Result<_, CompilerError> {
+                    Ok(crate::ast::SourcedCondition {
+                        condition: self.build_expression(&rule.condition)?,
+                        text: rule.text.clone(),
+                        line: rule.line,
+                    })
+                })
                 .collect::<Result<Vec<_>, _>>()?
         } else {
             Vec::new()

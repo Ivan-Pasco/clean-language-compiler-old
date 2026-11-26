@@ -460,7 +460,7 @@ impl MirBuilder {
                         };
                         if let Some((symbol_id, mir_type)) = state_target {
                             // Inject guard check before the assignment if this variable has a guard
-                            if let Some((guard_condition, _value_symbol_id, _error_msg)) =
+                            if let Some((guard_condition, _value_symbol_id, guard_message)) =
                                 self.state_guards.get(name).cloned()
                             {
                                 trace!(
@@ -479,46 +479,92 @@ impl MirBuilder {
                                 // Remove the guard scope
                                 context.scope_stack.pop();
 
-                                // Create trap and continue blocks
+                                // A false guard rejects the update: the variable keeps
+                                // its value and the error "State update rejected: <message>"
+                                // is raised (STATE002), which `onError` catches. Uncaught,
+                                // it stops the program like `error(...)`.
+                                let rejected = ValueId(context.function.next_value_id);
+                                context.function.next_value_id += 1;
+                                self.register_temp_local(
+                                    context,
+                                    rejected,
+                                    MirType::I32,
+                                    location.clone(),
+                                );
+                                self.add_instruction(
+                                    context,
+                                    MirInstruction {
+                                        dest: Some(rejected),
+                                        operation: MirOperation::UnaryOp {
+                                            op: MirUnaryOp::Not,
+                                            operand: MirOperand::Value(condition_value),
+                                        },
+                                        location: location.clone(),
+                                    },
+                                );
                                 let base_block_id = context.function.next_block_id;
-                                let trap_block_id = BasicBlockId(base_block_id);
-                                let continue_block_id = BasicBlockId(base_block_id + 1);
+                                let reject_block_id = BasicBlockId(base_block_id);
+                                let merge_block_id = BasicBlockId(base_block_id + 1);
                                 context.function.next_block_id = base_block_id + 2;
-
-                                context.function.blocks.insert(
-                                    trap_block_id,
-                                    MirBasicBlock {
-                                        id: trap_block_id,
-                                        label: Some(format!("guard_{}_trap", name)),
-                                        instructions: Vec::new(),
-                                        terminator: MirTerminator::Trap,
-                                        location: location.clone(),
-                                    },
-                                );
-
-                                context.function.blocks.insert(
-                                    continue_block_id,
-                                    MirBasicBlock {
-                                        id: continue_block_id,
-                                        label: Some(format!("guard_{}_continue", name)),
-                                        instructions: Vec::new(),
-                                        terminator: MirTerminator::Unreachable,
-                                        location: location.clone(),
-                                    },
-                                );
-
-                                // Branch: if guard is true → continue, else → trap
+                                for (id, label) in [
+                                    (reject_block_id, format!("guard_{}_reject", name)),
+                                    (merge_block_id, format!("guard_{}_continue", name)),
+                                ] {
+                                    context.function.blocks.insert(
+                                        id,
+                                        MirBasicBlock {
+                                            id,
+                                            label: Some(label),
+                                            instructions: Vec::new(),
+                                            terminator: MirTerminator::Unreachable,
+                                            location: location.clone(),
+                                        },
+                                    );
+                                }
+                                if let Some(branch_block) = self.current_block {
+                                    context
+                                        .function
+                                        .if_merges
+                                        .insert(branch_block, merge_block_id);
+                                }
                                 self.set_block_terminator(
                                     context,
                                     MirTerminator::Branch {
-                                        condition: MirOperand::Value(condition_value),
-                                        true_block: continue_block_id,
-                                        false_block: trap_block_id,
+                                        condition: MirOperand::Value(rejected),
+                                        true_block: reject_block_id,
+                                        false_block: merge_block_id,
+                                    },
+                                );
+                                self.current_block = Some(reject_block_id);
+                                let text = self.get_string_index(format!(
+                                    "State update rejected: {}",
+                                    guard_message
+                                ));
+                                self.add_instruction(
+                                    context,
+                                    MirInstruction {
+                                        dest: None,
+                                        operation: MirOperation::Call {
+                                            function: MirOperand::NamedFunction {
+                                                name: "__err_raise".to_string(),
+                                                symbol_id: SymbolId(0),
+                                            },
+                                            arguments: vec![MirOperand::Constant(
+                                                MirConstant::String(text),
+                                            )],
+                                        },
+                                        location: location.clone(),
+                                    },
+                                );
+                                self.set_block_terminator(
+                                    context,
+                                    MirTerminator::Jump {
+                                        target: merge_block_id,
                                     },
                                 );
 
-                                // Continue execution in the continue block
-                                self.current_block = Some(continue_block_id);
+                                // The update goes on only when the guard held.
+                                self.current_block = Some(merge_block_id);
                             }
 
                             trace!(
@@ -976,72 +1022,13 @@ impl MirBuilder {
                 // A `return` inside `onError` regions leaves them.
                 self.leave_error_regions(context, None, location);
 
-                // If the function has any `ensure` postconditions (or class invariants),
-                // inject the checks before the return:
-                //   1. Store the return value under the name `result` in the current scope.
-                //   2. Evaluate each ensure condition (which may reference `result`).
-                //   3. Trap if any condition is false.
-                //   4. Return the stored value.
-                if !context.ensure_conditions.is_empty() {
-                    if let Some(MirOperand::Value(result_value_id)) = return_value {
-                        // Bind `result` in current scope so ensure conditions can reference it
-                        if let Some(scope) = context.scope_stack.last_mut() {
-                            scope.insert("result".to_string(), result_value_id);
-                        }
-
-                        // Emit a check for each ensure condition
-                        let ensure_exprs: Vec<TastExpression> = context.ensure_conditions.clone();
-                        for ensure_expr in &ensure_exprs {
-                            let cond_value_id = self.build_expression(context, ensure_expr)?;
-
-                            // Allocate trap and continue blocks
-                            let base_block_id = context.function.next_block_id;
-                            let trap_block_id = BasicBlockId(base_block_id);
-                            let continue_block_id = BasicBlockId(base_block_id + 1);
-                            context.function.next_block_id = base_block_id + 2;
-
-                            context.function.blocks.insert(
-                                trap_block_id,
-                                MirBasicBlock {
-                                    id: trap_block_id,
-                                    label: Some("ensure_trap".to_string()),
-                                    instructions: Vec::new(),
-                                    terminator: MirTerminator::Trap,
-                                    location: location.clone(),
-                                },
-                            );
-
-                            context.function.blocks.insert(
-                                continue_block_id,
-                                MirBasicBlock {
-                                    id: continue_block_id,
-                                    label: Some("ensure_continue".to_string()),
-                                    instructions: Vec::new(),
-                                    terminator: MirTerminator::Unreachable,
-                                    location: location.clone(),
-                                },
-                            );
-
-                            // Branch: condition true → continue, false → trap
-                            self.set_block_terminator(
-                                context,
-                                MirTerminator::Branch {
-                                    condition: MirOperand::Value(cond_value_id),
-                                    true_block: continue_block_id,
-                                    false_block: trap_block_id,
-                                },
-                            );
-
-                            // Continue emitting in the continue block
-                            self.current_block = Some(continue_block_id);
-                        }
-
-                        // Remove `result` from scope so it doesn't leak
-                        if let Some(scope) = context.scope_stack.last_mut() {
-                            scope.remove("result");
-                        }
-                    }
-                }
+                // `ensure` postconditions and `always:` invariants are checked
+                // before the function returns (11-contracts.md).
+                let returned = match &return_value {
+                    Some(MirOperand::Value(id)) => Some(*id),
+                    _ => None,
+                };
+                self.emit_return_contract_checks(context, returned, location)?;
 
                 // Create return terminator
                 let terminator = MirTerminator::Return {
@@ -1055,8 +1042,20 @@ impl MirBuilder {
             // Ensure statement — collect postcondition for injection before returns.
             // The actual condition evaluation happens inside the Return handler above.
             // This statement simply records the condition for deferred checking.
-            TastStatement::Ensure { condition, .. } => {
-                context.ensure_conditions.push(condition.clone());
+            TastStatement::Ensure {
+                condition,
+                condition_text,
+                location,
+            } => {
+                context.ensure_conditions.push(ContractCheck {
+                    condition: condition.clone(),
+                    message: contract_violation_message(
+                        "ensure",
+                        &context.function.name,
+                        location.line,
+                        condition_text,
+                    ),
+                });
             }
 
             TastStatement::Print {
@@ -2138,58 +2137,26 @@ impl MirBuilder {
 
             TastStatement::Require {
                 condition,
+                condition_text,
                 location,
             } => {
-                // Generate code for require precondition
-                // require <condition> traps if condition is false
-
-                // Evaluate the condition
+                // `require <condition>`: checked when the function is called.
+                // A false condition prints the contract violation and stops
+                // (11-contracts.md "Error on violation"; RUN005).
                 let condition_value = self.build_expression(context, condition)?;
-
-                // Reserve block IDs for trap and continue blocks
-                let base_block_id = context.function.next_block_id;
-                let trap_block_id = BasicBlockId(base_block_id);
-                let continue_block_id = BasicBlockId(base_block_id + 1);
-                context.function.next_block_id = base_block_id + 2;
-
-                // Pre-insert blocks to reserve their IDs
-                // Trap block: executes unreachable if condition is false
-                context.function.blocks.insert(
-                    trap_block_id,
-                    MirBasicBlock {
-                        id: trap_block_id,
-                        label: Some("require_trap".to_string()),
-                        instructions: Vec::new(),
-                        terminator: MirTerminator::Trap, // WASM unreachable trap for contract violation
-                        location: location.clone(),
-                    },
+                let message = contract_violation_message(
+                    "require",
+                    &context.function.name,
+                    location.line,
+                    condition_text,
                 );
-
-                // Continue block: normal execution if condition is true
-                context.function.blocks.insert(
-                    continue_block_id,
-                    MirBasicBlock {
-                        id: continue_block_id,
-                        label: Some("require_continue".to_string()),
-                        instructions: Vec::new(),
-                        terminator: MirTerminator::Unreachable, // Will be replaced
-                        location: location.clone(),
-                    },
-                );
-
-                // Set terminator: branch based on condition
-                // If condition is true, continue; if false, trap
-                self.set_block_terminator(
+                self.emit_fatal_check(
                     context,
-                    MirTerminator::Branch {
-                        condition: MirOperand::Value(condition_value),
-                        true_block: continue_block_id, // Condition true -> continue
-                        false_block: trap_block_id,    // Condition false -> trap
-                    },
-                );
-
-                // Switch to continue block for subsequent statements
-                self.current_block = Some(continue_block_id);
+                    condition_value,
+                    "require",
+                    FatalReport::Text(message),
+                    location,
+                )?;
             }
         }
 

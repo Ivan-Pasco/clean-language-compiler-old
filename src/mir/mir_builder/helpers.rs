@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// What a failed check prints (`emit_fatal_check`).
+pub(super) enum FatalReport<'a> {
+    /// A message known at compile time.
+    Text(String),
+    /// A message built when the check fails: an expression of type string,
+    /// evaluated in the reporting block.
+    Expression(&'a TastExpression),
+}
+
 impl MirBuilder {
     /// Add instruction to current basic block
     pub(super) fn add_instruction(
@@ -128,6 +137,108 @@ impl MirBuilder {
                 .is_some_and(|local| matches!(local.local_type, MirType::F64 | MirType::F32)),
             _ => false,
         }
+    }
+
+    /// Check `condition_value`, a boolean the program needs to be true: when it
+    /// is false, print the report and stop (`__err_fatal`: a broken contract
+    /// or rule is not an error `onError` can catch). Lowers to a branch whose
+    /// false side is the reporting block; code goes on in the true side.
+    pub(super) fn emit_fatal_check(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        condition_value: ValueId,
+        label: &str,
+        report: FatalReport<'_>,
+        location: &SourceLocation,
+    ) -> Result<(), Vec<CompilerError>> {
+        let base_block_id = context.function.next_block_id;
+        let report_block_id = BasicBlockId(base_block_id);
+        let continue_block_id = BasicBlockId(base_block_id + 1);
+        context.function.next_block_id = base_block_id + 2;
+        for (id, suffix) in [(report_block_id, "trap"), (continue_block_id, "continue")] {
+            context.function.blocks.insert(
+                id,
+                MirBasicBlock {
+                    id,
+                    label: Some(format!("{label}_{suffix}")),
+                    instructions: Vec::new(),
+                    terminator: MirTerminator::Unreachable,
+                    location: location.clone(),
+                },
+            );
+        }
+        self.set_block_terminator(
+            context,
+            MirTerminator::Branch {
+                condition: MirOperand::Value(condition_value),
+                true_block: continue_block_id,
+                false_block: report_block_id,
+            },
+        );
+
+        // The report block: build the message, print it, stop.
+        self.current_block = Some(report_block_id);
+        let message = match report {
+            FatalReport::Text(text) => {
+                MirOperand::Constant(MirConstant::String(self.get_string_index(text)))
+            }
+            FatalReport::Expression(expression) => {
+                MirOperand::Value(self.build_expression(context, expression)?)
+            }
+        };
+        self.add_instruction(
+            context,
+            MirInstruction {
+                dest: None,
+                operation: MirOperation::Call {
+                    function: MirOperand::NamedFunction {
+                        name: "__err_fatal".to_string(),
+                        symbol_id: SymbolId(0),
+                    },
+                    arguments: vec![message],
+                },
+                location: location.clone(),
+            },
+        );
+        self.set_block_terminator(context, MirTerminator::Trap);
+
+        self.current_block = Some(continue_block_id);
+        Ok(())
+    }
+
+    /// The checks that run when a function returns: each `ensure` of the
+    /// function and each `always:` invariant of its class. `result` is the
+    /// returned value, which an `ensure` condition can name. A false
+    /// condition prints its contract violation and stops (RUN005).
+    pub(super) fn emit_return_contract_checks(
+        &mut self,
+        context: &mut FunctionBuildContext,
+        result: Option<ValueId>,
+        location: &SourceLocation,
+    ) -> Result<(), Vec<CompilerError>> {
+        if context.ensure_conditions.is_empty() {
+            return Ok(());
+        }
+        if let (Some(result_id), Some(scope)) = (result, context.scope_stack.last_mut()) {
+            scope.insert("result".to_string(), result_id);
+        }
+        let checks = context.ensure_conditions.clone();
+        for check in &checks {
+            let condition_value = self.build_expression(context, &check.condition)?;
+            self.emit_fatal_check(
+                context,
+                condition_value,
+                "ensure",
+                FatalReport::Text(check.message.clone()),
+                location,
+            )?;
+        }
+        if result.is_some() {
+            if let Some(scope) = context.scope_stack.last_mut() {
+                scope.remove("result");
+            }
+        }
+        Ok(())
     }
 
     /// Emit a call to an error-handling runtime function
@@ -326,7 +437,9 @@ impl MirBuilder {
     }
 
     /// Inject state rules checking at the end of operation boundary functions (start, frame)
-    /// Each rule must evaluate to true; if any is false, execution traps
+    /// Each rule must evaluate to true; if any is false, the program prints
+    /// the rule violation (23-state-management.md "Error on violation") and
+    /// stops.
     pub(super) fn inject_rules_checking(
         &mut self,
         context: &mut FunctionBuildContext,
@@ -334,60 +447,100 @@ impl MirBuilder {
         // Clone rules to avoid borrow issues
         let rules = self.state_rules.clone();
 
-        for (rule_idx, rule_expr) in rules.iter().enumerate() {
+        for (rule_idx, rule) in rules.iter().enumerate() {
             trace!(rule_index = rule_idx, "Building state rule check");
 
             // Build the rule expression - evaluate it to get a boolean
-            let condition_value = self.build_expression(context, rule_expr)?;
-
-            // Reserve block IDs for trap and continue blocks
-            let base_block_id = context.function.next_block_id;
-            let trap_block_id = BasicBlockId(base_block_id);
-            let continue_block_id = BasicBlockId(base_block_id + 1);
-            context.function.next_block_id = base_block_id + 2;
-
-            // Trap block: executes unreachable if rule is false
-            context.function.blocks.insert(
-                trap_block_id,
-                MirBasicBlock {
-                    id: trap_block_id,
-                    label: Some(format!("rule_{}_trap", rule_idx)),
-                    instructions: Vec::new(),
-                    terminator: MirTerminator::Trap, // WASM unreachable trap for contract violation
-                    location: rule_expr.location.clone(),
-                },
-            );
-
-            // Continue block: normal execution if rule is true
-            context.function.blocks.insert(
-                continue_block_id,
-                MirBasicBlock {
-                    id: continue_block_id,
-                    label: Some(format!("rule_{}_continue", rule_idx)),
-                    instructions: Vec::new(),
-                    terminator: MirTerminator::Unreachable, // Will be replaced
-                    location: rule_expr.location.clone(),
-                },
-            );
-
-            // Set terminator: branch based on condition
-            // If condition is true, continue; if false, trap
-            self.set_block_terminator(
+            let condition_value = self.build_expression(context, &rule.condition)?;
+            let report = self.rule_violation_report(rule);
+            self.emit_fatal_check(
                 context,
-                MirTerminator::Branch {
-                    condition: MirOperand::Value(condition_value),
-                    true_block: continue_block_id, // Condition true -> continue
-                    false_block: trap_block_id,    // Condition false -> trap
-                },
-            );
-
-            // Switch to continue block for next rule or function termination
-            self.current_block = Some(continue_block_id);
+                condition_value,
+                &format!("rule_{rule_idx}"),
+                FatalReport::Expression(&report),
+                &rule.condition.location,
+            )?;
         }
 
         trace!(rule_count = rules.len(), "State rules checking injected");
 
         Ok(())
+    }
+
+    /// The report of a state rule that is false, as a string expression:
+    ///
+    /// ```text
+    /// Rule violation: rule failed in state block
+    ///   Rule: balance >= 0
+    ///   Actual: balance = -50
+    /// ```
+    ///
+    /// `Actual` lists each state variable the rule reads, in order of first
+    /// use, with the value it has when the rule fails; a variable that is not
+    /// a number, boolean or text is left out.
+    fn rule_violation_report(
+        &self,
+        rule: &crate::ast::SourcedCondition<TastExpression>,
+    ) -> TastExpression {
+        use crate::typechecker::tast::BinaryOperator;
+        use crate::typechecker::tast::{TastExpressionKind, TastLiteral};
+
+        let location = rule.condition.location.clone();
+        let text = |value: String| TastExpression {
+            kind: TastExpressionKind::Literal {
+                value: TastLiteral::String(value),
+            },
+            expr_type: ConcreteType::String,
+            location: location.clone(),
+        };
+        let join = |left: TastExpression, right: TastExpression| TastExpression {
+            kind: TastExpressionKind::BinaryOperation {
+                operator: BinaryOperator::Add,
+                left: Box::new(left),
+                right: Box::new(right),
+            },
+            expr_type: ConcreteType::String,
+            location: location.clone(),
+        };
+
+        let mut variables: Vec<TastExpression> = Vec::new();
+        crate::typechecker::instance_calls::walk_expr(&rule.condition, &mut |expression| {
+            if let TastExpressionKind::Variable { name, .. } = &expression.kind {
+                let is_state = self.state_variables.contains_key(name);
+                let printable = matches!(
+                    expression.expr_type,
+                    ConcreteType::Integer
+                        | ConcreteType::IntegerSized { .. }
+                        | ConcreteType::Number
+                        | ConcreteType::Boolean
+                        | ConcreteType::String
+                );
+                let seen = variables.iter().any(|v| {
+                    matches!(&v.kind, TastExpressionKind::Variable { name: other, .. } if other == name)
+                });
+                if is_state && printable && !seen {
+                    variables.push(expression.clone());
+                }
+            }
+            true
+        });
+
+        let mut report = text(format!(
+            "Rule violation: rule failed in state block\n  Rule: {}",
+            rule.text
+        ));
+        for (index, variable) in variables.into_iter().enumerate() {
+            let TastExpressionKind::Variable { name, .. } = &variable.kind else {
+                continue;
+            };
+            let label = if index == 0 {
+                format!("\n  Actual: {name} = ")
+            } else {
+                format!(", {name} = ")
+            };
+            report = join(join(report, text(label)), variable);
+        }
+        report
     }
 
     /// Ensure function has proper termination
@@ -396,6 +549,17 @@ impl MirBuilder {
         context: &mut FunctionBuildContext,
         return_type: &ConcreteType,
     ) -> Result<(), Vec<CompilerError>> {
+        // Reaching the end of the body is a return too: the `ensure`
+        // conditions and `always:` invariants are checked before it.
+        let reaches_end = self
+            .current_block
+            .and_then(|id| context.function.blocks.get(&id))
+            .filter(|block| matches!(block.terminator, MirTerminator::Unreachable))
+            .map(|block| block.location.clone());
+        if let Some(location) = reaches_end {
+            self.emit_return_contract_checks(context, None, &location)?;
+        }
+
         if let Some(block_id) = self.current_block {
             if let Some(block) = context.function.blocks.get_mut(&block_id) {
                 // Check if block already has a terminator other than Unreachable

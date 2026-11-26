@@ -1564,6 +1564,9 @@ impl super::CodeGenerator {
     ///   one, the message is kept and the pending bit of
     ///   `ERROR_STATE_GLOBAL` is set; the caller unwinds to the region
     ///   (`MirOperation::ErrorCheck`).
+    /// - `__err_fatal(message)` — a broken contract, a rule violation or
+    ///   `value!` on none: the message is printed and execution traps, in
+    ///   or outside an `onError` region (these are not catchable).
     /// - `__err_take() -> boolean` — whether an error reached the region
     ///   that just ended; clears the pending bit.
     /// - `__err_message() -> string` — the last raised message: `error` in
@@ -1627,6 +1630,28 @@ impl super::CodeGenerator {
                 Instruction::I32Const(1),
                 Instruction::I32Or,
                 Instruction::GlobalSet(ERROR_STATE_GLOBAL),
+            ],
+        )?;
+
+        // A broken contract or a `value!` on none (RUN004, RUN005): the
+        // message is printed and execution stops whether or not an `onError`
+        // region is active, because `onError` does not catch these.
+        self.register_function(
+            "__err_fatal",
+            &[WasmType::I32],
+            None,
+            &[
+                Instruction::LocalGet(0),
+                Instruction::I32Const(4),
+                Instruction::I32Add,
+                Instruction::LocalGet(0),
+                Instruction::I32Load(MemArg {
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
+                }),
+                Instruction::Call(printl),
+                Instruction::Unreachable,
             ],
         )?;
 

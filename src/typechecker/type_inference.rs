@@ -2426,9 +2426,9 @@ impl<'a> TypeInference<'a> {
         // Type-check always: block expressions — each must be boolean.
         // Re-enter the class scope so field names are visible.
         self.current_class = Some(class.symbol_id);
-        let mut tast_invariants: Vec<TastExpression> = Vec::new();
-        for invariant_expr in &class.invariants {
-            match self.infer_expression(invariant_expr) {
+        let mut tast_invariants: Vec<crate::ast::SourcedCondition<TastExpression>> = Vec::new();
+        for invariant in &class.invariants {
+            match self.infer_expression(&invariant.condition) {
                 Ok(tast_expr) => {
                     if tast_expr.expr_type != ConcreteType::Boolean
                         && tast_expr.expr_type != ConcreteType::Unknown
@@ -2448,7 +2448,11 @@ impl<'a> TypeInference<'a> {
                             ),
                         });
                     }
-                    tast_invariants.push(tast_expr);
+                    tast_invariants.push(crate::ast::SourcedCondition {
+                        condition: tast_expr,
+                        text: invariant.text.clone(),
+                        line: invariant.line,
+                    });
                 }
                 Err(e) => return Err(e),
             }
@@ -2891,8 +2895,8 @@ impl<'a> TypeInference<'a> {
 
         // Type-check state invariant rules
         let mut tast_rules = Vec::new();
-        for rule_expr in &state_block.rules {
-            let rule = self.infer_expression(rule_expr)?;
+        for sourced_rule in &state_block.rules {
+            let rule = self.infer_expression(&sourced_rule.condition)?;
 
             // Each rule must be a boolean expression.
             // spec/semantic-rules.md STATE005: "The expression in a `rules:` block must have
@@ -2921,7 +2925,11 @@ impl<'a> TypeInference<'a> {
                 });
             }
 
-            tast_rules.push(rule);
+            tast_rules.push(crate::ast::SourcedCondition {
+                condition: rule,
+                text: sourced_rule.text.clone(),
+                line: sourced_rule.line,
+            });
         }
 
         Ok(TastStateBlock {
@@ -3759,6 +3767,7 @@ impl<'a> TypeInference<'a> {
 
             ResolvedHirStatement::Require {
                 condition,
+                condition_text,
                 location,
             } => {
                 let tast_condition = self.infer_expression(condition)?;
@@ -3777,12 +3786,14 @@ impl<'a> TypeInference<'a> {
 
                 Ok(TastStatement::Require {
                     condition: tast_condition,
+                    condition_text: condition_text.clone(),
                     location: location.clone(),
                 })
             }
 
             ResolvedHirStatement::Ensure {
                 condition,
+                condition_text,
                 location,
             } => {
                 // `result` in an ensure condition is a synthetic variable whose SymbolId
@@ -3814,6 +3825,7 @@ impl<'a> TypeInference<'a> {
 
                 Ok(TastStatement::Ensure {
                     condition: tast_condition,
+                    condition_text: condition_text.clone(),
                     location: location.clone(),
                 })
             }

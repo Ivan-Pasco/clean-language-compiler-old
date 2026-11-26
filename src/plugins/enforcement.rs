@@ -299,7 +299,7 @@ fn collect_call_names_from_class(class: &Class, names: &mut Vec<String>) {
         collect_call_names_from_statements(&constructor.body, names);
     }
     for invariant in &class.invariants {
-        collect_call_names_from_expr(invariant, names);
+        collect_call_names_from_expr(&invariant.condition, names);
     }
 }
 
@@ -324,7 +324,7 @@ fn collect_call_names_from_state(state: &StateBlock, names: &mut Vec<String>) {
     }
     if let Some(rules) = &state.rules {
         for rule in &rules.rules {
-            collect_call_names_from_expr(rule, names);
+            collect_call_names_from_expr(&rule.condition, names);
         }
     }
 }
