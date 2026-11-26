@@ -1,0 +1,28 @@
+// Test: bugfixes/math_round_halves_away_from_zero
+// Grammar: namespace_function_call
+// Semantic: stdlib-reference.md §math — math.round rounds halves away from zero
+//   (function-registry.toml math_round)
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   3
+//   1
+//   -3
+//   -1
+//   2
+//   -2
+//   0
+//   0
+//
+// Regression: math.round compiled to f64.nearest, which rounds ties to the
+// even neighbour (2.5 -> 2, 0.5 -> 0, -2.5 -> -2). The value just below .5
+// must still round down.
+
+start:
+	printl(math.round(2.5))
+	printl(math.round(0.5))
+	printl(math.round(-2.5))
+	printl(math.round(-0.5))
+	printl(math.round(1.6))
+	printl(math.round(-1.6))
+	printl(math.round(0.49999999999999994))
+	printl(math.round(0.4))

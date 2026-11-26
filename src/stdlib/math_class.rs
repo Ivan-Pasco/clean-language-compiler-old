@@ -156,12 +156,33 @@ impl MathClass {
         )?;
 
         // Math.round(number x) -> number
+        // Halves round away from zero (function-registry.toml math_round), so
+        // f64.nearest (ties to even) cannot be used. Result is
+        // trunc(x) + (|x - trunc(x)| >= 0.5 ? copysign(1, x) : 0). x - trunc(x)
+        // is exact, so 0.49999999999999994 still rounds down; NaN and the
+        // infinities pass through trunc unchanged.
         register_stdlib_function(
             codegen,
             "math.round",
             &[WasmType::F64],
             Some(WasmType::F64),
-            vec![Instruction::LocalGet(0), Instruction::F64Nearest],
+            vec![
+                Instruction::LocalGet(0),
+                Instruction::F64Trunc,
+                Instruction::F64Const(1.0),
+                Instruction::LocalGet(0),
+                Instruction::F64Copysign,
+                Instruction::F64Const(0.0),
+                Instruction::LocalGet(0),
+                Instruction::LocalGet(0),
+                Instruction::F64Trunc,
+                Instruction::F64Sub,
+                Instruction::F64Abs,
+                Instruction::F64Const(0.5),
+                Instruction::F64Ge,
+                Instruction::Select,
+                Instruction::F64Add,
+            ],
         )?;
 
         // Math.trunc(number x) -> number
