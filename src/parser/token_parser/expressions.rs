@@ -254,10 +254,21 @@ impl TokenParser {
                 ))
             }
             TokenKind::Plus => {
-                // Unary plus is a no-op, just skip it and parse the operand
-                let _op_token = self.bump();
-                self.skip_whitespace();
-                self.parse_unary()
+                // 06-expressions.md §Operator Precedence: there is no unary
+                // plus (grammar.ebnf unary_op is `not` and `-`); spec
+                // decision C4.
+                use crate::error::{ErrorContext, ErrorType};
+                Err(CompilerError::Syntax {
+                    context: Box::new(
+                        ErrorContext::new(
+                            "There is no unary plus: `+x` is not an expression".to_string(),
+                            Some("Write `x` instead of `+x`".to_string()),
+                            ErrorType::Syntax,
+                            Some(self.current().location.clone()),
+                        )
+                        .with_error_code("SYN002"),
+                    ),
+                })
             }
             _ => self.parse_postfix(),
         }

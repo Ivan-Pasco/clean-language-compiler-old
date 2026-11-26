@@ -1,0 +1,15 @@
+// Test: bugfixes/unary_plus_is_syntax_error
+// Grammar: unary_op
+// Semantic: SYN002 — there is no unary plus
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   SYN002
+//
+// Spec decision C4 (2026-11-26): `+x` is a syntax error; write `x`.
+// Regression: `+x` compiled and was silently treated as `x`.
+
+start:
+	integer x = 5
+	integer y = +x
+	print(y)
