@@ -1,0 +1,27 @@
+// Test: bugfixes/interpolation_string_operand_after_word_operator
+// Grammar: string_interpolation, logical_expression, null_coalescing_expression
+// Semantic: 06-expressions.md — an interpolation holds a full expression, so a
+//   quoted string may follow `is`, `and`, `or`, `not` and `default`.
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   a=true
+//   b=true
+//   c=true
+//   d=true
+//   e=n/a
+//   f=true
+//
+// Regression: the interpolation pre-scan never ended a word at whitespace, so
+// `name is` became the word "nameis" and the nested quote after it was taken
+// for the end of the outer string (SYN001).
+
+start:
+	string name = "Bob"
+	integer n = 3
+	string? s = null
+	printl("a={name == "Bob"}")
+	printl("b={name is "Bob"}")
+	printl("c={n > 2 and "x" == "x"}")
+	printl("d={n > 5 or "x" == "x"}")
+	printl("e={s default "n/a"}")
+	printl("f={not (name is "Al")}")

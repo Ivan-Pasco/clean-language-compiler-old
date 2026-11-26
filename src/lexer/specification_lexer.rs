@@ -642,6 +642,7 @@ impl<'a> SpecificationLexer<'a> {
         // closing quote of the outer string (`"a {b" + "c}"`).
         let mut prev = '{';
         let mut word = String::new();
+        let mut word_ended = true;
         while let Some(&c) = ahead.peek() {
             match c {
                 '{' => sub_depth += 1,
@@ -702,14 +703,20 @@ impl<'a> SpecificationLexer<'a> {
                 _ => {}
             }
             if c.is_alphanumeric() || c == '_' {
-                if !(prev.is_alphanumeric() || prev == '_') {
+                // Whitespace ends a word, so `name is` is the word "is", not
+                // "nameis".
+                if word_ended {
                     word.clear();
+                    word_ended = false;
                 }
                 word.push(c);
                 prev = c;
-            } else if !c.is_whitespace() {
+            } else if c.is_whitespace() {
+                word_ended = true;
+            } else {
                 prev = c;
                 word.clear();
+                word_ended = false;
             }
             ahead.next();
             scanned += 1;
