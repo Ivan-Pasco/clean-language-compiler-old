@@ -1,8 +1,8 @@
 use crate::codegen::CodeGenerator;
 use crate::error::CompilerError;
-use crate::stdlib::register_stdlib_function;
+use crate::stdlib::{register_stdlib_function, register_stdlib_function_with_locals};
 use crate::types::WasmType;
-use wasm_encoder::Instruction;
+use wasm_encoder::{BlockType, Instruction, MemArg};
 
 /// File class implementation for Clean Language
 /// Provides file I/O operations as static methods
@@ -20,7 +20,8 @@ impl FileClass {
     }
 
     /// Register only specification-compliant file functions
-    /// Clean Language specification defines only: file.read, file.write, file.append, file.exists, file.delete
+    /// Clean Language specification defines only: file.read, file.write, file.append,
+    /// file.exists, file.delete, file.lines
     ///
     /// Skipped when no `file_*` import is reachable — see HttpClass for the
     /// same pattern; both classes generate wrappers over Layer 2 host bridge
@@ -119,6 +120,24 @@ impl FileClass {
             )?;
         }
 
+        // file.lines is built from file.read and string.split, so it needs
+        // no host function of its own (no host provides a `file_lines`).
+        if codegen.get_file_import_index("file_read").is_some()
+            && codegen.get_function_index("file.read").is_some()
+            && codegen.get_function_index("string.split").is_some()
+        {
+            let body = self.generate_lines(codegen)?;
+            register_stdlib_function_with_locals(
+                codegen,
+                "file.lines",
+                &[WasmType::I32],
+                Some(WasmType::I32),
+                // 1: list, 2: line count, 3: index, 4: line, 5: line length
+                &[WasmType::I32; 5],
+                body,
+            )?;
+        }
+
         if codegen.get_file_import_index("file_write").is_some() {
             register_stdlib_function(
                 codegen,
@@ -164,6 +183,133 @@ impl FileClass {
         }
 
         Ok(())
+    }
+
+    /// `file.lines(path)`: the file's text split on `\n` into a
+    /// `list<string>`. A `\r` before a `\n` is dropped, and so is the empty
+    /// piece after the last `\n`, so `"a\nb\n"` is `["a", "b"]` and an empty
+    /// or unreadable file is an empty list.
+    fn generate_lines(
+        &self,
+        codegen: &mut CodeGenerator,
+    ) -> Result<Vec<Instruction<'static>>, CompilerError> {
+        let missing = |name: &str| {
+            CompilerError::codegen_error(
+                format!("Function '{name}' must be registered before 'file.lines'"),
+                None,
+                None,
+            )
+        };
+        let read = codegen
+            .get_function_index("file.read")
+            .ok_or_else(|| missing("file.read"))?;
+        let split = codegen
+            .get_function_index("string.split")
+            .ok_or_else(|| missing("string.split"))?;
+        let newline = codegen.get_or_create_string_offset("\n")?;
+
+        let word = |offset: u64| MemArg {
+            offset,
+            align: 2,
+            memory_index: 0,
+        };
+        // Address of element `index_local` of the list in local 1.
+        let element_address = |index: Vec<Instruction<'static>>| {
+            let mut code = vec![Instruction::LocalGet(1)];
+            code.extend(index);
+            code.extend([
+                Instruction::I32Const(2),
+                Instruction::I32Shl,
+                Instruction::I32Add,
+            ]);
+            code
+        };
+
+        let mut code = vec![
+            // list = string.split(file.read(path), "\n")
+            Instruction::LocalGet(0),
+            Instruction::Call(read),
+            Instruction::I32Const(newline as i32),
+            Instruction::Call(split),
+            Instruction::LocalSet(1),
+            // count = list.length
+            Instruction::LocalGet(1),
+            Instruction::I32Load(word(0)),
+            Instruction::LocalSet(2),
+            // for each line: drop a trailing '\r'
+            Instruction::I32Const(0),
+            Instruction::LocalSet(3),
+            Instruction::Block(BlockType::Empty),
+            Instruction::Loop(BlockType::Empty),
+            Instruction::LocalGet(3),
+            Instruction::LocalGet(2),
+            Instruction::I32GeU,
+            Instruction::BrIf(1),
+        ];
+        code.extend(element_address(vec![Instruction::LocalGet(3)]));
+        code.extend([
+            Instruction::I32Load(word(16)),
+            Instruction::LocalSet(4),
+            Instruction::LocalGet(4),
+            Instruction::I32Load(word(0)),
+            Instruction::LocalSet(5),
+            Instruction::LocalGet(5),
+            Instruction::I32Const(0),
+            Instruction::I32GtU,
+            Instruction::If(BlockType::Empty),
+            // last content byte is at line + 4 + length - 1
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(5),
+            Instruction::I32Add,
+            Instruction::I32Load8U(MemArg {
+                offset: 3,
+                align: 0,
+                memory_index: 0,
+            }),
+            Instruction::I32Const(13),
+            Instruction::I32Eq,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(4),
+            Instruction::LocalGet(5),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::I32Store(word(0)),
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(3),
+            Instruction::I32Const(1),
+            Instruction::I32Add,
+            Instruction::LocalSet(3),
+            Instruction::Br(0),
+            Instruction::End,
+            Instruction::End,
+            // the empty piece after a final '\n' is not a line
+            Instruction::LocalGet(2),
+            Instruction::I32Const(0),
+            Instruction::I32GtU,
+            Instruction::If(BlockType::Empty),
+        ]);
+        let last = vec![
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+        ];
+        code.extend(element_address(last));
+        code.extend([
+            Instruction::I32Load(word(16)),
+            Instruction::I32Load(word(0)),
+            Instruction::I32Eqz,
+            Instruction::If(BlockType::Empty),
+            Instruction::LocalGet(1),
+            Instruction::LocalGet(2),
+            Instruction::I32Const(1),
+            Instruction::I32Sub,
+            Instruction::I32Store(word(0)),
+            Instruction::End,
+            Instruction::End,
+            Instruction::LocalGet(1),
+        ]);
+        Ok(code)
     }
 
     fn generate_read(&self, codegen: &CodeGenerator) -> Result<Vec<Instruction>, CompilerError> {

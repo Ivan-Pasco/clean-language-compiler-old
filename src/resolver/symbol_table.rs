@@ -280,27 +280,11 @@ impl GlobalSymbolTable {
             ("print", vec![HirType::String], Some(HirType::Void)),
             ("println", vec![HirType::String], Some(HirType::Void)),
             ("printl", vec![HirType::String], Some(HirType::Void)),
-            ("console_log", vec![HirType::String], Some(HirType::Void)),
-            ("console_error", vec![HirType::String], Some(HirType::Void)),
-            ("console_warn", vec![HirType::String], Some(HirType::Void)),
-            ("abs", vec![HirType::Number], Some(HirType::Number)),
-            (
-                "max",
-                vec![HirType::Number, HirType::Number],
-                Some(HirType::Number),
-            ),
-            (
-                "min",
-                vec![HirType::Number, HirType::Number],
-                Some(HirType::Number),
-            ),
-            ("sqrt", vec![HirType::Number], Some(HirType::Number)),
-            (
-                "pow",
-                vec![HirType::Number, HirType::Number],
-                Some(HirType::Number),
-            ),
-            ("toString", vec![HirType::Integer], Some(HirType::String)),
+            // The math functions (`math.sqrt(x)`), `console_*` and global
+            // `toString(n)` are deliberately NOT built-ins: the standard
+            // library has one name for each (the `math.` namespace and the
+            // `.toString()` method), and no code generator implements a
+            // bare form. A bare call is a normal FUNC001.
             ("toInteger", vec![HirType::String], Some(HirType::Integer)),
             // error(message) — raise a runtime error. Returns string so it can appear
             // in expression context (e.g. test assertions: expr = error("msg")).
@@ -1074,6 +1058,11 @@ impl GlobalSymbolTable {
             ),
             ("file.exists", vec![HirType::String], HirType::Boolean),
             ("file.delete", vec![HirType::String], HirType::Boolean),
+            (
+                "file.lines",
+                vec![HirType::String],
+                HirType::List(Box::new(HirType::String)),
+            ),
             // fs.write_bytes(path, handle) — opaque-handle bytes writer.
             // Handle is an integer per spec/type-system.md §9b (pointer to
             // a [4-byte LE length][bytes] buffer). Returns integer error
@@ -1136,11 +1125,6 @@ impl GlobalSymbolTable {
             ("input_integer", vec![HirType::String], HirType::Integer),
             ("input_number", vec![HirType::String], HirType::Number),
             ("input_yesNo", vec![HirType::String], HirType::Boolean),
-            (
-                "input_integerWithDefault",
-                vec![HirType::String, HirType::Integer],
-                HirType::Integer,
-            ),
             // Validator namespace functions (stdlib-reference.md §15). Rules
             // and result handles are integers.
             ("validator.create", vec![], HirType::Integer),
@@ -1506,6 +1490,7 @@ impl GlobalSymbolTable {
                     "file.append",
                     "file.exists",
                     "file.delete",
+                    "file.lines",
                 ],
             ),
             ("fs", &["fs.write_bytes"]),
@@ -1529,7 +1514,6 @@ impl GlobalSymbolTable {
                     "input_integer",
                     "input_number",
                     "input_yesNo",
-                    "input_integerWithDefault",
                 ],
             ),
             (

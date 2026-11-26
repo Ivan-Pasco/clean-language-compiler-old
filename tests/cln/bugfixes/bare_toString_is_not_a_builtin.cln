@@ -1,0 +1,16 @@
+// Test: bugfixes/bare_toString_is_not_a_builtin
+// Semantic: SEM007 — `toString(...)` is not in the standard library; the spec form is the method `n.toString()`
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   SEM007
+//   Function 'toString' not found
+//
+// Regression (#51): the resolver registered a bare `toString` built-in that no
+// code generator implements. It passed type checking and then failed with an
+// internal "not found in function map" error without an error code (or, for
+// `toString`, compiled to an identity function that printed an empty string).
+
+start:
+	string s = toString(5)
+	print("[" + s + "]")

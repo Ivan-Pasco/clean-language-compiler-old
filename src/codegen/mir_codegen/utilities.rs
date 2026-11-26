@@ -467,6 +467,7 @@ impl MirCodeGenerator<'_> {
         // Math functions returning F64
         for name in &[
             "math.abs",
+            "number.abs",
             "math.sqrt",
             "math.sin",
             "math.cos",
@@ -518,6 +519,7 @@ impl MirCodeGenerator<'_> {
         // Functions returning I32
         for name in &[
             "math.abs.i32",
+            "integer.abs",
             "math.max.i32",
             "math.min.i32",
             "math.pow.i32",
@@ -2013,6 +2015,12 @@ impl MirCodeGenerator<'_> {
             ("crypto.hashPassword", "_crypto_hash_password"),
             ("crypto.verifyPassword", "_crypto_verify_password"),
             ("crypto.hmac", "_crypto_hmac"),
+            // file.lines reads the file with file_read, then splits it
+            ("file.lines", "file_read"),
+            ("file.lines", "string.split"),
+            // `x.abs()` is `math.abs(x)` (stdlib/math_class.rs)
+            ("integer.abs", "math.abs"),
+            ("number.abs", "math.abs"),
             // http response accessors: "http.responseCode" → "http_responseCode" (wrong)
             //                          actual import:        "http_get_response_code"
             ("http.responseCode", "http_get_response_code"),

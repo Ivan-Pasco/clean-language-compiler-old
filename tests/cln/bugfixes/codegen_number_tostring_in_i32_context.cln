@@ -1,6 +1,9 @@
 // Test: bugfixes/codegen_number_tostring_in_i32_context
 // Semantic: codegen must dispatch Number.toString to float_to_string, not int_to_string
 // Tracking: 322f839eb828
+// Fixed: was using the bare `toString(x)`, spec requires the method `x.toString()`
+//   (stdlib-reference.md §3 and spec 17 one-name rule; the bare form is a SEM007
+//   error since 0.33.190, issue #51). The number-to-string dispatch is unchanged.
 // Fixed in: compiler 0.33.77
 //
 // Regression pin for dashboard fingerprint 322f839eb828
@@ -32,5 +35,5 @@
 
 start:
 	number x = 3.14
-	string s = toString(x)
+	string s = x.toString()
 	print(s)

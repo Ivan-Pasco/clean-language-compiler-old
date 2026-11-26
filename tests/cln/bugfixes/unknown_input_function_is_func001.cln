@@ -1,0 +1,14 @@
+// Test: bugfixes/unknown_input_function_is_func001
+// Semantic: FUNC001 — an unknown function in the `input.` namespace is a normal error
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   FUNC001
+//   Function 'input.foo' not found
+//
+// Regression (#51): only the json/math/list/validator/string namespaces were
+// checked, so `input.foo(...)` failed in code generation with an internal
+// "not found in function map" error and no error code.
+
+start:
+	print(input.foo("x"))

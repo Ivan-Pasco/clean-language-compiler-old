@@ -4,6 +4,22 @@ use crate::stdlib::register_stdlib_function;
 use crate::types::WasmType;
 use wasm_encoder::Instruction;
 
+/// The `http.` client functions `HttpClass` provides that are not in the
+/// resolver's symbol table (client configuration and response accessors):
+/// the type checker accepts them by name.
+pub const HTTP_CLIENT_CODEGEN_FUNCTIONS: [&str; 10] = [
+    "patchJson",
+    "setUserAgent",
+    "setTimeout",
+    "setMaxRedirects",
+    "enableCookies",
+    "getResponseCode",
+    "responseCode",
+    "getResponseBody",
+    "responseBody",
+    "getResponseHeaders",
+];
+
 /// Http class implementation for Clean Language
 /// Provides HTTP client operations as static methods
 pub struct HttpClass;

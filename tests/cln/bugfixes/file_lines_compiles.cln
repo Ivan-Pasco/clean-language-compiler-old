@@ -1,0 +1,13 @@
+// Test: bugfixes/file_lines_compiles
+// Semantic: stdlib-reference.md §6 — `file.lines(path)` returns the file's lines as list<string>
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected compile: success
+//
+// Regression (#51): `file.lines` passed the type check, then failed code
+// generation with "Function 'file.lines' not found in function map".
+// (The test runner has no file host, so this only checks the compile.)
+
+start:
+	list<string> ls = file.lines("x.txt")
+	print(ls.length())

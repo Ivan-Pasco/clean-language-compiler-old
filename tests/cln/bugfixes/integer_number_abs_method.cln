@@ -1,0 +1,18 @@
+// Test: bugfixes/integer_number_abs_method
+// Semantic: type-system.md §12 Primitive Type Methods — `.abs()` on integer and number
+// Fixed in: compiler 0.33.190
+// Expected output:
+// 5
+// 2.5
+// 0
+//
+// Regression (#51): `x.abs()` passed the type check, then failed code
+// generation with "Function 'integer.abs' not found in function map".
+
+start:
+	integer x = -5
+	print(x.abs())
+	number y = -2.5
+	print(y.abs())
+	integer z = 0
+	print(z.abs())

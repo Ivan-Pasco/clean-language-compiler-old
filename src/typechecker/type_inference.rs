@@ -276,21 +276,6 @@ impl<'a> TypeInference<'a> {
             );
         }
 
-        // Find toString function
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("toString", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::Integer],
-                    return_type: Box::new(ConcreteType::String),
-                    is_background: false,
-                },
-            );
-        }
-
         // Find toInteger function
         if let Some(symbol_id) = self
             .symbol_table
@@ -301,21 +286,6 @@ impl<'a> TypeInference<'a> {
                 ConcreteType::Function {
                     parameters: vec![ConcreteType::String],
                     return_type: Box::new(ConcreteType::Integer),
-                    is_background: false,
-                },
-            );
-        }
-
-        // Find abs function
-        if let Some(symbol_id) = self
-            .symbol_table
-            .lookup_symbol_in_scope("abs", crate::resolver::ScopeId(0))
-        {
-            self.type_env.insert(
-                symbol_id,
-                ConcreteType::Function {
-                    parameters: vec![ConcreteType::Number],
-                    return_type: Box::new(ConcreteType::Number),
                     is_background: false,
                 },
             );
@@ -7271,10 +7241,34 @@ impl<'a> TypeInference<'a> {
                 // The `json.` namespace has exactly the functions above
                 // (stdlib-reference.md §8), `math.` / `list.` the ones above
                 // and in the symbol table, and `validator.` the ones in the
-                // symbol table (§15). Other built-in namespaces (`http.`,
-                // `input.`) also have functions the code generator provides
-                // by name.
-                if matches!(class_name, "json" | "math" | "list" | "validator") {
+                // symbol table (§15). `file.`, `http.` and `crypto.` have the
+                // functions in the symbol table (the built-ins and the ones
+                // the loaded plugins declare); `http.` and `input.`
+                // additionally have the functions the code generator
+                // provides by name. A name in none of those has no
+                // implementation anywhere.
+                let is_codegen_function = match class_name {
+                    "input" => matches!(
+                        method_name,
+                        "string" | "integer" | "float" | "number" | "yesNo" | "range"
+                    ),
+                    "http" => crate::stdlib::http_class::HTTP_CLIENT_CODEGEN_FUNCTIONS
+                        .contains(&method_name),
+                    _ => false,
+                };
+                if !is_codegen_function
+                    && matches!(
+                        class_name,
+                        "json"
+                            | "math"
+                            | "list"
+                            | "validator"
+                            | "file"
+                            | "http"
+                            | "crypto"
+                            | "input"
+                    )
+                {
                     let help = crate::stdlib::validator::unknown_function_help(&full_method_name)
                         .map(str::to_string)
                         .unwrap_or_else(|| {

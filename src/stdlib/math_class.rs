@@ -24,6 +24,20 @@ impl MathClass {
         // Core mathematical functions (basic arithmetic handled by operators)
         self.register_core_functions(codegen)?;
 
+        // `x.abs()` on a number or an integer (type-system.md §12) is the
+        // same function as `math.abs(x)`; the method form is lowered to
+        // `number.abs` / `integer.abs`.
+        for (method, function) in [("number.abs", "math.abs"), ("integer.abs", "math.abs.i32")] {
+            let index = codegen.get_function_index(function).ok_or_else(|| {
+                CompilerError::codegen_error(
+                    format!("'{function}' must be registered before '{method}'"),
+                    None,
+                    None,
+                )
+            })?;
+            codegen.add_function_alias(method, index);
+        }
+
         // Rounding and precision functions
         self.register_rounding_functions(codegen)?;
 
