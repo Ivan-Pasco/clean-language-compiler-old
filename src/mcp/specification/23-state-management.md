@@ -51,7 +51,6 @@ Use `rules:` inside a `state:` block to declare persistent invariants that must 
 
 **When rules are checked:**
 - After `start:` finishes executing
-- After each `frame:` finishes (if present)
 - After a handler finishes (e.g., HTTP endpoint, job handler, command handler)
 
 This approach is simple and predictable: rules are verified when your code hands control back to the runtime.
@@ -69,6 +68,11 @@ state:
 
 **Example:**
 ```clean
+start:
+    count = 50
+    count = count + 10
+    // rules checked here, after start: completes
+
 state:
     integer count = 0
     integer maxCount = 100
@@ -76,11 +80,6 @@ state:
     rules:
         count >= 0
         count <= maxCount
-
-start:
-    count = 50
-    count = count + 10
-    // rules checked here, after start: completes
 ```
 
 **Rules for `rules:`:**
@@ -146,6 +145,22 @@ functions:
         count = count + 1    // Triggers the watch block
 ```
 
+**When a watch runs.** A `watch` block runs after **every** assignment to a watched variable, even when the new value equals the old one. `reset` of the variable (or `reset state`) also runs it. There is no equality check:
+
+```clean
+start:
+    count = 0        // prints: changed 0
+    count = 1        // prints: changed 1
+    count = 1        // prints: changed 1 (same value, the watch still runs)
+    reset count      // prints: changed 5
+
+state:
+    integer count = 5
+
+watch count:
+    print("changed " + count.toString())
+```
+
 **Watching multiple state variables:**
 
 ```clean
@@ -162,6 +177,10 @@ watch (firstName, lastName):
 **Computed state is a read-only derived value that is automatically re-evaluated when its dependencies change.** Declare computed values inside a `computed:` block within `state:`.
 
 ```clean
+start:
+	setName("Alice", "Smith")
+	print(fullName)    // Prints: Alice Smith
+
 state:
 	string firstName = ""
 	string lastName = ""
@@ -174,17 +193,13 @@ functions:
 	void setName(string first, string last)
 		firstName = first
 		lastName = last
-
-start:
-	setName("Alice", "Smith")
-	print(fullName)    // Prints: Alice Smith
 ```
 
-**Rules (STATE003):**
-- Computed state is **read-only** — it cannot be assigned to directly.
+**Rules:**
+- Computed state is **read-only** — it cannot be assigned to directly (STATE004).
 - **Dependency tracking is performed by static analysis at compile time.** The compiler inspects which state variables appear in the computed block's body and registers them as dependencies.
 - External function calls inside a computed body are treated as opaque — their internal dependencies cannot be tracked. If a computed value depends on an external function, it is conservatively re-evaluated on every state change.
-- **Circular dependencies between computed state variables are a compile error** (SEM001 / STATE003). For example, if `fullName` references `displayName` and `displayName` references `fullName`, compilation fails.
+- **Circular dependencies between computed state variables are a compile error** (STATE003). For example, if `fullName` references `displayName` and `displayName` references `fullName`, compilation fails.
 - The return type of the computed body must match the declared type of the computed variable (STATE003).
 
 ### State Guards
@@ -231,11 +246,14 @@ functions:
 
 ### State with Background Tasks
 
-**Functions run with `background` can update state when they complete. Updates remain sequential, preventing race conditions.**
+**Functions run with `background` can update state when they run. Updates remain sequential, preventing race conditions.**
 
-Errors in background tasks do not propagate to the caller — always attach an `onError` handler when a function run with `background` updates state, so cleanup happens even on failure:
+Errors in background calls do not reach the code that started them — when a function run with `background` updates state, handle its errors inside the function, so cleanup happens even on failure:
 
 ```clean
+start:
+	background fetchUser(42)
+
 state:
 	string username = ""
 	boolean isLoggedIn = false
@@ -244,12 +262,17 @@ state:
 functions:
 	void fetchUser(integer id)
 		loading = true
-		any user = start api.getUser(id) onError:
+		string name = loadName(id) onError:
 			loading = false
-			error("Failed to fetch user")
-		username = user.name
+			return
+		username = name
 		isLoggedIn = true
 		loading = false
+
+	string loadName(integer id)
+		if id <= 0
+			error("Failed to fetch user")
+		return "user" + id.toString()
 ```
 
 ### State in Screens
@@ -288,6 +311,10 @@ screen Settings:
 ### Complete Example
 
 ```clean
+// Entry point
+start:
+    setUser("Alice")       // Triggers watch, prints "Hello, Alice"
+
 // App-level state
 state:
     string user = ""
@@ -310,8 +337,11 @@ functions:
         theme = newTheme
 
     void loadProfile()
-        any profile = start fetchProfile()
-        user = profile.name
+        later name = start fetchProfileName()
+        user = name            // fetchProfileName runs here
+
+    string fetchProfileName()
+        return "Bob"
 
 // Home screen with its own state
 screen Home:
@@ -332,10 +362,6 @@ screen Home:
 
         void clearHistory()
             reset recentItems
-
-// Entry point
-start:
-    setUser("Alice")       // Triggers watch, prints "Hello, Alice"
 ```
 
 ### Summary

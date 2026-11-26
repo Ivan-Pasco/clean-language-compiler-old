@@ -27,7 +27,7 @@ The specification is split into focused sections, one per file. Read in order fo
 17. [Method-Style Syntax](./17-method-style-syntax.md) — when to use method vs. namespace calls
 18. [Modules and Imports](./18-modules-and-imports.md) — file-level imports
 19. [Asynchronous Programming](./19-async.md) — start, later, background
-20. [Memory Management](./20-memory-management.md) — ARC-based memory model
+20. [Memory Management](./20-memory-management.md) — automatic memory: bump allocation, reclaimed by region
 21. [AI Integration](./21-ai-integration.md) — spec, intent, source: keywords
 22. [Plugin System](./22-plugin-system.md) — how plugins extend the language
 23. [State Management](./23-state-management.md) — state: blocks

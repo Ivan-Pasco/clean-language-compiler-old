@@ -24,6 +24,10 @@ From highest to lowest precedence:
 
 All binary operators at levels 5–11 are **left-associative**: `a - b - c` evaluates as `(a - b) - c`.
 
+There is no unary plus. `+x` is a syntax error (SYN002); write `x`.
+
+The conditional expression `if … then … else …` (see [Conditional Expression](#conditional-expression)) has no level of its own: its `else` part reaches to the end of the expression.
+
 ### Multi-Line Expressions
 
 **Rule**: If an expression spans multiple lines, it must be wrapped in parentheses.
@@ -105,6 +109,18 @@ a % b       // Modulo
 a ^ b       // Exponentiation
 ```
 
+**Joining text with `+`.** When either side of `+` is a `string`, `+` joins text. An `integer`, `number` or `boolean` on the other side is turned into its text first, exactly as `.toString()` would:
+
+```clean
+integer count = 5
+print("count=" + count)        // count=5
+print(count + " items")        // 5 items
+print("ready: " + true)        // ready: true
+print("x=" + 2.5)              // x=2.5
+```
+
+`-`, `*`, `/`, `%` and `^` never take text.
+
 ### Comparison Operators
 
 ```clean
@@ -117,6 +133,35 @@ a >= b      // Greater than or equal
 a is b      // Identity comparison
 a not b     // Negated identity comparison
 ```
+
+**Both sides must have compatible types.** `==`, `!=` and `is` compare values of the same type, or of types that convert to each other (`integer` and `number`, a class and its parent). A `T?` may be compared with a `T` and with `none`. Comparing unrelated types is a type error (SEM001), the same as for `<` and `>`:
+
+```clean
+integer n = 1
+string? name = none
+print(n == 1.0)          // ✅ true: integer and number compare as numbers
+print(name == none)      // ✅ a T? compared with none
+print(name == "Ada")     // ✅ a T? compared with a T
+print(true == 1)         // ❌ SEM001: boolean and integer are unrelated
+print("5" == 5)          // ❌ SEM001: string and integer are unrelated
+```
+
+### Conditional Expression
+
+`if condition then a else b` is an expression: it gives `a` when the condition is true and `b` otherwise. Both branches must have the same type.
+
+```clean
+integer x = 5
+string sign = if x > 0 then "positive" else "not positive"
+integer size = if x > 10 then 3 else if x > 4 then 2 else 1     // chained: 2
+```
+
+**Rules:**
+
+- The condition is a comparison (`x > 0`, `a == b`), a name or call that gives a `boolean`, or `not` followed by one. A condition with `and` or `or` must be in parentheses: `if (x > 0 and x < 10) then 1 else 0`.
+- `else` is required. Chain more cases with `else if … then …`.
+- The `else` part reaches to the end of the expression: `if c then 1 else 2 + 5` means `if c then 1 else (2 + 5)`. To use the result inside a larger expression, put the conditional in parentheses: `(if c then 1 else 2) + 5`.
+- Use the statement form of `if` (see [Control Flow](./13-control-flow.md)) when a branch needs more than one value.
 
 ### Logical Operators
 
@@ -139,6 +184,8 @@ value default fallback    // Returns value if not none, otherwise fallback
 ```
 
 **Important:** The `default` operator only checks for `none`, not for "falsy" values like `0`, `false`, or `""`.
+
+On a plain (non-optional) value, `default` is allowed and does nothing: the value is never none, so the result is the value itself. The same holds for `!`.
 
 ```clean
 // None-coalescing with 'default':
@@ -192,7 +239,7 @@ string name = maybeNone!    // Runtime check: halts if none; compile-time: treat
 string upper = getText()!.toUpperCase()    // getText() is checked for none before .toUpperCase()
 
 // Use when you're certain a value is not none
-integer count = list.find(item)!
+integer firstScore = scores.first()!
 ```
 
 **When to Use:**
@@ -236,6 +283,29 @@ functionName()                     // No arguments
 functionName(arg1)                 // Single argument
 functionName(arg1, arg2, arg3)     // Multiple arguments
 ```
+
+#### Named Arguments
+
+An argument may name the parameter it is for: `name: value`. Named arguments may come in any order.
+
+```clean
+start:
+	print(area(width: 3, height: 4))     // 12
+	print(area(height: 2, width: 5))     // 10
+	print(area(3, height: 6))            // 18: positional first, then named
+
+functions:
+	integer area(integer width, integer height)
+		return width * height
+```
+
+**Rules:**
+
+- The name must be one of the function's parameter names (FUNC008).
+- Each name appears at most once (FUNC009).
+- Positional arguments come before named ones (FUNC010): `area(3, height: 6)` is valid, `area(width: 3, 6)` is not.
+- Each parameter gets exactly one value, positional or named (FUNC011).
+- Named arguments work the same way for methods and constructors.
 
 ---
 

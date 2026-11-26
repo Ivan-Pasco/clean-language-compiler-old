@@ -65,6 +65,16 @@ iterate idx in 0 to 100 step 5
     print(idx)               // 0, 5, 10, …, 100
 ```
 
+A range `a to b` includes both ends: `1 to 3` runs 1, 2 and 3. You may write `inclusive` after the end value to say so explicitly; it does not change the loop. It comes before `step`:
+
+```clean
+iterate i in 1 to 3 inclusive
+    print(i)                 // 1, 2, 3 — same as 1 to 3
+
+iterate j in 1 to 7 inclusive step 3
+    print(j)                 // 1, 4, 7
+```
+
 #### While Loop
 
 The `while` loop executes a block of code repeatedly as long as a condition remains true. This is useful when you don't know in advance how many iterations are needed.

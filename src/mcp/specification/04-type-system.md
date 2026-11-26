@@ -12,7 +12,8 @@
 | `number`    | Decimal numbers | 64-bit | `3.14`, `6.02e23` |
 | `string`   | UTF-8 text, dynamically sized | — | `"Hello"` |
 | `void`     | No value / empty return type | 0 bytes | *(function return only)* |
-| `none`     | The type of the `none` value (alias `null`) | — | `none` |
+
+`none` (alias `null`) is the empty value. It is not a type name: `none n = none` is an error. Only a `T?` (or an `any`) holds it — see [Nullable Types](#nullable-types).
 
 **Type System Philosophy:**
 Clean Language uses platform-optimal defaults for all numeric types. The `integer` type is 32-bit and the `number` type is 64-bit, providing the best balance of performance and precision for most applications.
@@ -79,6 +80,14 @@ Integer arithmetic never wraps. On `integer` (32-bit), `integer:64`, `integer:32
 ```clean
 integer max = 2147483647
 integer next = max + 1 onError 0          // 0
+```
+
+Integer `/` and `%` by zero raise the catchable error `"division by zero"`, on every integer size. `number` division by zero does not raise: `1.0 / 0.0` is infinity.
+
+```clean
+integer zero = 0
+integer q = 10 / zero onError -1          // -1
+integer r = 10 % zero onError -1          // -1
 ```
 
 #### Number Precision Modifiers
@@ -373,24 +382,44 @@ Only a `T?` holds `none`. Every plain type rejects it — `integer`, `number`, `
 - **Members.** A `T?` may be none, so its fields, methods and elements are reached through `!`: `page!.title`, `names!.length()`, `scores!["a"]`.
 - **`!` (required assertion).** `value!` traps at runtime if `value` is none; otherwise returns the underlying `T`. Use to move from `T?` to `T`.
 - **`default` (none-coalescing).** `nullable default fallback` returns `nullable` when it is not none, otherwise `fallback`. The result has the type of `fallback` (without the `?` of `nullable`), so `integer n = maybe default 0` is a plain integer.
+- **`!` and `default` on a plain value.** A plain `T` is never none, so on it `!` and `default` are allowed and do nothing: with `integer x = 5`, `x!` is `5` and `x default 0` is `5`.
 - **Equality.** `x == none`, `x != none` and `x is none` are the canonical none tests. After a successful `x != none` check, `x` is not narrowed automatically — use `!` if you need the underlying `T`.
 - **Function parameters and return types.** Both may be declared nullable: `void greet(string? name)`, `Page? findPage(integer id)`. A function that returns `none` on some path declares a `T?` return type; `return none` from a plain `T` is an error.
-- **Class fields.** Fields typed `T?` default to `none` when uninitialized. Fields typed `T` MUST be initialized before use.
-- **`none` as a type.** `none` is also the type of the `none` value itself. It exists mainly so that `none` can be reasoned about in generic and inference contexts. It is assignable to every `T?`.
+- **Class fields.** A field declared without a value starts at its type's zero value: `0` for integers, `0.0` for numbers, `false` for `boolean`, `""` for `string`, an empty list for `list<T>`, and `none` for a `T?`. A field of any other type (`pairs`, `matrix`, a class type) has no zero value: give it a value — in its declaration or in the constructor — before you use it.
+- **`none` is not a type name.** You cannot write `none` where a type is expected. To hold none, declare a `T?`.
 
 **Examples:**
 
 ```clean
-functions:
-	Page? findPage(integer id)
-		return Database.first(Page)
-
 start:
 	Page? p = findPage(42)
 	if p != none
 		printl(p!.title)               // ! moves T? → T
 	string? subtitle = none
 	string shown = subtitle default "untitled"    // none-coalescing to a plain string
+
+functions:
+	Page? findPage(integer id)
+		return Database.first(Page)
+```
+
+**Class field zero values:**
+
+```clean
+start:
+	Note n = Note()
+	print(n.count)                  // 0
+	print(n.done)                   // false
+	print(n.tags.length())          // 0
+	print(n.due == none)            // true
+
+class Note
+	public:
+		string text
+		integer count
+		boolean done
+		list<string> tags
+		integer? due
 ```
 
 ### Type Annotations and Variable Declaration
@@ -412,9 +441,12 @@ string message
 ### Type Conversion
 
 **Implicit conversions (safe widening):**
-- `integer` → `number` (with precision loss warning)
+- `integer` → `number`
 - Same-sign, wider types → OK
 - `list<integer>` → `list<number>`: the elements are copied into a new list of numbers, so later changes to one list do not affect the other
+- Joining text: when one side of `+` is a `string`, an `integer`, `number` or `boolean` on the other side is turned into its text first: `"n=" + 5` is `"n=5"` (see [Expressions](./06-expressions.md#arithmetic-operators))
+
+No other conversion happens on its own. In particular, `==`, `!=` and `is` never convert: comparing values of unrelated types is an error (see [Comparison Operators](./06-expressions.md#comparison-operators)).
 
 **Explicit conversions (all require parentheses):**
 ```clean
@@ -431,6 +463,9 @@ number numFloat = num.toNumber()      // ✅ Works: converts 42 to 42.0
 integer piInt = 3.14.toInteger()      // ✅ Works: converts 3.14 to 3 (truncated)
 boolean flag = 0.toBoolean()          // ✅ Works: converts 0 to false
 boolean nonZero = 5.toBoolean()       // ✅ Works: converts 5 to true
+boolean fromNumber = 0.0.toBoolean()  // ✅ Works: 0.0 is false, any other number is true
+number one = true.toNumber()          // ✅ Works: true is 1.0, false is 0.0
+integer zero = false.toInteger()      // ✅ Works: true is 1, false is 0
 ```
 
 **Converting text to a boolean:** `text.toBoolean()` accepts only `"true"`, `"false"`, `"1"` and `"0"`; any other text raises a catchable error (`'yes' is not a valid boolean`).

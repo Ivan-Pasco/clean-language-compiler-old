@@ -16,6 +16,27 @@ A Clean Language file (`.cln`) is organized into top-level sections. Each sectio
 
 `import:` comes before every other core section. Auxiliary sections (`tests:`, `external:`, `watch:`, `screen:` and framework blocks) may appear anywhere.
 
+Three more top-level sections have their own placement rules:
+
+| Section | Purpose | Where it goes |
+|---------|---------|---------------|
+| `build:` | Compiler settings for this file (see [Build Configuration](./09-build-configuration.md)) | Before `start:`; at most one per file |
+| `source:` | Marks the file as generated from a specification (see [AI Integration](./21-ai-integration.md#the-source-block)) | At the top of the file |
+| `validate Name:` | Declares a named validator (see [Standard Library](./16-standard-library.md#validator)) | Anywhere, like an auxiliary section |
+
+```clean
+validate Signup:
+	name: string required length: 2 to 50
+
+start:
+	pairs<string, any> form = {"name": "Ada"}
+	Signup.check form:
+		ok: print("valid")
+		error: print("invalid")
+```
+
+A file that imports other modules runs their `start:` blocks first (see [Modules and Imports](./18-modules-and-imports.md#module-start-blocks)).
+
 ### Why Order Matters
 
 Clean Language enforces section order to keep code consistent and readable. When you open any `.cln` file, you always know where to find things.
@@ -57,7 +78,7 @@ functions:
 
 ### What Can't Go at the Top Level
 
-Only the sections listed above can appear at the top level. You can't write loose statements like assignments, function calls, or loops outside of a block.
+Only the sections listed in this chapter can appear at the top level. You can't write loose statements like assignments, function calls, or loops outside of a block.
 
 ```clean
 // ❌ Invalid - can't have loose code at top level

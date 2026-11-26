@@ -122,6 +122,7 @@ Emitted during HIR validation of class definitions.
 | CLASS006 | `AlwaysConditionNotBoolean` | Expression inside an `always:` invariant block is not boolean | Error | semantic-rules.md §CLASS006 |
 | CLASS007 | `ParameterShadowsField` | A method parameter, or a parameter of a constructor with a body, has the name of a field of its class | Error | semantic-rules.md §CLASS007 |
 | CLASS008 | `MethodNeedsObject` | `ClassName.method()` calls a method that uses the object it runs on (a field, or a method of the object that does) | Error | semantic-rules.md §CLASS008 |
+| CLASS009 | `MissingBaseCall` | A child constructor does not call `base(...)` and the parent's constructor needs arguments | Error | semantic-rules.md §CLASS009 |
 
 ### Index Access Codes (IDX)
 
@@ -170,6 +171,7 @@ Emitted by the plugin loader.
 | PLUGIN008 | `ConsumedHandleReuse` | A plugin passed a handle to a constructor that had already consumed it; typed-emission enforces single-ownership on every arena node | Error | typed-emission.md §14 |
 | PLUGIN009 | `PluginTrapDuringTypedEmission` | The plugin's `expand_block_typed` WASM function trapped (unreachable, OOB memory access, etc.) during a v3 typed-emission call | Error | typed-emission.md §14 |
 | PLUGIN010 | `LegacyV1PluginRejected` | A plugin built against the v1 string-emission ABI was refused by a compiler build mode that requires typed emission (e.g. strict mode or a future compiler release that drops v1 support) | Error | typed-emission.md §14 |
+| PLUGIN011 | `ExpansionCycle` | A plugin's expansion keeps producing framework blocks: a block was still being expanded after 8 nested passes, typically because the plugin re-emits its own block. The message names the plugin and the block (`plugin 'frame.x' keeps producing framework blocks: the 'name:' block was still being expanded after 8 passes (a plugin must not re-emit its own block)`) | Error | plugin-contract.md §5.5 |
 | PLUGIN012 | `ExpressionInStatementContext` | The user-authored source fragment passed to `_emit_stmt_from_source` parses as a valid expression but is not a valid statement in a statement context (e.g. bare `1 + 1`) | Error | typed-emission.md §3.11 |
 | PLUGIN013 | `InvalidBatchSpec` | The JSON spec passed to `_emit_helpers_batch` or `_emit_class_full` is malformed, exceeds the 100-function batch limit, contains an unknown statement or expression `kind`, or references an unresolvable type or identifier | Error | typed-emission.md §3.12, §3.13 |
 | PLUGIN014 | `StickyErrorTripped` | A typed-emission bridge failed (null / consumed / out-of-range handle, LP-string malformed, JSON invalid, etc.) and set the arena's sticky-error flag. All subsequent bridge calls short-circuit until the plugin queries `_ctx_had_error(ctx)` and returns, or calls `_ctx_clear_error(ctx)`. The auto-emitted diagnostic uses this code by default; plugins MAY override the (code, message) pair via `_ctx_set_error_context(ctx, code, message)` before the first failure to attribute the diagnostic to a plugin-authored code | Error | typed-emission.md §3.15 (Amendment 5) |
@@ -209,7 +211,8 @@ Not emitted by the compiler. Raised during WASM execution by the host runtime.
 | RUN002 | `StackError` | WASM stack overflow or underflow during execution | Runtime | semantic-rules.md §RUN002 |
 | RUN003 | `ArithmeticError` | Integer `/` or `%` by zero ("division by zero"), integer overflow ("integer overflow") or a value that does not fit its integer type ("<v> does not fit in <type>") at runtime — all catchable; number arithmetic follows IEEE (inf/NaN) | Runtime | semantic-rules.md §RUN003 |
 | RUN004 | `ReferenceError` | None or invalid reference accessed at runtime (raised by `expr!` on none) | Runtime | semantic-rules.md §RUN004 |
-| RUN005 | `AssertionFailure` | A `require` statement evaluated to false at runtime | Runtime | semantic-rules.md §RUN005 |
+| RUN005 | `AssertionFailure` | A contract was false at runtime: `require`, `ensure` or an `always:` invariant (not catchable) | Runtime | semantic-rules.md §RUN005 |
+| RUN006 | `IndexOutOfRange` | A list index is outside `0` to `length() - 1` ("index <i> is out of range for a list of length <n>") — catchable | Runtime | semantic-rules.md §RUN006 |
 
 ---
 
@@ -261,18 +264,19 @@ The following code numbers are reserved for future use. Do not assign them witho
 | SEM015–SEM099 | Reserved |
 | SCOPE006–SCOPE099 | Reserved |
 | FUNC013–FUNC099 | Reserved |
-| CLASS009–CLASS099 | Reserved |
+| CLASS010–CLASS099 | Reserved |
 | IDX005–IDX099 | Reserved |
 | STATE006–STATE099 | Reserved |
 | IMPORT005–IMPORT099 | Reserved |
 | PLUGIN003–PLUGIN005 | Reserved |
 | PLUGIN006–PLUGIN010 | Assigned — typed-emission ABI errors (sub-cycle 2, typed-emission.md §14) |
+| PLUGIN011 | Assigned — `ExpansionCycle` (plugin-contract.md §5.5) |
 | PLUGIN012 | Assigned — `ExpressionInStatementContext` (typed-emission.md §3.11) |
 | PLUGIN013 | Assigned — `InvalidBatchSpec` (typed-emission.md §3.12, §3.13; Amendment 3) |
 | PLUGIN014 | Assigned — `StickyErrorTripped` (typed-emission.md §3.15; Amendment 5) |
 | PLUGIN015 | Assigned — `InvalidExpressionSource` (typed-emission.md §3.16; Amendment 6) |
 | PLUGIN016 | Assigned — `StatementInExpressionContext` (typed-emission.md §3.16; Amendment 6) |
 | PLUGIN018 | Assigned — `AssembleTypedIllegalBridge` (assemble.md §6.2) |
-| PLUGIN011, PLUGIN017, PLUGIN019–PLUGIN099 | Reserved |
+| PLUGIN017, PLUGIN019–PLUGIN099 | Reserved |
 | COM007–COM099 | Reserved |
-| RUN006–RUN099 | Reserved |
+| RUN007–RUN099 | Reserved |

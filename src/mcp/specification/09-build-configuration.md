@@ -10,13 +10,13 @@ When using state `rules:`, a `build:` block is required in your source file befo
 build:
     rules = true
 
+start:
+    count = 5
+
 state:
     integer count = 0
     rules:
         count >= 0
-
-start:
-    count = 5
 ```
 
 **Rules options:**
@@ -32,13 +32,13 @@ start:
 build:
     rules = "development"
 
+start:
+    balance = 100
+
 state:
     integer balance = 0
     rules:
         balance >= 0
-
-start:
-    balance = 100
 ```
 
 **CLI behavior:**

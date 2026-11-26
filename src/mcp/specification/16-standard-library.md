@@ -10,6 +10,53 @@ Clean Language provides built-in utility classes for common operations. All stan
 - No `Utils` suffix in class names
 - Use `any` for generic operations
 
+### Console and Input
+
+Output and console input are covered in [Statements](./07-statements.md#print-statements); this is the full list.
+
+| Call | Returns | Description |
+|------|---------|-------------|
+| `print(value)` | void | Write the value's text and a newline |
+| `print(value) +` | void | Write the value's text with no newline; the next output continues the line |
+| `printl(value)` | void | Same as `print(value)` |
+| `print:` block | void | Each indented expression is printed on its own line |
+| `input(prompt)` | string | Ask for a line of text |
+| `input.string(prompt)` | string | Same as `input(prompt)` |
+| `input.integer(prompt)` | integer | Ask for a whole number; asks again on invalid input |
+| `input.number(prompt)` | number | Ask for a decimal number; asks again on invalid input |
+| `input.yesNo(prompt)` | boolean | Ask a yes/no question (`yes`/`no`, `y`/`n`, `true`/`false`, `1`/`0`) |
+
+```clean
+start:
+	print("Hello") +
+	print(" World")                 // Hello World
+	printl("done")
+	print:
+		"one"
+		"two"
+	integer age = input.integer("How old are you? ")
+```
+
+### Conversions
+
+Every value converts with a method. Text conversions are strict: invalid text raises an error that `onError` catches (see [Type System — Type Conversion](./04-type-system.md#type-conversion)).
+
+| Call | Works on | Returns |
+|------|----------|---------|
+| `value.toString()` | every type | string — the same text `print` writes |
+| `value.toInteger()` | string, number, boolean, `any` | integer |
+| `value.toNumber()` | string, integer, boolean, `any` | number |
+| `value.toBoolean()` | string, integer, number, `any` | boolean |
+
+```clean
+start:
+	integer n = "42".toInteger()                  // 42
+	integer bad = "12abc".toInteger() onError 0   // 0
+	number d = "2.5".toNumber()                   // 2.5
+	boolean yes = "true".toBoolean()              // true
+	string s = 3.5.toString()                     // "3.5"
+```
+
 ### Math Module
 
 The math module follows Clean Language's "one way to do things" principle. Basic arithmetic operations use operators, while advanced mathematical functions use methods.
@@ -107,7 +154,9 @@ The string module provides powerful text manipulation capabilities. Whether you'
 | `text.trimEnd()` | string | Remove trailing whitespace only |
 | `text.contains(search)` | boolean | Returns true if search string is found |
 | `text.indexOf(search)` | integer | First position of search, or -1 |
+| `text.indexOf(search, from)` | integer | First position of search at or after `from`, or -1 |
 | `text.lastIndexOf(search)` | integer | Last position of search, or -1 |
+| `text.lastIndexOf(search, from)` | integer | Last position of search at or before `from`, or -1 |
 | `text.startsWith(prefix)` | boolean | True if text begins with prefix |
 | `text.endsWith(suffix)` | boolean | True if text ends with suffix |
 | `text.replace(old, new)` | string | Replace all occurrences of old with new |
@@ -115,7 +164,10 @@ The string module provides powerful text manipulation capabilities. Whether you'
 | `text.charAt(index)` | string | Character at position (0-based) |
 | `text.charCodeAt(index)` | integer | Numeric code of character at position |
 | `text.isEmpty()` | boolean | True if length is zero |
+| `text.isNotEmpty()` | boolean | True if length is non-zero |
 | `text.isBlank()` | boolean | True if empty or only whitespace |
+| `text.repeat(count)` | string | The text repeated `count` times |
+| `text.matches(pattern)` | boolean | True if the whole text matches a named pattern: `"email"`, `"url"`, `"uuid"`, `"phone"`, `"date"`, `"integer"`, `"number"` or `"alphanumeric"`. The pattern must be a string literal; an unknown name is a compile error (SEM010) |
 | `text.padStart(length, pad)` | string | Pad beginning to reach length |
 | `text.padEnd(length, pad)` | string | Pad end to reach length |
 | `text.substring(start, end)` | string | Extract substring from start to end |
@@ -172,6 +224,11 @@ start:
     // Input validation
     string userField = "   "
     boolean isValid = !userField.isBlank()         // false
+
+    // Repeating and pattern checks
+    string line = "-".repeat(10)                  // "----------"
+    boolean isEmail = "ada@example.com".matches("email")  // true
+    integer nextL = "hello".indexOf("l", 3)       // 3
 ```
 
 ### List Module
@@ -199,10 +256,21 @@ The list module provides powerful data collection capabilities. Whether you're m
 | `items.isNotEmpty()` | boolean | True if length is non-zero |
 | `items.first()` | element type | First element |
 | `items.last()` | element type | Last element |
+| `items.peek()` | element type | The element the list would give up next, without removing it (see List Behaviors in [Type System](./04-type-system.md#list-behaviors--collection-behavior-modifiers)) |
+| `items.push(item)` | void | Add item to the end (same as `add`) |
+| `items.pop()` | element type | Remove and return the last element (same as `removeLast`) |
+| `items.concat(other)` | list | New list: this list followed by `other` |
 | `items.map(fn)` | list | New list with fn applied to each element |
 | `items.filter(fn)` | list | New list with only elements where fn is true |
 | `items.reduce(fn, init)` | any | Combine all elements into one value |
 | `items.forEach(fn)` | void | Execute fn for each element |
+
+**Index errors.** `items[i]`, `items[i] = v`, `items.get(i)`, `items.set(i, v)` and `items.remove(i)` need `0 <= i < items.length()`. Any other index raises the catchable error `index <i> is out of range for a list of length <n>` (see [Error Handling](./14-error-handling.md#errors-raised-by-the-language)):
+
+```clean
+list<integer> xs = [1, 2, 3]
+integer e = xs[5] onError -1        // -1
+```
 
 **Namespace-style calls (utility functions on the `list` module):**
 
@@ -263,6 +331,31 @@ start:
     boolean empty = [].isEmpty()                           // true
     string firstWord = words.first()                       // "hello"
     string lastWord = words.last()                         // "Clean"
+```
+
+### Pairs Module
+
+A `pairs<K, V>` value maps keys to values (see [Pairs Literals](./03-lexical-structure.md#pairs-literals)).
+
+| Call | Returns | Description |
+|------|---------|-------------|
+| `p[key]` | value type | Value stored under `key` |
+| `p[key] = value` | — | Store `value` under `key` |
+| `p.get(key)` | value type | Same as `p[key]` |
+| `p.set(key, value)` | void | Same as `p[key] = value` |
+| `p.has(key)` | boolean | True if `key` is present |
+| `p.size()` | integer | Number of entries |
+| `p.toString()` | string | Compact JSON text, keys in insertion order |
+
+```clean
+start:
+	pairs<string, integer> ages = {"ada": 36, "bo": 7}
+	ages.set("cy", 12)
+	ages["di"] = 40
+	print(ages.get("ada"))        // 36
+	print(ages.has("zed"))        // false
+	print(ages.size())            // 4
+	print(ages)                   // {"ada":36,"bo":7,"cy":12,"di":40}
 ```
 
 ### File Module
@@ -438,6 +531,21 @@ start:
 | `json.dataToText(data)` | string | Compact JSON string from a Clean value |
 | `json.prettyDataToText(data)` | string | Formatted, human-readable JSON string |
 
+#### Shorter Names and Paths
+
+| Call | Returns | Description |
+|------|---------|-------------|
+| `json.encode(data)` | string | Same as `json.dataToText(data)` |
+| `json.decode(text)` | any | Same as `json.textToData(text)` |
+| `json.get(data, path)` | any | Value at a dot-separated path; a step is an object key or an array index: `json.get(d, "scores.1")` |
+
+```clean
+start:
+	any data = json.decode("{\"scores\": [85, 92]}")
+	print(json.get(data, "scores.1"))      // 92
+	print(json.encode(data))               // {"scores":[85,92]}
+```
+
 #### Usage Examples
 
 ```clean
@@ -602,6 +710,47 @@ start:
     // Use default operator for fallback values
     any result = json.tryTextToData(maybeJson) default {}
 ```
+
+### Validator
+
+Validators check incoming data (form fields, request bodies) against rules. The usual way is a top-level `validate Name:` block with one line per field; it can appear anywhere in the file (see [File Structure](./08-file-structure.md)):
+
+```clean
+validate Signup:
+	name: string required length: 2 to 50
+
+start:
+	pairs<string, any> form = {"name": "Ada"}
+	Signup.check form:
+		ok: print("valid")
+		error: print("invalid")
+```
+
+The same checks are available as `validator.` functions for code that builds rules step by step:
+
+| Call | Returns | Description |
+|------|---------|-------------|
+| `validator.create()` | validator | A new, empty validator |
+| `validator.field(v, name)` | validator | Start the rules for field `name` |
+| `validator.required(v)`, `validator.optional(v)` | validator | The current field must be present / may be missing |
+| `validator.minLength(v, n)`, `validator.maxLength(v, n)` | validator | Length limits for the current field |
+| `validator.range(v, lo, hi)` | validator | Number range for the current field |
+| `validator.match(v, pattern)` | validator | The current field matches a named pattern |
+| `validator.run(v, input)` | result | Check a `pairs` input against every field |
+| `validator.isOk(r)`, `validator.isError(r)` | boolean | Whether the check passed |
+| `validator.getFirstError(r)` | string | The first error message |
+| `validator.getErrors(r)` | list\<string\> | Every error message |
+
+```clean
+start:
+	any v = validator.create()
+	v = validator.minLength(validator.required(validator.field(v, "name")), 3)
+	any r = validator.run(v, {"name": "Al"})
+	print(validator.isOk(r))              // false
+	print(validator.getFirstError(r))     // name must be at least 3 characters
+```
+
+The full list of rules and result functions is in `foundation/spec/stdlib-reference.md` §15.
 
 ---
 

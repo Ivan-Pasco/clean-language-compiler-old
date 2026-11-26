@@ -3,11 +3,11 @@
 > **Part of the Clean Language Specification.** See [README](./README.md) for the full index.
 
 
-Clean uses `start`, `later`, and `background` for simple background execution:
-- `start` begins a task in the background
-- `later` declares that the result will be available in the future
-- The value blocks only when accessed
-- Use `background` to run a task without keeping the result
+Clean uses `later` and `background` to put work off until later:
+- `later name = start f()` defers the call `f()` and binds its future result to `name`
+- The call runs the first time `name` is read
+- `background f()` defers the call `f()` and keeps no result
+- A program runs one task at a time: deferred work runs *later*, never *at the same time* as other code
 
 ### Two Uses of the `start` Keyword
 
@@ -16,49 +16,59 @@ The `start` keyword has two distinct meanings in Clean Language:
 | Context | Syntax | Purpose |
 |---------|--------|---------|
 | Entry point | `start:` | Block that marks where your program begins (top-level only) |
-| Background expression | `start functionCall()` | Starts a function running in the background |
+| Deferred call | `later name = start functionCall()` | Marks the call that `later` puts off |
 
 These are completely separate features that happen to share a keyword. The compiler tells them apart by context.
 
 ### Start Expression
 
-Use `start` before a function call to run it in the background:
+`start` marks the call in a `later` declaration:
 
 ```clean
 start:
-    // Using 'start' for background — different from the entry block!
     later data = start fetchData("url")
     print("Working...")
-    print(data)          // blocks here only
+    print(data)          // fetchData runs here, the first time data is read
 
-    background logAction("login")    // runs and ignores result
+    background logAction("login")    // runs after start: finishes; result ignored
 ```
 
-- `later name = start f()` — begins `f()` in the background and binds a future of its result to `name`. The current thread continues.
-- Reading `name` blocks until the background task completes.
-- `background f()` runs `f()` and discards the result — no future is created.
+- `later name = start f()` — puts off `f()` and binds a future of its result to `name`. The code after it keeps running.
+- Reading `name` runs `f()` if it has not run yet, then gives its result.
+- `background f()` puts off `f()` and discards the result — no future is created.
+
+Only `later` and `background` put work off. Anywhere else, `start f()` is just the call `f()`: it runs right away, where it stands. `integer n = start double(4)` is the same as `integer n = double(4)`.
 
 ### Background Task Error Handling
 
-**Errors in background tasks do not propagate to the calling context.** If a background task throws, it fails silently unless an `onError` handler is attached to the expression that started it.
+**Errors in deferred calls do not reach the code that deferred them.** If a deferred call raises an error, that call stops and the rest of the program goes on. Handle the error inside the function, or give a `later` call a fallback value with `onError` (see [When the Work Happens](#when-the-work-happens)).
 
-The `loading` pattern — setting a flag before an async operation and clearing it after — should always be wrapped in `onError` to ensure cleanup happens even on failure:
+The `loading` pattern — setting a flag before a slow operation and clearing it after — must clear the flag on failure too. Handle the error where it can happen:
 
 ```clean
-functions:
-	void fetchUser(integer id)
-		loading = true
-		any user = start api.getUser(id) onError:
-			loading = false
-			error("Failed to fetch user")
-		username = user.name
-		loading = false
-
 start:
-	background fetchUser(42)
+    background fetchUser(42)
+
+state:
+    string username = ""
+    boolean loading = false
+
+functions:
+    void fetchUser(integer id)
+        loading = true
+        string name = loadName(id) onError:
+            loading = false          // cleanup runs even when loadName fails
+            return
+        username = name
+        loading = false
+
+    string loadName(integer id)
+        if id <= 0
+            error("Failed to fetch user")
+        return "user" + id.toString()
 ```
 
-Without the `onError` block, if `api.getUser(id)` fails, `loading` would stay `true` and the UI would be stuck in a loading state.
+Without the `onError` block, if `loadName(id)` fails, `loading` would stay `true` and the UI would be stuck in a loading state.
 
 ### When the Work Happens
 
@@ -98,10 +108,11 @@ failed reads the zero value of its type (`0`, `0.0`, `false`, `""`, or
 
 ### Semantics Summary
 
-- A `later` binding is a future — a placeholder for a value that will exist later.
-- Accessing a `later` binding blocks the current task until the underlying computation finishes.
-- Background tasks run on the runtime's scheduler and are independent of the calling task.
-- Errors in background tasks do not propagate — attach `onError` at the point where `start` is used, not at the read site.
+- A `later` binding is a future — a placeholder for the result of a call that has not run yet.
+- Reading a `later` binding runs its call if it has not run yet; every read gets the same value.
+- Calls not yet run (`background` calls and unread `later` calls) run in order after the current entry point returns.
+- A program runs one task at a time. Deferred calls run later, not in parallel, so they never change state at the same time as other code.
+- An error in a deferred call stops that call only. It does not reach the code that deferred it: handle it inside the function, or attach `onError` to the call in the `later` declaration.
 
 ---
 

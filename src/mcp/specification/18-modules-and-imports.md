@@ -62,6 +62,17 @@ import:
     Json.decode as jd   // symbol alias
 ```
 
+**A module alias adds a name; it does not hide the short names.** After `import: utils as U`, both `U.add(1, 2)` and `add(1, 2)` call the same public function:
+
+```clean
+import:
+    utils as U
+
+start:
+    print(U.add(1, 2))     // 3
+    print(add(3, 4))       // 7: the short name still works
+```
+
 #### File Path Imports
 
 In addition to module-name imports, Clean Language supports **direct file path imports** using string literals. This is useful for importing files from specific locations without relying on module resolution.
@@ -133,6 +144,38 @@ File path imports can be chained - imported files can import other files:
 
 - **Module imports** (`import: utils`): For project modules in standard locations
 - **File path imports** (`import "path/file.cln"`): For explicit paths, external files, or non-standard project structures
+
+### Module `start:` Blocks
+
+A module may have its own `start:` block. When the program runs, the `start:` blocks of imported modules run first, in dependency order (see [Dependency Graph](#dependency-graph)), and the entry file's `start:` runs last:
+
+```clean
+// file: utils.cln
+start:
+    print("utils start")
+
+functions:
+    public:
+        integer add(integer a, integer b)
+            return a + b
+```
+
+```clean
+// file: main.cln
+import:
+    utils
+
+start:
+    print("main start")
+    print(add(1, 2))
+```
+
+Output:
+```
+utils start
+main start
+3
+```
 
 ### Multi-File Compilation
 

@@ -18,27 +18,14 @@ These are the codes this file defines a rule for, by category. `error-codes.md` 
 | SEM001–SEM014 | Semantic (type, scope, access, capabilities) | HIR validation, resolver, type checker |
 | SCOPE001–SCOPE005 | Scope rules | Resolver |
 | FUNC001–FUNC012 | Function rules | HIR validation, resolver |
-| CLASS001–CLASS008 | Class rules | HIR validation |
+| CLASS001–CLASS009 | Class rules | HIR validation |
 | IDX001–IDX004 | Index access rules | Type checker |
 | STATE001–STATE005 | State rules | Type checker, runtime |
 | IMPORT001–IMPORT004 | Import rules | Module resolver |
 | PLUGIN001, PLUGIN002, PLUGIN018 | Plugin rules | Plugin loader, plugin expansion |
 | COM001–COM006 | Compilation (codegen, module) | Code generation |
 | BLD-LAYOUT, BLD-MANIFEST | Build (multi-file) | Project layout discovery |
-| RUN001–RUN005 | Runtime (execution) | WASM execution |
-
--------|----------|-------|
-| SYN001–SYN008 | Syntax (parser) | Parsing |
-| SEM001–SEM010 | Semantic (type, scope, access) | HIR validation, resolver, type checker |
-| SCOPE001–SCOPE005 | Scope rules | Resolver |
-| FUNC001–FUNC011 | Function rules | HIR validation |
-| CLASS001–CLASS006 | Class rules | HIR validation |
-| IDX001–IDX004 | Index access rules | Type checker |
-| STATE001–STATE005 | State rules | HIR validation, runtime |
-| IMPORT001–IMPORT004 | Import rules | Module resolver |
-| PLUGIN001–PLUGIN002 | Plugin rules | Plugin loader |
-| COM001–COM006 | Compilation (codegen, module) | Code generation |
-| RUN001–RUN005 | Runtime (execution) | WASM execution |
+| RUN001–RUN006 | Runtime (execution) | WASM execution |
 
 ---
 
@@ -49,6 +36,8 @@ The lexer encountered a character that is not valid in any context.
 
 ### SYN002 — Unexpected Token
 A token appears where the grammar does not allow it.
+
+It also covers a `+` in front of a value: Clean has no unary plus (`integer a = +5` is SYN002; write `5`).
 
 It also covers `this`, which is a reserved word with no use: `this.x`, `this.m()` and a bare `this` are SYN002 — `` "`this` is not used in Clean: refer to the field or method by its name (`count`, `clear()`)" ``.
 
@@ -80,7 +69,11 @@ import:  →  plugins:  →  start:  →  state:  →  class / can  →  functio
 
 Each section is optional, but when present they must follow this order; `import:`
 comes before every other core section.  Auxiliary sections (`tests:`, `external:`, `watch:`, `screen:`,
-framework blocks) may appear at any position and are not subject to this rule.
+`validate Name:`, framework blocks) may appear at any position and are not subject to this rule.
+
+Two more sections have fixed places (specification §08 "File Structure"): `build:`
+comes before `start:` and appears at most once per file (§09), and `source:` comes at
+the top of the file (§21).
 
 **Message:** `"'{section}' section is out of order — it must appear before '{other}'"`
 
@@ -196,6 +189,7 @@ The type of an expression does not match what the context requires.
 - `none` (alias `null`) stored into a plain type: only a `T?` or an `any` holds none (type-system.md §8) — at all the sites above and as an element of a list or pairs literal stored into a typed list or pairs
 - A `T?` used as a `T`: stored into a plain `T`, or its field read, method called or element indexed without `!` / `default`
 - The result of a call to a `void` function used as a value ("returns nothing (void)")
+- The two sides of `==`, `!=` or `is` have unrelated types — the same check as for `<`, `>`, `<=`, `>=`. Compatible pairs are: the same type; types with an implicit conversion between them (`integer` and `number`, a child class and its parent, a class and a capability it claims); `T?` and `T`; `T?` and `none`; and `any` with anything. `true == 1`, `"5" == 5` and `[1] == 1` are SEM001 ("Cannot unify types: boolean and integer")
 
 **Example (passes):**
 ```clean
@@ -671,11 +665,22 @@ integer result = add(1, b: 2)    // positional first, then named
 ```
 
 ### FUNC011 — All Parameters Must Be Covered
-Every parameter must be satisfied by exactly one positional or named argument. A parameter cannot be provided both positionally and by name.
+Every parameter must be satisfied by exactly one positional or named argument. A parameter cannot be provided both positionally and by name. A parameter with a default value is satisfied by its default when a named-argument call leaves it out — at the end of the list or in the middle. This holds for functions, constructors and methods (a method call is matched against the receiver's own class).
 
 **Example (fails — FUNC011):**
 ```clean
 integer result = add(1, a: 1, b: 2)    // "a" covered twice (positionally and by name)
+```
+
+**Valid — defaulted parameters left out:**
+```clean
+functions:
+    integer mid(integer a, integer b = 2, integer c = 0)
+        return a * 100 + b * 10 + c
+
+start:
+    print(mid(a: 1, c: 3))    // b takes its default: 123
+    print(mid(1, c: 5))       // 125
 ```
 
 ### FUNC012 — Method-Style Call on a Standalone Function
@@ -784,8 +789,48 @@ class Box
 **Fix:** create an object and call the method on it: `Box b = Box()` then `b.get()`.
 
 **Build modes:**
-- `ensure` and `always:` checks are included in debug builds and stripped in release builds (`--release` flag).
-- Use `--contracts` to force contract checks in release builds.
+- `require` and `ensure` are always checked, in every build. `--release` does not remove them.
+- `always:` checks are included in normal builds and removed in release builds (`cln compile --release`).
+- `always:` is checked when a constructor of the class finishes and when each method of the class finishes. A false invariant stops execution (RUN005).
+
+### CLASS009 — Child Constructor Must Call `base(...)` When the Parent's Constructor Needs Arguments
+A child constructor runs its parent's constructor before its own body. When the child constructor calls `base(args...)`, that call runs the parent constructor. When it does not, and the parent's constructor takes no arguments, the parent constructor runs automatically, as if `base()` were the first statement. When it does not, and the parent's constructor needs arguments, the compiler cannot supply them: CLASS009.
+
+**Message:** `"Constructor of '{child}' must call base(...): the constructor of '{parent}' needs arguments ({params})"`
+
+**Example (passes — parent constructor runs automatically):**
+```clean
+class Shape
+	public:
+		string color
+
+	constructor()
+		color = "red"
+
+class Circle is Shape
+	number radius
+
+	constructor(number radiusParam)
+		radius = radiusParam        // Shape() runs first
+```
+
+**Example (fails — CLASS009):**
+```clean
+class Labeled
+	public:
+		string label
+
+	constructor(string labelParam)
+		label = labelParam
+
+class Badge is Labeled
+	integer level
+
+	constructor(integer levelParam)
+		level = levelParam          // error: Labeled's constructor needs a string
+```
+
+**Fix:** call `base(...)` with the parent's arguments: `base("gold")`.
 
 ---
 
@@ -1060,4 +1105,9 @@ When the value is a compile-time constant, both cases are compile-time errors
 A none or invalid reference was accessed at runtime (e.g. `value!` when `value` is none).
 
 ### RUN005 — Assertion Failure
-A `require` statement evaluated to false at runtime.
+A contract was false at runtime: a `require` when the function was called, an `ensure` when it returned, or an `always:` invariant when a constructor or method finished. Contract failures stop execution; `onError` does not catch them.
+
+### RUN006 — List Index Out of Range
+A list was read, written or shrunk at an index outside `0` to `length() - 1`: `items[i]`, `items[i] = v`, `items.get(i)`, `items.set(i, v)` or `items.remove(i)`. It is an ordinary catchable error: `onError` handles it (`integer e = xs[5] onError -1`); uncaught, it stops the program like an uncaught `error(...)`.
+
+**Message:** `"index {i} is out of range for a list of length {n}"`

@@ -31,6 +31,8 @@ class Point
 			y = y + dy
 ```
 
+Fields declared without a value start at their type's zero value (`0`, `0.0`, `false`, `""`, an empty list, `none` for a `T?`); see [Type System — Nullable Types](./04-type-system.md#nullable-types). A class can also declare invariants that must hold for every object in an `always:` block; see [Contracts](./11-contracts.md#always--class-invariants).
+
 ### Generic Classes with `any`
 
 Clean Language uses `any` for generic class fields and methods:
@@ -85,13 +87,55 @@ class Circle is Shape
 #### Inheritance Features
 
 - **Syntax**: Use `class Child is Parent` to inherit from a parent class
-- **Base Constructor**: Use `base(args...)` to call the parent constructor
+- **Base Constructor**: Use `base(args...)` to call the parent constructor (see [Calling the Parent Constructor](#calling-the-parent-constructor))
 - **Implicit Context**: Fields and methods are referred to by their bare names; Clean has no `this` or `self`
 - **Name Safety**: Parameters must have different names than fields to prevent conflicts
 - **Method Inheritance**: Child classes inherit all public methods from parent classes
 - **Field Inheritance**: Child classes inherit all public fields from parent classes
 - **Method Overriding**: Child classes can override parent methods by defining methods with the same name
 - **Private members are not inherited**: a child class that reads, writes or calls its parent's private field or method gets SEM005 (`Private members are not inherited: \`Kid\` cannot use \`Base\`'s private field \`secret\``)
+
+#### Calling the Parent Constructor
+
+A child constructor runs the parent's constructor before its own code:
+
+- If the child constructor calls `base(args...)`, that call runs the parent's constructor with those arguments.
+- If it does not call `base(...)` and the parent's constructor takes no arguments, the parent's constructor runs automatically, as if the child had written `base()` first.
+- If it does not call `base(...)` and the parent's constructor needs arguments, it is a compile error (CLASS009): the compiler cannot guess the values.
+
+```clean
+start:
+    Circle c = Circle(2.0)
+    print(c.color)               // red: Shape's constructor ran first
+
+class Shape
+    public:
+        string color
+
+    constructor()
+        color = "red"
+
+class Circle is Shape
+    number radius
+
+    constructor(number radiusParam)
+        radius = radiusParam     // no base(): Shape() runs automatically
+```
+
+```clean
+class Labeled
+    public:
+        string label
+
+    constructor(string labelParam)
+        label = labelParam
+
+class Badge is Labeled
+    integer level
+
+    constructor(integer levelParam)
+        level = levelParam       // ❌ CLASS009: Labeled's constructor needs a string; call base(...)
+```
 
 #### Method Overriding
 

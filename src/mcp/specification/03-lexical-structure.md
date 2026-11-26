@@ -45,7 +45,7 @@ start:
 ### Identifiers
 
 Identifiers must:
-- Start with a letter (`A-Z`, `a-z`)
+- Start with a letter (`A-Z`, `a-z`) or an underscore (`_`)
 - Contain only letters, digits, and underscores
 - Follow camelCase conventions (e.g. `myVariable`, `calculateSum`)
 
@@ -56,7 +56,10 @@ count
 myVariable
 value1
 calculateSum
+_count
 ```
+
+A leading underscore is allowed but has no special meaning: `_count` is an ordinary name.
 
 **Invalid Examples:**
 ```clean
@@ -67,31 +70,35 @@ $name       // Special characters not allowed
 
 ### Keywords
 
-Reserved keywords in Clean Language:
+Clean Language has one keyword list, in two parts: **reserved** keywords and **contextual** keywords (below). It is the list the compiler reserves, and it matches `foundation/spec/grammar/grammar.ebnf` §1.2.
+
+Reserved keywords cannot be used as variable, parameter, function or class names:
 
 ```
-and        class       computed     constructor  default     else
-error      false       for          from         function    guard
-if         import      in           intent       iterate     not         none
-onError    or          print        reset        return
-screen     source      spec         start        state       step         test        tests
-this       to          true         watch        is          returns
-description while      input        unit         private     constant
-functions  rules       build        break        continue    require
-null
+always      and         background  break       can         class
+constant    constructor continue    default     else        ensure
+false       for         from        function    functions   if
+import      in          is          iterate     later       none
+not         null        onError     or          plugins     print
+public      require     return      returns     start       tests
+this        to          true        while
 ```
+
+Five of them — `and`, `or`, `not`, `start` and `can` — may also name a function, method or parameter (`counter.start()`, `auth.can("posts.write")`), and `from` and `to` may name a method.
 
 #### Contextual Keywords
 
-The following keywords are **contextual** — they are reserved when used as block headers (followed by `:`) but may be used as variable names, function parameters, and in expressions:
+The following keywords are **contextual** — they have their keyword meaning only at the start of their own construct (`state:`, `rules:`, `watch count:`, `iterate i in 1 to 9 step 2`, `reset state`, `test "name"`, `error("...")`) and may be used as variable names, function parameters, fields and in expressions everywhere else:
 
 ```
-rules      computed    state       guard       watch       reset
-screen     source      build       spec        intent      default
-test       error       input       unit        step        description
+build       computed    description error       guard       input
+intent      reset       rules       screen      source      spec
+state       step        test        unit        watch
 ```
 
-This allows code like `string rules = ""` while still recognizing `rules:` as a block header.
+This allows code like `string rules = ""` while still recognizing `rules:` as a block header. A state variable name must be an ordinary identifier, not a contextual keyword.
+
+The following words are not keywords at all. They have a meaning in one position only and are ordinary names everywhere else: the type names (`integer`, `number`, `string`, `boolean`, `void`, `any`, `list`, `matrix`, `pairs`, `handler`), `then` (in `if … then … else`), `as` (in `import:`), `validate` (a `validate Name:` block), `base` (`base(...)`, `base.method()`), `private`, `external`, `inclusive`, `line`, `unique`, `pile`, `ok`, `check` and `messages`.
 
 #### Keywords as Member Names
 
@@ -107,18 +114,18 @@ Outside member access the reserved keywords remain reserved: `integer require = 
 
 #### Reserved Keywords (not yet used)
 
-The following identifiers are **reserved** for future language versions. They currently have no meaning in Clean Language, but are reserved so that adding them later does not break existing code:
+The following reserved keywords currently have no meaning in Clean Language, but are reserved so that adding them later does not break existing code:
 
 ```
-for        this       returns    unit
+for        this       returns    function
 ```
 
-- `for` — reserved as an alternate loop keyword. Use `iterate` today.
+- `for` — reserved as an alternate loop keyword. Use `iterate` today (`for` is SYN002).
 - `this` — not used: class methods refer to their own fields and methods by bare name. Writing `this` (`this.x`, `this.m()`, or bare `this`) is SYN002.
 - `returns` — reserved for possible arrow-style function signatures.
-- `unit` — reserved for a possible unit / void marker type distinct from `void`.
+- `function` — functions are declared in a `functions:` block; `function name(...)` is SYN002.
 
-Using any of these names as an identifier is a compile-time error.
+Using any of these names as an identifier is a compile-time error. `unit` has no meaning either, but it is a contextual keyword, so it may be used as a name.
 
 ### Literals
 
@@ -223,7 +230,7 @@ null        // Same value, accepted alias
 Write `none` for no value. `null` is an accepted alias and means exactly the same thing, so code written with `null` keeps working.
 
 **None Semantics:**
-- `none` has its own type, also named `none`; it can be stored only in a `T?` (or an `any`) — every plain type rejects it (see Type System, Nullable Types)
+- `none` is a value, not a type name: you cannot declare a variable of type `none`. It can be stored only in a `T?` (or an `any`) — every plain type rejects it (see Type System, Nullable Types)
 - `none == none` is `true`
 - `none == anything_else` is `false` (except for another none)
 - Use the `default` operator to provide a fallback value for none
@@ -242,6 +249,26 @@ Write `none` for no value. `null` is an accepted alias and means exactly the sam
 [[1, 2], [3, 4]]                    // 2x2 matrix
 [[1, 2, 3], [4, 5, 6], [7, 8, 9]]   // 3x3 matrix
 [[]]                                // Empty matrix
+```
+
+#### Pairs Literals
+
+A pairs literal lists `key: value` entries inside braces. It makes a `pairs<K, V>` value.
+
+```clean
+{"a": 1, "b": 2}       // string keys
+{name: "Ada", age: 36} // a bare name is the key text: same as {"name": "Ada", "age": 36}
+{1: "one", 2: "two"}   // integer keys
+{}                     // empty pairs
+```
+
+- A bare name before `:` is the key's text, not a variable: `{name: 1}` has the key `"name"` even when a variable `name` exists.
+- Integer keys are stored as text: `{1: "x"}` prints as `{"1":"x"}`.
+
+```clean
+start:
+	pairs<string, integer> ages = {"ada": 36, "bo": 7}
+	print(ages)            // {"ada":36,"bo":7}
 ```
 
 ---

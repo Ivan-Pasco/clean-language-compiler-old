@@ -60,7 +60,7 @@ functions:
         intent "Process a payment transaction using the specified payment method"
         spec "specs/payment/process.spec.cln"
         require amount > 0
-        require method in ["credit", "debit", "paypal"]
+        require ["credit", "debit", "paypal"].contains(method)
         // ... implementation
 ```
 
@@ -151,7 +151,7 @@ functions:
         spec "specs/tax/calculation.spec.cln"
         intent "Calculate state income tax based on tax brackets"
         require income >= 0
-        require state in ["CA", "NY", "TX", "FL"]
+        require ["CA", "NY", "TX", "FL"].contains(state)
         // Implementation follows specification
 ```
 

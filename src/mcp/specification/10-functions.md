@@ -30,7 +30,7 @@ start:
 - Only one `start:` block per file
 - Library modules can skip `start:` entirely
 
-**Important:** The `start:` entry block is different from the `start` keyword used for background expressions. See [Asynchronous Programming](./19-async.md) for details on `start` as an expression.
+**Important:** The `start:` entry block is different from the `start` keyword that marks a deferred call in `later name = start f()`. See [Asynchronous Programming](./19-async.md) for details.
 
 #### Migrating from Old Syntax
 
@@ -221,6 +221,23 @@ start:
     integer squared = square(7)
     printMessage()
 ```
+
+#### Named Arguments
+
+An argument may name its parameter. Named arguments can come in any order, after the positional ones:
+
+```clean
+start:
+    integer a = power(base: 2, exponent: 5)     // 32
+    integer b = power(2, exponent: 3)           // 8
+    integer c = power(exponent: 2, base: 9)     // 81
+
+functions:
+    integer power(integer base, integer exponent)
+        return base ^ exponent
+```
+
+Each parameter gets exactly one value, and every name must be a parameter of the function (FUNC008–FUNC011). See [Expressions — Named Arguments](./06-expressions.md#named-arguments) for the full rules.
 
 ### Every Path Returns a Value
 

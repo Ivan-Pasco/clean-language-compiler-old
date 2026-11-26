@@ -45,30 +45,43 @@ tests:
 
 ### Test Execution
 
-When a Clean program contains a `tests:` block, the compiler can run tests in several ways:
+Tests are always part of the compiled program. There is no flag to add them or to leave them out: every `cln compile`, `cln build` and `cln run` of a file includes its `tests:` block.
+
+The tests run right after `start:` finishes. `cln test` compiles the files, runs each one and reports the tests:
 
 ```bash
-# Run tests during compilation
-cleanc --test myprogram.cln
+# Run the tests of one file
+cln test myprogram.cln
 
-# Compile and run tests separately
-cleanc myprogram.cln --include-tests
-./myprogram --run-tests
+# Run the tests of every .cln file in a folder
+cln test tests/
 ```
+
+`cln test` exits with code 0 when every test passes and 1 when any test fails.
 
 ### Test Output Format
 
-The test runner provides clear, readable output:
+The test runner prints one line per test: `PASS:` or `FAIL:` followed by the test's description. An anonymous test is named by its position (`test_2` is the third test in the block):
+
+```clean
+start:
+    print(add(1, 1))
+
+functions:
+    integer add(integer a, integer b)
+        return a + b
+
+tests:
+    "adds numbers": add(2, 3) = 5
+    "wrong on purpose": add(2, 2) = 5
+    add(1, 1) = 2
+```
 
 ```
-Running tests for myprogram.cln...
-
-✅ adds numbers: add(2, 3) = 5 (PASS)
-✅ squares a number: square(4) = 16 (PASS) 
-❌ detects empty string: string.isEmpty("") = true (FAIL: expected true, got false)
-✅ "hi".toUpperCase() = "HI" (PASS)
-
-Test Results: 3 passed, 1 failed, 4 total
+PASS: adds numbers
+FAIL: wrong on purpose
+PASS: test_2
+❌ 1 test(s) failed.
 ```
 
 ### Advanced Testing Features
@@ -89,21 +102,24 @@ tests:
 
 #### Testing Object Methods
 
+A test calls a method from outside the class, so the method must be under `public:`:
+
 ```clean
 class Calculator
     integer value
-    
+
     constructor(integer initialValue)
         value = initialValue
-    
+
     functions:
-        integer add(integer x)
-            value = value + x
-            return value
+        public:
+            integer add(integer x)
+                value = value + x
+                return value
 
 tests:
     "calculator addition": Calculator(10).add(5) = 15
-    "calculator chaining": Calculator(0).add(3).add(7) = 10
+    "calculator from zero": Calculator(0).add(3) = 3
 ```
 
 #### Testing List and String Operations
@@ -115,6 +131,20 @@ tests:
     "string operations": "hello".toUpperCase() = "HELLO"
     "string indexing": "world".indexOf("r") = 2
 ```
+
+#### Endpoint Tests (`test "name"`)
+
+A program that uses the frame.server plugin can describe HTTP checks inside `tests:` with the `test "name"` form. The indented lines are a request (`GET`, `POST`, `PUT`, `PATCH` or `DELETE` and a path) followed by checks on the response:
+
+```clean
+tests:
+    test "health check"
+        GET "/api/health"
+        status = 200
+        json.status = "ok"
+```
+
+The compiler checks the form of these tests but does not run them; they are for frame.server's test tools. A file whose `tests:` block holds only endpoint tests has no tests for `cln test` to run, so `cln test` reports "no tests found" for it instead of a failure.
 
 ### Best Practices
 
