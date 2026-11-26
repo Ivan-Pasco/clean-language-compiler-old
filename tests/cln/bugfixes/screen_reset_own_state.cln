@@ -1,0 +1,63 @@
+// Test: bugfixes/screen_reset_own_state
+// Grammar: reset_statement = "reset" , ( "state" | identifier )
+// Semantic: SEM002 — `reset x` inside a screen resolves x in the screen's own
+//   state (spec §23 "State Reset")
+// Regression: `reset` of a screen's own state variable failed with SEM002
+//   (undefined variable) in the spec §23 shape: a screen with a `watch`
+//   before `functions:`. The watch ended the screen body, so the functions
+//   were compiled outside the screen (same cause as #67). A reset runs the
+//   watch like any assignment.
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   count now 1
+//   count now 2
+//   count now 3
+//   count=3 name=bob
+//   count now 0
+//   count=0 name=bob
+//   count now 0
+//   count=0 name=
+//   app=7
+//   app=1
+
+start:
+	Home.bump()
+	Home.bump()
+	Home.bump()
+	Home.setName("bob")
+	printl(Home.describe())
+	Home.clearCount()
+	printl(Home.describe())
+	Home.clearAll()
+	printl(Home.describe())
+	appValue = 7
+	printl("app=" + appValue.toString())
+	reset appValue
+	printl("app=" + appValue.toString())
+
+state:
+	integer appValue = 1
+
+screen Home:
+	state:
+		integer count = 0
+		string name = ""
+
+	watch count:
+		printl("count now " + count.toString())
+
+	functions:
+		void bump()
+			count = count + 1
+
+		void setName(string n)
+			name = n
+
+		void clearCount()
+			reset count
+
+		void clearAll()
+			reset state
+
+		string describe()
+			return "count=" + count.toString() + " name=" + name
