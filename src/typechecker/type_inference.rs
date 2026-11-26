@@ -2079,12 +2079,18 @@ impl<'a> TypeInference<'a> {
     ) -> Result<TastFunction, CompilerError> {
         self.current_function = Some(function.symbol_id);
 
-        // Set current return type for constraint generation within the function
-        // We'll update this later if no explicit return type is declared
-        self.current_return_type = function
-            .return_type
-            .as_ref()
-            .map(|return_type| self.hir_type_to_concrete(return_type));
+        // Set current return type for constraint generation within the function.
+        // A function with no return type is `void` (the HIR builder lowers
+        // `void` to `None`, and so is `start:`): a `return <value>` in it is
+        // reported by the `Return` statement, as it is for a `void` method.
+        self.current_return_type = Some(
+            function
+                .return_type
+                .as_ref()
+                .map_or(ConcreteType::Null, |return_type| {
+                    self.hir_type_to_concrete(return_type)
+                }),
+        );
         self.current_return_hir_type = function.return_type.clone();
 
         // Add parameters to type environment
