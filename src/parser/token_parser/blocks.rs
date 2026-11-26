@@ -1241,21 +1241,11 @@ impl TokenParser {
             trace!(token = ?self.current_kind(), "About to parse test");
 
             // Parse test case using the "description": expr = expected format
-            let saved_cursor = self.cursor;
-            match self.parse_test_case_in_block() {
-                Ok(test) => {
-                    trace!(description = ?test.description, "Parsed test case");
-                    tests.push(test);
-                }
-                Err(e) => {
-                    trace!(error = ?e, "Failed to parse test case, skipping line");
-                    // Restore cursor and skip to end of line on error
-                    self.cursor = saved_cursor;
-                    while !matches!(self.current_kind(), TokenKind::Newline | TokenKind::Eof) {
-                        self.bump();
-                    }
-                }
-            }
+            // A line that is not a test is an error: dropping it would
+            // silently leave a test the author wrote out of the run.
+            let test = self.parse_test_case_in_block()?;
+            trace!(description = ?test.description, "Parsed test case");
+            tests.push(test);
         }
 
         debug!(test_count = tests.len(), "Finished parsing tests block");
@@ -1303,7 +1293,7 @@ impl TokenParser {
             return Err(CompilerError::syntax_error_with_code(
                 "Expected '=' in test assertion (format: expr = expected)",
                 Some("Use 'expr = expected_value' syntax in tests: block".to_string()),
-                Some(self.current().location.clone()),
+                Some(start_location),
                 "SYN002",
             ));
         }
@@ -1370,43 +1360,40 @@ impl TokenParser {
 
         let mut assertions = Vec::new();
 
-        // Parse zero or more assertion lines
+        // Parse zero or more assertion lines. Each one starts on a line of
+        // its own after the request (or the previous assertion).
         loop {
-            // Consume trailing whitespace / newlines
             let saved = self.cursor;
+            // An assertion starts a line of its own: the request (or the
+            // previous assertion) has ended at a line break, or at the
+            // indentation of the next line when the request parser already
+            // skipped the break.
+            if !matches!(
+                self.current_kind(),
+                TokenKind::Newline
+                    | TokenKind::Indent(_)
+                    | TokenKind::Comment(_)
+                    | TokenKind::BlockComment(_)
+            ) {
+                break;
+            }
             self.skip_whitespace();
-
-            if matches!(self.current_kind(), TokenKind::Newline) {
+            while matches!(self.current_kind(), TokenKind::Indent(_)) {
                 self.bump();
-            } else {
-                // No newline — end of this test case
+            }
+
+            // The next line is not an assertion: it is the next test case or
+            // the end of the tests block. Put the cursor back before its
+            // newline; `parse_tests_block` re-synchronises on it.
+            if !self.is_http_assertion_start() {
                 self.cursor = saved;
                 break;
             }
 
-            // Skip blank lines
-            while matches!(self.current_kind(), TokenKind::Newline) {
-                self.bump();
-            }
-
-            // Skip indent tokens
-            while matches!(self.current_kind(), TokenKind::Indent(_)) {
-                self.bump();
-            }
-            self.skip_whitespace();
-
-            // Check whether the next token starts an assertion or something else
-            if !self.is_http_assertion_start() {
-                // Next line is a new test case or end of tests block — put cursor back
-                // We can't un-consume the indent/newline tokens, but the outer loop in
-                // parse_tests_block will handle re-synchronisation on the next token.
-                break;
-            }
-
-            match self.parse_http_test_assertion() {
-                Ok(assertion) => assertions.push(assertion),
-                Err(_) => break,
-            }
+            // A line that starts like an assertion but does not parse is an
+            // error: dropping it would leave the test passing without
+            // checking what the author wrote.
+            assertions.push(self.parse_http_test_assertion()?);
         }
 
         let endpoint = EndpointTest {
@@ -1633,12 +1620,14 @@ impl TokenParser {
                 let mut path = Vec::new();
                 while self.check(&TokenKind::Dot) {
                     self.bump(); // consume '.'
-                    match self.current_kind() {
-                        TokenKind::Identifier(seg) => {
-                            path.push(seg.clone());
+                                 // A segment is a field name, so a contextual keyword such
+                                 // as `error` (`json.error`) is a valid segment.
+                    match self.try_extract_var_name() {
+                        Some(segment) => {
+                            path.push(segment);
                             self.bump();
                         }
-                        _ => break,
+                        None => break,
                     }
                 }
 

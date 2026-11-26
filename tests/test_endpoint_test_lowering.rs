@@ -73,3 +73,38 @@ fn request_without_body_or_header_sends_empty_strings() {
     assert_eq!(string_literal(&args[3]), Some(""));
     assert_eq!(string_literal(&args[4]), Some(""));
 }
+
+/// The number of assertion statements of the first endpoint test: what is
+/// left after the request handle, the `__ok` flag and the final return.
+fn assertion_count(source: &str) -> usize {
+    let ast = parse_to_ast(source, "endpoint_test.cln").expect("parse");
+    let hir = HirBuilder::new().build_hir(ast).expect("hir").hir;
+    let test = hir.tests.first().expect("one endpoint test");
+    test.body.statements.len() - 3
+}
+
+#[test]
+fn every_assertion_of_an_endpoint_test_is_kept() {
+    let count = assertion_count(
+        "start:\n\tprint(\"x\")\n\ntests:\n\ttest \"health\"\n\t\tGET \"/api/health\"\n\t\tstatus = 200\n\t\tjson.status = \"ok\"\n\t\tjson.id != null\n",
+    );
+    assert_eq!(count, 3);
+}
+
+#[test]
+fn an_unparseable_assertion_is_an_error_not_dropped() {
+    let source = "start:\n\tprint(\"x\")\n\ntests:\n\ttest \"health\"\n\t\tGET \"/api/health\"\n\t\tstatus 200\n";
+    assert!(
+        parse_to_ast(source, "endpoint_test.cln").is_err(),
+        "an assertion line that does not parse must be reported"
+    );
+}
+
+#[test]
+fn an_unparseable_line_in_tests_is_an_error_not_dropped() {
+    let source = "tests:\n\t\"one\": 1 = 1\n\t1 +\n";
+    assert!(
+        parse_to_ast(source, "endpoint_test.cln").is_err(),
+        "a line in tests: that does not parse must be reported"
+    );
+}

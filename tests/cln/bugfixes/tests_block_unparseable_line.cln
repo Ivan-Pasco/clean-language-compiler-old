@@ -1,0 +1,20 @@
+// Test: bugfixes/tests_block_unparseable_line
+// Grammar: tests_block, named_test, anonymous_test
+// Semantic: SYN002 - a line in tests: that is not `[description:] expr = expected` is an error
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   SYN002
+//   Expected '=' in test assertion
+//
+// Regression: a line in tests: that failed to parse was dropped without a
+// word, so the test it meant to write never ran.
+
+functions:
+	integer add(integer a, integer b)
+		return a + b
+
+tests:
+	"adds": add(1, 1) = 2
+	"missing expected value": add(1, 1)
+	"also adds": add(2, 2) = 4
