@@ -1,0 +1,26 @@
+// Test: bugfixes/equality_related_types_allowed
+// Grammar: comparison_expression
+// Semantic: SEM001 — related types still compare
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   true
+//   true
+//   true
+//   true
+//   false
+//   true
+//
+// Spec decision C1 (2026-11-26): integer/number, T vs T?, and none
+// compare without error.
+
+start:
+	integer n = 1
+	number d = 1.0
+	string? name = none
+	string? other = "Ada"
+	print(n == d)
+	print(name == none)
+	print(other == "Ada")
+	print("Ada" == other)
+	print(name == other)
+	print(name != other)

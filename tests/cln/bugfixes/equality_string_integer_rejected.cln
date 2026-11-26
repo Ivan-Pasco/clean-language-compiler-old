@@ -1,0 +1,14 @@
+// Test: bugfixes/equality_string_integer_rejected
+// Grammar: comparison_expression
+// Semantic: SEM001 — `!=` between unrelated types
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   SEM001
+//
+// Spec decision C1 (2026-11-26): `"5" != 5` is a type error.
+
+start:
+	string s = "5"
+	integer n = 5
+	print(s != n)

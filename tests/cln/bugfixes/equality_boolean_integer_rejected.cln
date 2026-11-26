@@ -1,0 +1,13 @@
+// Test: bugfixes/equality_boolean_integer_rejected
+// Grammar: comparison_expression
+// Semantic: SEM001 — `==` between unrelated types
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   SEM001
+//
+// Spec decision C1 (2026-11-26): `true == 1` is a type error.
+// Regression: `true == 1` compiled and evaluated to true.
+
+start:
+	print(true == 1)
