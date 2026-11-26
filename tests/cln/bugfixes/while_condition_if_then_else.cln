@@ -1,0 +1,17 @@
+// Test: bugfixes/while_condition_if_then_else
+// Semantic: a while condition that builds its own blocks still guards the loop body
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   begin
+//   0
+//   1
+//   2
+//   end i=3
+
+start:
+	print("begin")
+	integer i = 0
+	while (if i < 3 then true else false)
+		print(i)
+		i = i + 1
+	print("end i=" + i.toString())

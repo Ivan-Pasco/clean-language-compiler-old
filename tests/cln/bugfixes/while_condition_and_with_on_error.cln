@@ -1,0 +1,17 @@
+// Test: bugfixes/while_condition_and_with_on_error
+// Semantic: a while condition that builds its own blocks still guards the loop body
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   begin
+//   0
+//   1
+//   2
+//   end i=3
+
+start:
+	print("begin")
+	integer i = 0
+	while i < 5 and (100 / (3 - i) onError -1) > 0
+		print(i)
+		i = i + 1
+	print("end i=" + i.toString())

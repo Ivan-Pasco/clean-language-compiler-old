@@ -883,8 +883,21 @@ impl MirCodeGenerator<'_> {
                     // The body may contain nested control flow (if statements), so we can't just
                     // check the body's direct terminator. Instead, find the increment block
                     // by looking for any block that jumps back to the header.
-                    let increment_block_id =
-                        self.find_loop_increment_block(function, *true_block, block_id);
+                    //
+                    // A `while` whose condition builds its own blocks enters a
+                    // `while_cond` block: the body sits inside the condition's
+                    // own `if`, and every back edge is emitted as a `br` to the
+                    // loop where its Jump is generated. A trailing `br 0` here
+                    // would also restart the loop when the condition is false.
+                    let cond_chain = function
+                        .blocks
+                        .get(true_block)
+                        .is_some_and(|b| b.label.as_deref() == Some("while_cond"));
+                    let increment_block_id = if cond_chain {
+                        None
+                    } else {
+                        self.find_loop_increment_block(function, *true_block, block_id)
+                    };
 
                     if let Some(increment_id) = increment_block_id {
                         // NOTE: Check if increment block was already generated

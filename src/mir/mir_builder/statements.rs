@@ -1904,18 +1904,55 @@ impl MirBuilder {
                 // Switch to header block (condition check)
                 self.current_block = Some(header_block_id);
 
-                // Build condition expression in header block
-                let condition_id = self.build_expression(context, condition)?;
-
-                // Conditional branch: if condition is true goto body, else goto exit
-                self.set_block_terminator(
-                    context,
-                    MirTerminator::Branch {
-                        condition: MirOperand::Value(condition_id),
-                        true_block: body_block_id,
-                        false_block: exit_block_id,
+                // Build the condition into a scratch block first. A condition
+                // that makes blocks of its own (if-then-else, onError, `and` /
+                // `or` with such a right side) ends in a different block than
+                // the one it started in, and the terminator of the header
+                // would then be the condition's internal branch, not the
+                // loop test the codegen expects there.
+                let cond_block_id = BasicBlockId(context.function.next_block_id);
+                context.function.next_block_id += 1;
+                context.function.blocks.insert(
+                    cond_block_id,
+                    MirBasicBlock {
+                        id: cond_block_id,
+                        label: Some("while_cond".to_string()),
+                        instructions: Vec::new(),
+                        terminator: MirTerminator::Unreachable,
+                        location: location.clone(),
                     },
                 );
+                self.current_block = Some(cond_block_id);
+                let condition_id = self.build_expression(context, condition)?;
+
+                let loop_test = MirTerminator::Branch {
+                    condition: MirOperand::Value(condition_id),
+                    true_block: body_block_id,
+                    false_block: exit_block_id,
+                };
+                if self.current_block == Some(cond_block_id) {
+                    // Straight-line condition: it is the header's own test.
+                    if let Some(cond_block) = context.function.blocks.remove(&cond_block_id) {
+                        if let Some(header) = context.function.blocks.get_mut(&header_block_id) {
+                            header.instructions.extend(cond_block.instructions);
+                        }
+                    }
+                    self.current_block = Some(header_block_id);
+                    self.set_block_terminator(context, loop_test);
+                } else {
+                    // The condition spans several blocks. The header stays the
+                    // loop's entry and `continue` target and always enters the
+                    // condition; the block the condition ends in makes the
+                    // real body/exit decision.
+                    self.set_block_terminator(context, loop_test);
+                    if let Some(header) = context.function.blocks.get_mut(&header_block_id) {
+                        header.terminator = MirTerminator::Branch {
+                            condition: MirOperand::Constant(MirConstant::Boolean(true)),
+                            true_block: cond_block_id,
+                            false_block: exit_block_id,
+                        };
+                    }
+                }
 
                 // Switch to body block
                 self.current_block = Some(body_block_id);
