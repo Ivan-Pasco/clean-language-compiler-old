@@ -1,0 +1,47 @@
+// Test: bugfixes/named_args_omit_defaulted_parameters
+// Grammar: argument_item, named_argument
+// Semantic: FUNC011
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   73
+//   71
+//   123
+//   125
+//   73
+//   523
+//   5
+//
+// Regression: a call with named arguments had to name every parameter, even
+// those with a default value (error FUNC011), while the positional call
+// `add(7)` worked. A parameter with a default is optional (spec 10, Default
+// Value Rules, rule 4), also in the middle of the list.
+
+start:
+	print(add(a: 7))
+	print(add(b: 1, a: 7))
+	print(mid(a: 1, c: 3))
+	print(mid(1, c: 5))
+	Calc c = Calc(a: 1)
+	print(c.add(a: 7))
+	print(c.mid(a: 5, c: 3))
+	print(c.get())
+
+class Calc
+	integer v
+	constructor(integer a, integer b = 4)
+		v = a + b
+	functions:
+		public:
+			integer get()
+				return v
+			integer add(integer a, integer b = 3)
+				return a * 10 + b
+			integer mid(integer a, integer b = 2, integer c = 0)
+				return a * 100 + b * 10 + c
+
+functions:
+	integer add(integer a, integer b = 3)
+		return a * 10 + b
+
+	integer mid(integer a, integer b = 2, integer c = 0)
+		return a * 100 + b * 10 + c

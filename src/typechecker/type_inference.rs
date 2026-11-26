@@ -13,6 +13,7 @@ use super::tast::{
 };
 use crate::ast::SourceLocation;
 use crate::error::CompilerError;
+use crate::hir::named_args::{match_arguments, CallArgument, CalleeParameters};
 use crate::hir::{HirBinaryOp, HirType, HirUnaryOp};
 use crate::resolver::{
     GlobalSymbolTable, ResolvedHirBlock, ResolvedHirClass, ResolvedHirExpression,
@@ -41,6 +42,8 @@ pub struct TypeInference<'a> {
     /// Typed default value of each parameter of a function, method or
     /// constructor (None for a required parameter), keyed by its symbol.
     param_defaults: HashMap<SymbolId, Vec<Option<TastExpression>>>,
+    /// The declared parameter names of each method, for matching named arguments.
+    param_names: HashMap<SymbolId, Vec<String>>,
 
     /// The explicit constructor (with parameters) of each class, for
     /// checking `base(...)` calls against the parent's constructor.
@@ -108,6 +111,7 @@ impl<'a> TypeInference<'a> {
             symbol_table,
             required_param_counts: HashMap::new(),
             param_defaults: HashMap::new(),
+            param_names: HashMap::new(),
             class_constructors: HashMap::new(),
             class_conformance: HashMap::new(),
             plugin_generated_files: std::collections::HashSet::new(),
@@ -1259,6 +1263,10 @@ impl<'a> TypeInference<'a> {
             is_background: false,
         };
         self.type_env.insert(symbol_id, function_type);
+        self.param_names.insert(
+            symbol_id,
+            parameters.iter().map(|p| p.name.clone()).collect(),
+        );
         let required = parameters
             .iter()
             .filter(|p| p.default_value.is_none())
@@ -3838,12 +3846,14 @@ impl<'a> TypeInference<'a> {
                 method,
                 method_symbol_id,
                 arguments,
+                argument_labels,
                 location,
             } => self.infer_method_call_expression(
                 receiver,
                 method,
                 method_symbol_id,
                 arguments,
+                argument_labels,
                 location,
             )?,
             ResolvedHirExpression::StaticMethodCall {
@@ -4729,6 +4739,7 @@ impl<'a> TypeInference<'a> {
         method: &str,
         method_symbol_id: &Option<SymbolId>,
         arguments: &[ResolvedHirExpression],
+        argument_labels: &[Option<String>],
         location: &SourceLocation,
     ) -> Result<(TastExpressionKind, ConcreteType, SourceLocation), CompilerError> {
         let tast_receiver = self.infer_expression(receiver)?;
@@ -4852,6 +4863,17 @@ impl<'a> TypeInference<'a> {
             }
         }
 
+        if !argument_labels.is_empty() {
+            tast_arguments = self.match_named_method_arguments(
+                &resolved_receiver_type,
+                resolved_method_symbol,
+                method,
+                tast_arguments,
+                argument_labels,
+                location,
+            )?;
+        }
+
         self.check_builtin_method_call(
             &resolved_receiver_type,
             method,
@@ -4922,6 +4944,85 @@ impl<'a> TypeInference<'a> {
             return_type,
             location.clone(),
         ))
+    }
+
+    /// Put the arguments of a method call written with named arguments into
+    /// the parameter order of the receiver's own method (FUNC008-FUNC011). A
+    /// parameter the call leaves out in the middle takes its typed default;
+    /// trailing ones are appended by `append_default_arguments`.
+    fn match_named_method_arguments(
+        &self,
+        receiver_type: &ConcreteType,
+        method_symbol: SymbolId,
+        method: &str,
+        arguments: Vec<TastExpression>,
+        labels: &[Option<String>],
+        location: &SourceLocation,
+    ) -> Result<Vec<TastExpression>, CompilerError> {
+        let is_class_method = matches!(receiver_type, ConcreteType::Class { .. })
+            && matches!(
+                self.symbol_table.get_symbol(method_symbol).map(|s| &s.kind),
+                Some(SymbolKind::Method { .. })
+            );
+        let names = self
+            .param_names
+            .get(&method_symbol)
+            .filter(|_| is_class_method);
+        let Some(names) = names else {
+            return Err(CompilerError::semantic_error_with_code(
+                format!(
+                    "FUNC008: named arguments are not supported for built-in method `.{}()`; \
+                     only user-defined methods with known parameter lists support named \
+                     arguments",
+                    method
+                ),
+                Some("Remove the named argument labels".to_string()),
+                Some(location.clone()),
+                "FUNC008",
+            ));
+        };
+        let defaults = self.param_defaults.get(&method_symbol);
+        let has_default: Vec<bool> = (0..names.len())
+            .map(|i| defaults.and_then(|d| d.get(i)).is_some_and(Option::is_some))
+            .collect();
+        let call_arguments: Vec<CallArgument<'_>> = arguments
+            .iter()
+            .enumerate()
+            .map(|(i, argument)| CallArgument {
+                label: labels.get(i).and_then(|l| l.as_deref()),
+                location: &argument.location,
+            })
+            .collect();
+        let slots = match_arguments(
+            method,
+            &CalleeParameters {
+                names,
+                has_default: &has_default,
+            },
+            &call_arguments,
+            location,
+        )?;
+        let used = slots.iter().rposition(Option::is_some).map_or(0, |i| i + 1);
+        let mut arguments: Vec<Option<TastExpression>> = arguments.into_iter().map(Some).collect();
+        let mut ordered = Vec::with_capacity(used);
+        for (i, slot) in slots.iter().take(used).enumerate() {
+            let value = match slot {
+                Some(arg_index) => arguments[*arg_index].take(),
+                None => self.parameter_default(method_symbol, i),
+            };
+            ordered.push(value.ok_or_else(|| {
+                CompilerError::semantic_error_with_code(
+                    format!(
+                        "FUNC011: parameter `{}` (position {}) is not covered in call to `{}`",
+                        names[i], i, method
+                    ),
+                    None,
+                    Some(location.clone()),
+                    "FUNC011",
+                )
+            })?);
+        }
+        Ok(ordered)
     }
 
     /// Helper: infer a `StaticMethodCall` expression.

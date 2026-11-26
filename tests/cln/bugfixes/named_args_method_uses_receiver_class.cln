@@ -1,0 +1,77 @@
+// Test: bugfixes/named_args_method_uses_receiver_class
+// Grammar: argument_item, named_argument
+// Semantic: FUNC008, FUNC011
+// Fixed in: compiler 0.33.190
+// Expected output:
+//   21
+//   21
+//   8
+//   6
+//
+// Regression: named arguments on a method call took the parameter order of
+// any class declaring a method of that name (silent wrong result), and
+// failed with a false FUNC008 when an override or a second class declared
+// the same method name.
+
+start:
+	Bee b = Bee()
+	print(b.mix(y: 1, x: 2))
+	Ant a = Ant()
+	print(a.mix(y: 1, x: 2))
+	Dog d = Dog()
+	print(d.speak(times: 2) + d.speak(times: 1))
+	Rect r = Rect()
+	print(r.scale(x: 2, y: 3))
+
+class Ant
+	integer z
+	constructor()
+		z = 0
+	functions:
+		public:
+			integer mix(integer x, integer y)
+				return x * 10 + y
+
+class Bee
+	integer z
+	constructor()
+		z = 0
+	functions:
+		public:
+			integer mix(integer y, integer x, integer w = 0)
+				return x * 10 + y + w
+
+class Animal
+	integer z
+	constructor()
+		z = 0
+	functions:
+		public:
+			integer speak(integer times)
+				return times
+
+class Dog is Animal
+	constructor()
+		base()
+	functions:
+		public:
+			integer speak(integer times)
+				return times * 2 + 1
+
+class Rect
+	integer z
+	constructor()
+		z = 0
+	functions:
+		public:
+			integer scale(integer x, integer y)
+				return x * y
+
+class Circle
+	integer z
+	constructor()
+		z = 0
+	functions:
+		public:
+			integer scale(integer r, integer q)
+				return r + q

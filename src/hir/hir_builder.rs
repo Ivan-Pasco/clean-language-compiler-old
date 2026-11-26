@@ -61,6 +61,7 @@ use crate::ast::{
     ValidateConstraint, Value,
 };
 use crate::error::CompilerError;
+use crate::hir::named_args::{match_arguments, CallArgument, CalleeParameters};
 use crate::hir::*;
 
 /// Registry entry for a callable's parameter list, used for named-argument resolution
@@ -69,6 +70,17 @@ use crate::hir::*;
 struct CallableSignature {
     /// Ordered list of parameter names exactly as declared.
     param_names: Vec<String>,
+    /// The default value of each parameter, `None` for a required one.
+    param_defaults: Vec<Option<Expression>>,
+}
+
+impl CallableSignature {
+    fn from_parameters(params: &[Parameter]) -> Self {
+        Self {
+            param_names: params.iter().map(|p| p.name.clone()).collect(),
+            param_defaults: params.iter().map(|p| p.default_value.clone()).collect(),
+        }
+    }
 }
 
 /// Accumulator analysis result — populated by walking a loop body to decide
@@ -352,29 +364,25 @@ impl HirBuilder {
 
     /// Register a free function's parameter list under its name.
     fn register_function_signature(&mut self, name: &str, params: &[Parameter]) {
-        let sig = CallableSignature {
-            param_names: params.iter().map(|p| p.name.clone()).collect(),
-        };
-        self.named_arg_registry.insert(name.to_string(), sig);
+        self.named_arg_registry
+            .insert(name.to_string(), CallableSignature::from_parameters(params));
     }
 
     /// Register a class constructor and all method signatures.
     fn register_class_signatures(&mut self, class: &Class) {
         // Constructor is registered under the class name itself.
         if let Some(ctor) = &class.constructor {
-            let sig = CallableSignature {
-                param_names: ctor.parameters.iter().map(|p| p.name.clone()).collect(),
-            };
-            self.named_arg_registry.insert(class.name.clone(), sig);
+            self.named_arg_registry.insert(
+                class.name.clone(),
+                CallableSignature::from_parameters(&ctor.parameters),
+            );
         }
 
         // Each method is registered under `ClassName::methodName`.
         for method in &class.methods {
             let key = format!("{}::{}", class.name, method.name);
-            let sig = CallableSignature {
-                param_names: method.parameters.iter().map(|p| p.name.clone()).collect(),
-            };
-            self.named_arg_registry.insert(key, sig);
+            self.named_arg_registry
+                .insert(key, CallableSignature::from_parameters(&method.parameters));
         }
     }
 
@@ -394,153 +402,49 @@ impl HirBuilder {
     /// * `location` — source location for error reporting
     fn resolve_named_args<'a>(
         callee: &str,
-        sig: &CallableSignature,
+        sig: &'a CallableSignature,
         args: &'a [Expression],
         location: &SourceLocation,
     ) -> Result<Vec<&'a Expression>, CompilerError> {
-        let param_count = sig.param_names.len();
-        let arg_count = args.len();
+        let call_arguments: Vec<CallArgument<'_>> = args
+            .iter()
+            .map(|arg| match arg {
+                Expression::NamedArgBinding {
+                    label,
+                    location: arg_location,
+                    ..
+                } => CallArgument {
+                    label: Some(label.as_str()),
+                    location: arg_location,
+                },
+                _ => CallArgument {
+                    label: None,
+                    location,
+                },
+            })
+            .collect();
+        let has_default: Vec<bool> = sig.param_defaults.iter().map(Option::is_some).collect();
+        let slots = match_arguments(
+            callee,
+            &CalleeParameters {
+                names: &sig.param_names,
+                has_default: &has_default,
+            },
+            &call_arguments,
+            location,
+        )?;
 
-        // FUNC011: argument count must match parameter count.
-        if arg_count != param_count {
-            return Err(CompilerError::semantic_error_with_code(
-                format!(
-                    "FUNC011: `{}` expects {} argument(s), got {}",
-                    callee, param_count, arg_count
+        // A parameter the call leaves out takes its default; trailing ones
+        // are dropped so the type checker appends the typed default.
+        let used = slots.iter().rposition(Option::is_some).map_or(0, |i| i + 1);
+        let mut result = Vec::with_capacity(used);
+        for (i, slot) in slots.iter().take(used).enumerate() {
+            match (slot, &sig.param_defaults[i]) {
+                (Some(arg_index), _) => result.push(&args[*arg_index]),
+                (None, Some(default)) => result.push(default),
+                (None, None) => unreachable!(
+                    "invariant: match_arguments rejects an uncovered required parameter"
                 ),
-                Some(format!(
-                    "Provide exactly {} argument(s): {}",
-                    param_count,
-                    sig.param_names.join(", ")
-                )),
-                Some(location.clone()),
-                "FUNC011",
-            ));
-        }
-
-        // Split into positional prefix and named args.
-        let mut last_positional_idx: Option<usize> = None;
-        let mut first_named_idx: Option<usize> = None;
-        for (i, arg) in args.iter().enumerate() {
-            if matches!(arg, Expression::NamedArgBinding { .. }) {
-                if first_named_idx.is_none() {
-                    first_named_idx = Some(i);
-                }
-            } else {
-                // Positional argument.
-                // FUNC010: positional args must precede all named args.
-                if let Some(named_start) = first_named_idx {
-                    return Err(CompilerError::semantic_error_with_code(
-                        format!(
-                            "FUNC010: positional argument at position {} appears after named \
-                             argument at position {} in call to `{}`",
-                            i, named_start, callee
-                        ),
-                        Some(
-                            "All positional arguments must come before named arguments".to_string(),
-                        ),
-                        Some(location.clone()),
-                        "FUNC010",
-                    ));
-                }
-                last_positional_idx = Some(i);
-            }
-        }
-
-        // Number of leading positional arguments.
-        let positional_count = last_positional_idx.map(|i| i + 1).unwrap_or(0);
-
-        // Build output slot array: None means "not yet filled".
-        let mut slots: Vec<Option<&Expression>> = vec![None; param_count];
-
-        // Fill positional slots first.
-        for (i, arg) in args[..positional_count].iter().enumerate() {
-            slots[i] = Some(arg);
-        }
-
-        // Fill named slots.
-        // FUNC009: duplicate label detection via a simple scan.
-        let mut seen_labels: Vec<&str> = Vec::new();
-        for arg in args[positional_count..].iter() {
-            if let Expression::NamedArgBinding {
-                label,
-                value: _,
-                location: arg_loc,
-            } = arg
-            {
-                // FUNC009: no duplicate labels.
-                if seen_labels.contains(&label.as_str()) {
-                    return Err(CompilerError::semantic_error_with_code(
-                        format!(
-                            "FUNC009: duplicate named argument `{}` in call to `{}`",
-                            label, callee
-                        ),
-                        Some(format!("Remove the duplicate `{}:` argument", label)),
-                        Some(arg_loc.clone()),
-                        "FUNC009",
-                    ));
-                }
-                seen_labels.push(label.as_str());
-
-                // FUNC008: label must match a declared parameter name.
-                let param_idx = sig.param_names.iter().position(|n| n == label);
-                match param_idx {
-                    None => {
-                        return Err(CompilerError::semantic_error_with_code(
-                            format!(
-                                "FUNC008: `{}` has no parameter named `{}` in call to `{}`",
-                                callee, label, callee
-                            ),
-                            Some(format!(
-                                "Valid parameter names are: {}",
-                                sig.param_names.join(", ")
-                            )),
-                            Some(arg_loc.clone()),
-                            "FUNC008",
-                        ));
-                    }
-                    Some(idx) => {
-                        if idx < positional_count {
-                            return Err(CompilerError::semantic_error_with_code(
-                                format!(
-                                    "FUNC011: parameter `{}` (position {}) is already covered \
-                                     by a positional argument in call to `{}`",
-                                    label, idx, callee
-                                ),
-                                Some(format!(
-                                    "Remove the positional argument or the `{}:` label",
-                                    label
-                                )),
-                                Some(arg_loc.clone()),
-                                "FUNC011",
-                            ));
-                        }
-                        slots[idx] = Some(arg);
-                    }
-                }
-            }
-        }
-
-        // Verify all slots are filled (FUNC011 complete coverage).
-        let mut result = Vec::with_capacity(param_count);
-        for (i, slot) in slots.iter().enumerate() {
-            match slot {
-                Some(expr) => result.push(*expr),
-                None => {
-                    return Err(CompilerError::semantic_error_with_code(
-                        format!(
-                            "FUNC011: parameter `{}` (position {}) is not covered in call to `{}`",
-                            sig.param_names[i], i, callee
-                        ),
-                        Some(format!(
-                            "Add a `{}:` named argument or a positional argument for this \
-                             parameter",
-                            sig.param_names[i]
-                        )),
-                        Some(location.clone()),
-                        "FUNC011",
-                    ));
-                }
             }
         }
         Ok(result)
@@ -2688,90 +2592,30 @@ impl HirBuilder {
 
                 let hir_object = self.build_expression(object)?;
 
-                // For method calls, attempt named-argument resolution by looking up
-                // the method in the registry under the receiver's type name if known.
-                // Since we don't have full type information at HIR stage, we try a best-
-                // effort lookup: if any class exposes a method with this name and the arg
-                // count matches, use that signature.  If multiple matches or none, fall
-                // back to an error when named args are present.
-                let hir_args = if Self::has_named_args(arguments) {
-                    // Attempt resolution: search for `AnyClass::method` in the registry.
-                    let candidates: Vec<CallableSignature> = self
-                        .named_arg_registry
-                        .iter()
-                        .filter(|(k, sig)| {
-                            k.ends_with(&format!("::{}", method))
-                                && sig.param_names.len() == arguments.len()
-                        })
-                        .map(|(_, v)| v.clone())
-                        .collect();
-
-                    match candidates.len() {
-                        0 => {
-                            return Err(CompilerError::semantic_error_with_code(
-                                format!(
-                                    "FUNC008: named arguments used in method call `.{}()` but no \
-                                     matching method signature was found in any class",
-                                    method
-                                ),
-                                Some(
-                                    "Ensure the method is defined in a class visible to this call \
-                                     site, or use positional arguments"
-                                        .to_string(),
-                                ),
-                                Some(location.clone()),
-                                "FUNC008",
-                            ));
+                // The receiver's class is not known here, so a call with named
+                // arguments keeps them in the order written together with their
+                // labels; the type checker matches them to the parameters of the
+                // receiver's own method (FUNC008-FUNC011).
+                let mut argument_labels: Vec<Option<String>> = Vec::new();
+                let mut hir_args = Vec::with_capacity(arguments.len());
+                let named = Self::has_named_args(arguments);
+                for argument in arguments {
+                    if let Expression::NamedArgBinding { label, value, .. } = argument {
+                        argument_labels.push(Some(label.clone()));
+                        hir_args.push(self.build_expression(value)?);
+                    } else {
+                        if named {
+                            argument_labels.push(None);
                         }
-                        1 => {
-                            let sig = candidates
-                                .into_iter()
-                                .next()
-                                .expect("invariant: match arm len==1 guarantees one element");
-                            let ordered =
-                                Self::resolve_named_args(method, &sig, arguments, location)?;
-                            ordered
-                                .iter()
-                                .map(|expr| {
-                                    let inner =
-                                        if let Expression::NamedArgBinding { value, .. } = expr {
-                                            value.as_ref()
-                                        } else {
-                                            *expr
-                                        };
-                                    self.build_expression(inner)
-                                })
-                                .collect::<Result<Vec<_>, _>>()?
-                        }
-                        _ => {
-                            return Err(CompilerError::semantic_error_with_code(
-                                format!(
-                                    "FUNC008: named arguments in method call `.{}()` are \
-                                     ambiguous — multiple classes define a method with this \
-                                     name and argument count",
-                                    method
-                                ),
-                                Some(
-                                    "Use positional arguments to avoid ambiguity, or qualify \
-                                     the receiver type"
-                                        .to_string(),
-                                ),
-                                Some(location.clone()),
-                                "FUNC008",
-                            ));
-                        }
+                        hir_args.push(self.build_expression(argument)?);
                     }
-                } else {
-                    arguments
-                        .iter()
-                        .map(|arg| self.build_expression(arg))
-                        .collect::<Result<Vec<_>, _>>()?
-                };
+                }
 
                 Ok(HirExpression::MethodCall {
                     receiver: Box::new(hir_object),
                     method: method.clone(),
                     arguments: hir_args,
+                    argument_labels,
                     location: location.clone(),
                 })
             }
@@ -3002,6 +2846,7 @@ impl HirBuilder {
                         StringPart::Interpolation(inner_expr) => {
                             let inner_hir = self.build_expression(inner_expr)?;
                             HirExpression::MethodCall {
+                                argument_labels: Vec::new(),
                                 receiver: Box::new(inner_hir),
                                 method: "toString".to_string(),
                                 arguments: vec![],
@@ -7948,6 +7793,7 @@ impl HirBuilder {
         let flags = behavior.to_flags();
         HirStatement::Expression {
             expression: HirExpression::MethodCall {
+                argument_labels: Vec::new(),
                 receiver: Box::new(HirExpression::Variable {
                     name: name.to_string(),
                     location: loc.clone(),

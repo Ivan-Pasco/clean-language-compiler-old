@@ -377,6 +377,10 @@ pub enum ResolvedHirExpression {
         method: String,
         method_symbol_id: Option<SymbolId>, // None for built-in methods
         arguments: Vec<ResolvedHirExpression>,
+        /// The label of each argument written as `name: value`, `None` for a
+        /// positional one. Empty when the call has no named argument. The
+        /// type checker reorders by it once the receiver's class is known.
+        argument_labels: Vec<Option<String>>,
         location: SourceLocation,
     },
 

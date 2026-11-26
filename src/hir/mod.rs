@@ -13,6 +13,7 @@ use crate::error::CompilerError;
 
 pub mod capability_defaults;
 pub mod hir_builder;
+pub mod named_args;
 pub mod private_scope;
 pub mod validation;
 
@@ -492,6 +493,10 @@ pub enum HirExpression {
         receiver: Box<HirExpression>,
         method: String,
         arguments: Vec<HirExpression>,
+        /// The label of each argument written as `name: value`, `None` for a
+        /// positional one. Empty when the call has no named argument. The
+        /// type checker reorders by it once the receiver's class is known.
+        argument_labels: Vec<Option<String>>,
         location: SourceLocation,
     },
 

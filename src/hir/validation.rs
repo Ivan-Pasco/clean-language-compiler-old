@@ -1376,6 +1376,7 @@ impl HirValidator {
                 method,
                 arguments,
                 location,
+                ..
             } => {
                 // CONC002: detect `req.method(...)`, `session.method(...)`, etc. expressed
                 // as MethodCall nodes (some parser paths produce these instead of NamespaceCall).

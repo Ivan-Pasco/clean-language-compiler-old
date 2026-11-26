@@ -243,6 +243,7 @@ impl NameResolver {
                         continue;
                     }
                     let set_flags = HirExpression::MethodCall {
+                        argument_labels: Vec::new(),
                         receiver: Box::new(HirExpression::Variable {
                             name: decl.name.clone(),
                             location: decl.location.clone(),
@@ -1547,6 +1548,7 @@ impl NameResolver {
                 };
                 prologue.push(HirStatement::Expression {
                     expression: HirExpression::MethodCall {
+                        argument_labels: Vec::new(),
                         receiver: Box::new(this_field),
                         method: "setFlags".to_string(),
                         arguments: vec![HirExpression::Literal {
@@ -2409,8 +2411,42 @@ impl NameResolver {
                 receiver,
                 method,
                 arguments,
+                argument_labels,
                 location,
-            } => self.resolve_method_call_expression(receiver, method, arguments, location),
+            } => {
+                let mut resolved =
+                    self.resolve_method_call_expression(receiver, method, arguments, location)?;
+                if argument_labels.is_empty() {
+                    return Ok(resolved);
+                }
+                // Named arguments are matched to the parameters by the type
+                // checker, which knows the receiver's class. A call the
+                // resolver turns into anything but an instance method call
+                // has no parameter list to match against.
+                match &mut resolved {
+                    ResolvedHirExpression::MethodCall {
+                        argument_labels: labels,
+                        ..
+                    } => {
+                        *labels = argument_labels.clone();
+                        Ok(resolved)
+                    }
+                    _ => {
+                        self.error_with_help(
+                            &format!(
+                                "FUNC008: named arguments are not supported for built-in or \
+                                 namespace function `{}`; only user-defined functions and \
+                                 methods with known parameter lists support named arguments",
+                                method
+                            ),
+                            Some("Remove the named argument labels".to_string()),
+                            location.clone(),
+                            "FUNC008",
+                        );
+                        Err(())
+                    }
+                }
+            }
             HirExpression::FieldAccess {
                 object,
                 field,
@@ -2800,6 +2836,7 @@ impl NameResolver {
                     resolved_arguments.push(self.resolve_expression(arg)?);
                 }
                 return Ok(ResolvedHirExpression::MethodCall {
+                    argument_labels: Vec::new(),
                     receiver: Box::new(ResolvedHirExpression::This {
                         class_symbol_id: current_class_id,
                         location: location.clone(),
@@ -3073,6 +3110,7 @@ impl NameResolver {
             resolved_arguments.push(self.resolve_expression(arg)?);
         }
         Ok(ResolvedHirExpression::MethodCall {
+            argument_labels: Vec::new(),
             receiver: Box::new(ResolvedHirExpression::This {
                 class_symbol_id: parent_id,
                 location: location.clone(),
@@ -3331,6 +3369,7 @@ impl NameResolver {
         let method_symbol_id = None;
 
         Ok(ResolvedHirExpression::MethodCall {
+            argument_labels: Vec::new(),
             receiver: Box::new(resolved_receiver),
             method: method.to_string(),
             method_symbol_id,
@@ -3627,6 +3666,7 @@ impl NameResolver {
                     .symbol_table
                     .lookup_class_member(current_class_id, function);
                 return Ok(ResolvedHirExpression::MethodCall {
+                    argument_labels: Vec::new(),
                     receiver: Box::new(ResolvedHirExpression::This {
                         class_symbol_id: current_class_id,
                         location: location.clone(),
@@ -3685,6 +3725,7 @@ impl NameResolver {
 
                     // Return as a method call on the field access chain
                     return Ok(ResolvedHirExpression::MethodCall {
+                        argument_labels: Vec::new(),
                         receiver: Box::new(receiver),
                         method: function.to_string(),
                         method_symbol_id: None, // Will be resolved based on receiver type
@@ -3717,6 +3758,7 @@ impl NameResolver {
                     resolved_arguments.push(self.resolve_expression(arg)?);
                 }
                 return Ok(ResolvedHirExpression::MethodCall {
+                    argument_labels: Vec::new(),
                     receiver: Box::new(receiver),
                     method: function.to_string(),
                     method_symbol_id: None,
@@ -3808,6 +3850,7 @@ impl NameResolver {
 
                     // Return as a method call
                     return Ok(ResolvedHirExpression::MethodCall {
+                        argument_labels: Vec::new(),
                         receiver: Box::new(receiver),
                         method: function.to_string(),
                         method_symbol_id: None, // Will be resolved based on receiver type
@@ -3959,6 +4002,7 @@ impl NameResolver {
                             location: location.clone(),
                         };
                         let method_call_hir = HirExpression::MethodCall {
+                            argument_labels: Vec::new(),
                             receiver: Box::new(field_access_hir),
                             method: method.to_string(),
                             arguments: arguments.to_vec(),

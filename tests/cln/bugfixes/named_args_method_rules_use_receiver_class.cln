@@ -1,0 +1,33 @@
+// Test: bugfixes/named_args_method_rules_use_receiver_class
+// Grammar: argument_item, named_argument
+// Semantic: FUNC008, FUNC011
+// Fixed in: compiler 0.33.190
+// Expected output:
+// Expected error:
+//   `size` has no parameter named `y`
+//
+// Regression: the label of a named argument on a method call was checked
+// against whichever class declared a method of that name, not against the
+// receiver's class. `Circle.size` has a parameter `y`, `Rect.size` has not.
+
+start:
+	Rect r = Rect()
+	print(r.size(x: 1, y: 2))
+
+class Rect
+	integer z
+	constructor()
+		z = 0
+	functions:
+		public:
+			integer size(integer x, integer w)
+				return x * w
+
+class Circle
+	integer z
+	constructor()
+		z = 0
+	functions:
+		public:
+			integer size(integer x, integer y)
+				return x + y
