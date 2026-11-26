@@ -229,7 +229,7 @@ impl<'a> Walker<'a> {
             self.scopes.pop();
         }
         for invariant in &mut class.invariants {
-            self.expression(invariant);
+            self.expression(&mut invariant.condition);
         }
         self.members = outer;
     }
@@ -255,7 +255,7 @@ impl<'a> Walker<'a> {
             self.block(&mut computed.body);
         }
         for rule in &mut block.rules {
-            self.expression(rule);
+            self.expression(&mut rule.condition);
         }
     }
 
