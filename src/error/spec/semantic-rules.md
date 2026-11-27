@@ -39,6 +39,8 @@ A token appears where the grammar does not allow it.
 
 It also covers a `+` in front of a value: Clean has no unary plus (`integer a = +5` is SYN002; write `5`).
 
+It also covers a plugin block header attribute (`html var="card":`, plugin-contract.md §1.1 `[blocks.<name>].attributes`) that the block does not declare — `` "`{name}` is not a header attribute of the `{block}` block" ``, with the help listing the accepted attributes (or saying the block takes none) — and a header attribute given twice — `` "`{name}` is given twice in the header of the `{block}` block" ``.
+
 It also covers `this`, which is a reserved word with no use: `this.x`, `this.m()` and a bare `this` are SYN002 — `` "`this` is not used in Clean: refer to the field or method by its name (`count`, `clear()`)" ``.
 
 It also includes a type block (an apply block like `integer:` or `string:`
@@ -181,6 +183,7 @@ The type of an expression does not match what the context requires.
 
 **Applies to:**
 - Variable assignment: RHS type must be assignable to LHS declared type
+- Variable declaration: the initializer's type must be assignable to the declared type — `"Type annotation '{declared}' contradicts the inferred type '{actual}' for variable '{name}'"`. Types are named as the source writes them (a class by its name)
 - Function return: return value type must match declared return type
 - Function argument: argument type must match parameter type
 - State variable initializer: initializer type must match declared state type
@@ -209,9 +212,9 @@ string title = none     // none cannot be used as string: a plain string is neve
 A variable, function, class, or module is referenced but has not been declared.
 
 **Applies to:**
-- Variable use before declaration
-- Function call to undefined function
-- Class instantiation of undefined class
+- Variable use before declaration — `"Undefined variable '{name}'"` (also inside string interpolation)
+- Function call to undefined function — `"Function '{name}' not found"`, with a "did you mean" help when a similar name exists
+- Class instantiation of undefined class — `"Undefined class '{name}'"`
 - Import of undefined module or symbol
 - Method call on undefined method
 - `base.method()` naming a method no ancestor class defines — `"No parent class of '{class}' defines a method '{method}'"`
@@ -227,11 +230,14 @@ start:
 A symbol (variable, function, class) is declared more than once in the same scope.
 
 **Applies to:**
-- Variable declared twice in same scope
 - Function defined twice at top level, including in two files of one namespace (files joined by file path imports or `shared:` folders). Two modules imported by name (`import: greetings` / `import: farewells`) may each declare the same public function or state name; they are reached as `greetings.message()` and `farewells.message()` (18-modules-and-imports.md)
-- Class defined twice
-- Duplicate import items
+- Class defined twice — `"Class '{name}' is already defined"`
+- State variable or computed state declared twice, or with the name of another top-level symbol — `"State variable '{name}' conflicts with existing symbol"`, `"Computed state '{name}' conflicts with existing symbol"`
+- An `external:` function with the name of a declared (non-built-in) symbol — `"External function '{name}' conflicts with existing symbol"`
+- A function named like the start function — `"Function '{name}' conflicts with start function"`
 - A top-level user function with the name of a function a plugin block emits (for example a frame.ui `events:` handler export). The error names the plugin and the block: `"Function '{name}' is already defined at {location}; plugin '{plugin}' also emits a function '{name}' for the '{block}:' block"`, with the help `Rename your function '{name}': the plugin's function keeps its name because the plugin's generated code calls it`.
+
+A variable declared twice in the same scope is SCOPE002, and an item given twice in one import list is IMPORT004.
 
 **Example (fails — SEM003):**
 ```clean
@@ -365,25 +371,27 @@ class Dog is Animal
 ```
 
 ### SEM007 — Unresolved Name
-A name cannot be resolved, or a check failed that has no more specific code.
+A name that is out of reach in the place where it is written, or a check failed that has no more specific code.
 
-The registry first described SEM007 as a generic-type error (bad type arguments, tuple sizes, union types). Those cases cannot happen: the language has no user-defined generics, tuples or union types (type-system.md §10). This section describes what the compiler emits SEM007 for today.
+The registry first described SEM007 as a generic-type error (bad type arguments, tuple sizes, union types). Those cases cannot happen: the language has no user-defined generics, tuples or union types (type-system.md §10). This section describes what the compiler emits SEM007 for today. An undeclared variable, function or class is SEM002, an unknown type name is SEM009, a variable redeclared in the same scope is SCOPE002, and a duplicate state, computed state, class, external or start-function name is SEM003.
 
 **Applies to:**
-- A variable that is not declared — `"Undefined variable '{name}'"` (also inside string interpolation)
-- A call to a function that is not declared — `"Function '{name}' not found"`
-- A call to a function a module does not define — `"Function '{fn}' not found in module '{module}'"`
-- The short name of a function or state variable of a module imported whole (`import: utils` or `utils as U`): it must be written `utils.add()` / `U.add()`. The help says to write `utils.add` or to import `utils.add` (see §Import Rules)
-- `req`, `res` or `session` used outside a frame.server endpoint handler
-- An unknown pattern name in a `validate` block `match:` constraint — `"Unknown pattern name '{name}' in validate match constraint. Valid patterns: …"`
-- Any other validation error raised without its own code
+- The short name of a function or state variable of a module imported whole (`import: utils` or `utils as U`): it must be written `utils.add()` / `U.add()`. The help says to write `utils.add` or to import `utils.add` (see §Import Rules). Messages: `"Function '{name}' is not in scope"`, `"Variable '{name}' is not in scope"`
+- A function or state variable a module does not define — `"Function '{fn}' not found in module '{module}'"`, `"'{name}' not found in module '{module}'"`
+- `ns.name` where `ns` is not imported as a module — `"'{ns}' is not imported as a module, so '{ns}.{name}' is not in scope"`
+- `req`, `res` or `session` used as a bare variable outside a frame.server endpoint handler — `"Undefined variable '{name}' — '{name}' is provided by the frame.server plugin and is only available inside endpoint handler bodies …"`. (A call such as `req.param(...)` outside a handler is CONC002.)
+- An unknown pattern name in a `validate` block `match:` constraint — `"Unknown pattern name '{name}' in validate match constraint. Valid patterns: …"`, and the other `validate` constraint argument errors (a `length` argument that is not an integer, a bound that is not a number, `oneOf` values that are not string or integer literals)
+- Any other validation error raised without its own code (for example `import:` inside a function, `break` or `continue` outside a loop, `base()` outside a class constructor)
 
-Several of these overlap SEM002 (undefined symbol) and SEM010 (unknown pattern name). The compiler is expected to move them to those codes (review finding M-12); until then they are reported as SEM007.
+The unknown `validate` pattern overlaps SEM010 (unknown pattern name); the compiler is expected to move it there (review finding M-12).
 
 **Example (fails — SEM007):**
 ```clean
+import:
+	utils
+
 start:
-	print(y)    // Undefined variable 'y'
+	print(add(1, 2))    // Function 'add' is not in scope: write utils.add(1, 2)
 ```
 
 ### SEM008 — Inheritance Cycle
@@ -396,7 +404,7 @@ class B is A    // circular
 ```
 
 ### SEM009 — Invalid Type Specification
-A type name does not refer to a valid type.
+A type name does not refer to a valid type — `"Undefined type '{name}'"`.
 
 **Example (fails — SEM009):**
 ```clean
@@ -530,7 +538,7 @@ Clean has no `this`: an object's own members are always named by their bare name
 Variables must be declared with an explicit type before being referenced in expressions or statements.
 
 ### SCOPE002 — Variable Cannot Be Redeclared in Same Scope
-A variable name that already exists in the current scope cannot be redeclared.
+A variable name that already exists in the current scope cannot be redeclared — `"Variable '{name}' is already declared in this scope"`.
 
 ### SCOPE003 — Maximum Scope Depth Exceeded
 The scope nesting depth has exceeded the implementation limit. This indicates deeply nested code that should be refactored.
@@ -997,6 +1005,8 @@ A dotted item `a.b` is the module file `a/b.cln` when that file exists; otherwis
 ### IMPORT001 — Circular Dependency
 Modules cannot have circular import dependencies.
 
+**Message:** `"Circular dependency detected: {a} -> {b} -> {a}"`, with the help `Break the cycle: remove one of the imports, or move what the modules share into a third module that both import`.
+
 ### IMPORT002 — Module Not Found
 The imported module does not exist in any search path.
 
@@ -1014,7 +1024,12 @@ The same item appears more than once in an import list.
 A referenced plugin is not installed. Install with `cleen plugin add <name>`.
 
 ### PLUGIN002 — Plugin Registration Conflict
-A plugin attempts to register a function or block handler that conflicts with an existing registration.
+A plugin attempts to register a function or block handler that conflicts with an existing registration (plugin-contract.md §1.2 rules 5 and 6):
+
+- Two loaded plugins handle the same block name — `"PLUGIN002: Registration conflict for '{block}:': already handled by '{first}', cannot register '{second}'"`
+- Two loaded plugins declare a bridge function with the same name and different signatures (parameter types, return type or `expand_strings`) — `` "PLUGIN002: bridge function `{name}` is declared by both `{first}` ({params}) -> {ret} and `{second}` ({params}) -> {ret} with different signatures. Plugins may share a bridge function only when they declare the same signature." ``
+
+Two plugins that declare the same bridge function with an identical signature are accepted; the function is registered once.
 
 ### PLUGIN018 — Assemble-Typed Illegal Bridge
 A structural typed-emission bridge (`_emit_function`, `_emit_class_full`, `_emit_stmt_from_source`, `_emit_expr_from_source`, `_emit_statement_into_start`, `_emit_statement_inline`, `_emit_external`, `_emit_state_block`, `_emit_route`, `_emit_helpers_batch`, `_emit_class_methods_from_spec`, or any `batch.*` builder) was called from inside a plugin's `assemble_typed` hook. Inside `assemble_typed`, only `_inject_source_file` is legal. See [`framework/contracts/assemble.md`](framework/contracts/assemble.md) §6.2 for the full illegal-bridge list and the rationale. Emitted at the first illegal call site; the sticky-error flag (typed-emission.md §3.15) prevents cascading duplicates.

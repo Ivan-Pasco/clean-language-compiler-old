@@ -2,7 +2,7 @@
 
 **Authority:** This file is the master index of every diagnostic the compiler can emit.
 **Version:** 1.1.0
-**Date:** 2026-11-26
+**Date:** 2026-11-27
 
 Every diagnostic the compiler emits carries a unique code. This file provides a navigable index of all codes, their categories, severity levels, and cross-references. For full rule definitions — conditions, examples, and messages — see `spec/semantic-rules.md`.
 
@@ -21,6 +21,7 @@ Every diagnostic the compiler emits carries a unique code. This file provides a 
 | STATE001–STATE099 | State | HIR validation and runtime — state management |
 | IMPORT001–IMPORT099 | Import | Module resolver — imports and dependencies |
 | PLUGIN001–PLUGIN099 | Plugin | Plugin loader — plugin registration and expansion |
+| CONC001–CONC099 | Concurrency | HIR validation — background work and request context |
 | COM001–COM099 | Compilation | Code generation — WASM emission |
 | RUN001–RUN099 | Runtime | WASM execution — runtime assertion failures |
 | BLD-* | Build | Multi-file compiler — project layout and discovery |
@@ -46,7 +47,7 @@ Emitted during parsing. No semantic information is available at this stage — t
 | Code | Name | Short Description | Severity | Defined In |
 |------|------|-------------------|----------|------------|
 | SYN001 | `InvalidToken` | Character is not valid in any lexical context | Error | semantic-rules.md §SYN001 |
-| SYN002 | `UnexpectedToken` | Token appears where the grammar does not allow it (includes a type/apply block at file top level) | Error | semantic-rules.md §SYN002 |
+| SYN002 | `UnexpectedToken` | Token appears where the grammar does not allow it (includes a type/apply block at file top level, and a plugin block header attribute the block does not declare or that is given twice) | Error | semantic-rules.md §SYN002 |
 | SYN003 | `InvalidIndentation` | Spaces used instead of tabs, or inconsistent nesting level | Error | semantic-rules.md §SYN003 |
 | SYN004 | `UnterminatedConstruct` | String literal, comment, or block not closed before end of file | Error | semantic-rules.md §SYN004 |
 | SYN005 | `MalformedConstruct` | Partial syntax structure is missing required elements | Error | semantic-rules.md §SYN005 |
@@ -62,15 +63,15 @@ Emitted during HIR validation, name resolution, and type checking.
 
 | Code | Name | Short Description | Severity | Defined In |
 |------|------|-------------------|----------|------------|
-| SEM001 | `TypeMismatch` | Expression type does not match the required type | Error | semantic-rules.md §SEM001 |
-| SEM002 | `UndefinedSymbol` | Variable, function, class, or module referenced but not declared | Error | semantic-rules.md §SEM002 |
-| SEM003 | `SymbolRedefinition` | Symbol declared more than once in the same scope (files of one namespace count as one scope; modules imported by name do not) | Error | semantic-rules.md §SEM003 |
+| SEM001 | `TypeMismatch` | Expression type does not match the required type (assignment, declaration initializer, return, argument, ...) | Error | semantic-rules.md §SEM001 |
+| SEM002 | `UndefinedSymbol` | Variable, function or class referenced but not declared | Error | semantic-rules.md §SEM002 |
+| SEM003 | `SymbolRedefinition` | Function, class, state, computed state or `external:` name declared twice, or a function named like the start function (files of one namespace count as one scope; modules imported by name do not). A variable redeclared in one scope is SCOPE002 | Error | semantic-rules.md §SEM003 |
 | SEM004 | `InvalidOperationForType` | Operator or operation applied to an unsupported type; a list type with both `.line` and `.pile` | Error | semantic-rules.md §SEM004 |
 | SEM005 | `AccessViolation` | Private member accessed from outside its allowed scope | Error | semantic-rules.md §SEM005 |
 | SEM006 | `InheritanceError` | A method override is invalid: its signature differs from the parent's public method, or it is not under `public:` | Error | semantic-rules.md §SEM006 |
-| SEM007 | `UnresolvedName` | Undefined variable or function (including the short name of a function of a module imported whole: write `utils.add()`), unknown `validate` pattern, or another validation error with no specific code | Error | semantic-rules.md §SEM007 |
+| SEM007 | `UnresolvedName` | A name out of reach where it is written: the short name of a function or state of a module imported whole (write `utils.add()`), a function a module does not define, a namespace that is not imported; `req` / `res` / `session` outside an endpoint handler; an unknown `validate` pattern or bad `validate` constraint argument; another validation error with no specific code | Error | semantic-rules.md §SEM007 |
 | SEM008 | `InheritanceCycle` | Class inherits from itself directly or indirectly | Error | semantic-rules.md §SEM008 |
-| SEM009 | `InvalidTypeSpecification` | Type name does not refer to a valid type | Error | semantic-rules.md §SEM009 |
+| SEM009 | `InvalidTypeSpecification` | Type name does not refer to a valid type (`Undefined type '{name}'`) | Error | semantic-rules.md §SEM009 |
 | SEM010 | `InvalidMatchPattern` | Argument to `string.matches()` is not one of the allowed pattern names | Error | semantic-rules.md §SEM010 |
 | SEM011 | `MissingCapabilityMethod` | A class claims `can C` but does not implement one of C's required methods | Error | semantic-rules.md §SEM011 |
 | SEM012 | `UndefinedCapability` | A class claims a capability that is not declared | Error | semantic-rules.md §SEM012 |
@@ -153,7 +154,7 @@ Emitted by the module resolver.
 
 | Code | Name | Short Description | Severity | Defined In |
 |------|------|-------------------|----------|------------|
-| IMPORT001 | `CircularDependency` | Two or more modules import each other in a cycle | Error | semantic-rules.md §IMPORT001 |
+| IMPORT001 | `CircularDependency` | Two or more modules import each other in a cycle (`Circular dependency detected: a -> b -> a`, with a help on breaking the cycle) | Error | semantic-rules.md §IMPORT001 |
 | IMPORT002 | `ModuleNotFound` | Imported module does not exist in any search path | Error | semantic-rules.md §IMPORT002 |
 | IMPORT003 | `SymbolNotInModule` | Specific symbol imported from a module is not exported by that module | Error | semantic-rules.md §IMPORT003 |
 | IMPORT004 | `DuplicateImportItem` | Same item appears more than once in an import list | Error | semantic-rules.md §IMPORT004 |
@@ -165,7 +166,7 @@ Emitted by the plugin loader.
 | Code | Name | Short Description | Severity | Defined In |
 |------|------|-------------------|----------|------------|
 | PLUGIN001 | `PluginNotFound` | Referenced plugin is not installed | Error | semantic-rules.md §PLUGIN001 |
-| PLUGIN002 | `PluginRegistrationConflict` | Two plugins attempt to register the same function or block handler | Error | semantic-rules.md §PLUGIN002 |
+| PLUGIN002 | `PluginRegistrationConflict` | Two plugins handle the same block name, or declare the same bridge function name with different signatures (params, return type or `expand_strings`); the message names both plugins and the function. Identical redeclarations are accepted | Error | semantic-rules.md §PLUGIN002, plugin-contract.md §1.2 |
 | PLUGIN006 | `UnsupportedExpansionVersion` | Plugin declares `expansion_version` higher than the compiler's `HIGHEST_SUPPORTED_EXPANSION_VERSION`; the compiler refuses to load it rather than silently falling back to a wrong ABI | Error | typed-emission.md §14 |
 | PLUGIN007 | `BridgeHostClassMismatchInEmission` | `_emit_external` was called with a `host_class_lp` that does not match the active build target (e.g. a server-only bridge emitted for a browser build) | Error | typed-emission.md §14 |
 | PLUGIN008 | `ConsumedHandleReuse` | A plugin passed a handle to a constructor that had already consumed it; typed-emission enforces single-ownership on every arena node | Error | typed-emission.md §14 |
@@ -177,7 +178,19 @@ Emitted by the plugin loader.
 | PLUGIN014 | `StickyErrorTripped` | A typed-emission bridge failed (null / consumed / out-of-range handle, LP-string malformed, JSON invalid, etc.) and set the arena's sticky-error flag. All subsequent bridge calls short-circuit until the plugin queries `_ctx_had_error(ctx)` and returns, or calls `_ctx_clear_error(ctx)`. The auto-emitted diagnostic uses this code by default; plugins MAY override the (code, message) pair via `_ctx_set_error_context(ctx, code, message)` before the first failure to attribute the diagnostic to a plugin-authored code | Error | typed-emission.md §3.15 (Amendment 5) |
 | PLUGIN015 | `InvalidExpressionSource` | The user-authored source fragment passed to `_emit_expr_from_source` is not a syntactically valid Clean expression | Error | typed-emission.md §3.16 (Amendment 6) |
 | PLUGIN016 | `StatementInExpressionContext` | The user-authored source fragment passed to `_emit_expr_from_source` parses as a valid statement but is not a valid expression in an expression context (e.g. `return 42`, `x = 1`) — symmetric to PLUGIN012 | Error | typed-emission.md §3.16 (Amendment 6) |
+| PLUGIN017 | `InvalidEmissionArgument` | A typed-emission bridge (`_emit_function`, `_emit_capability`) received an argument it cannot use: an invalid arena `ctx` (not called from an active expand/assemble slot), a pointer to unreadable memory or an empty name, a malformed `params_json`, or a type, default-value or body handle that does not resolve. The message names the bridge and, when known, the function (`` _emit_function for `name`: params_json is malformed: ... ``) | Error | typed-emission.md §3.1, §3.18 |
 | PLUGIN018 | `AssembleTypedIllegalBridge` | A structural typed-emission bridge (`_emit_function`, `_emit_class_full`, `_emit_stmt_from_source`, etc.) was called from inside `assemble_typed`. Only `_inject_source_file` is legal in that slot | Error | assemble.md §6.2 |
+
+### Concurrency Codes (CONC)
+
+Emitted during HIR validation.
+
+| Code | Name | Short Description | Severity | Defined In |
+|------|------|-------------------|----------|------------|
+| CONC001 | `UnsynchronisedStateInBackground` | A module-level `state:` variable is read or written inside the expression of a `background` statement: `` "Shared state variable '{name}' is accessed inside a `background:` block without synchronisation — this is an unsynchronised concurrent access (CONC001). Capture the value before the `background:` call or use an atomic/mutex wrapper." `` | Error | — (no rule in the specification; see note) |
+| CONC002 | `RequestContextOutsideHandler` | A request-context call (`req.*`, `res.*`, `session.*`) outside a request handler: `"Request-context builtin '{ns}.{fn}' is used outside a request handler (CONC002). ..."`. A function is a handler when it is a generated route wrapper, has a parameter named `req` / `request` or of type `Request`, or is registered through a bridge that declares `registers_handler_at_arg`. A local variable of that name shadows the namespace. (A bare `req` / `res` / `session` variable outside a handler is SEM007.) | Error | plugin-contract.md §3.6 |
+
+> **Note on CONC001.** Specification 19 says a program runs one task at a time and `background f()` runs later, in order; specification 23 says state updates from background calls stay sequential. CONC001 is emitted by the compiler but is not described there.
 
 ### Compilation Codes (COM)
 
@@ -235,7 +248,7 @@ A warning starts with `warning[<CODE>]`. After the last diagnostic the compiler 
 
 **Example:**
 ```
-error[SEM004]: Type annotation 'integer' contradicts the inferred type 'string' for variable 'x'
+error[SEM001]: Type annotation 'integer' contradicts the inferred type 'string' for variable 'x'
   --> main.cln:2:10
    |
    1 | start:
@@ -249,7 +262,7 @@ error[SEM004]: Type annotation 'integer' contradicts the inferred type 'string' 
 
 With `--json` (for example `cln check --json file.cln`), each diagnostic is an object with `severity`, `message`, `file`, `line`, `column`, `code` and, when known, `byte_start`.
 
-Every compiler-produced diagnostic must include a code. A diagnostic without a code is incomplete and violates Principle 4. Known gaps: plugin errors carry their code inside the message text and `code` is `null` in JSON (finding A8-8).
+Every compiler-produced diagnostic must include a code. A diagnostic without a code is incomplete and violates Principle 4. Known gaps: plugin errors carry their code inside the message text and `code` is `null` in JSON (finding A8-8). A failure reported by a plugin's own expansion has no registry code; it is located at the user's block (plugin-contract.md §5.4), not at the top of the file.
 
 ---
 
@@ -278,6 +291,8 @@ The following code numbers are reserved for future use. Do not assign them witho
 | PLUGIN015 | Assigned — `InvalidExpressionSource` (typed-emission.md §3.16; Amendment 6) |
 | PLUGIN016 | Assigned — `StatementInExpressionContext` (typed-emission.md §3.16; Amendment 6) |
 | PLUGIN018 | Assigned — `AssembleTypedIllegalBridge` (assemble.md §6.2) |
-| PLUGIN017, PLUGIN019–PLUGIN099 | Reserved |
+| PLUGIN017 | Assigned — `InvalidEmissionArgument` (typed-emission.md §3.1, §3.18) |
+| PLUGIN019–PLUGIN099 | Reserved |
+| CONC003–CONC099 | Reserved |
 | COM007–COM099 | Reserved |
 | RUN007–RUN099 | Reserved |
