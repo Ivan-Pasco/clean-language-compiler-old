@@ -623,66 +623,12 @@ impl TokenParser {
                 Ok(expr)
             }
             TokenKind::LeftBracket => {
-                // Parse array/list literal: [elem1, elem2, ...]
-                self.bump(); // consume '['
-                self.skip_whitespace();
-
-                let mut elements = Vec::new();
-
-                // Check for empty array
-                if matches!(self.current_kind(), TokenKind::RightBracket) {
-                    self.bump(); // consume ']'
-                    return Ok(Expression::Literal(Value::List(elements)));
-                }
-
-                // Parse array elements. A list of constants stays a literal
-                // value; any other element makes it a ListLiteral whose
-                // elements are evaluated at runtime.
-                // grammar.ebnf list_element: a literal, a name, or a
-                // parenthesized expression.
-                let mut exprs = Vec::new();
-                loop {
-                    let starts_parenthesized = matches!(self.current_kind(), TokenKind::LeftParen);
-                    let element_location = self.current().location.clone();
-                    let element = self.parse_expression()?;
-                    // Only a bare `-2` is a signed literal; `(-2)` stays the
-                    // parenthesized expression it was written as.
-                    let element = if starts_parenthesized {
-                        element
-                    } else {
-                        Self::fold_signed_literal(element)
-                    };
-                    if !starts_parenthesized
-                        && !matches!(element, Expression::Literal(_) | Expression::Variable(_))
-                    {
-                        return Err(CompilerError::parse_error(
-                            "A list element must be a literal, a name, or an expression in parentheses".to_string(),
-                            Some(element_location),
-                            Some("Wrap the element in parentheses, e.g. [a, (a * 3)].".to_string()),
-                        ));
-                    }
-                    exprs.push(element);
-                    self.skip_whitespace();
-
-                    if matches!(self.current_kind(), TokenKind::Comma) {
-                        self.bump(); // consume ','
-                        self.skip_whitespace();
-                    } else {
-                        break;
-                    }
-                }
-
-                self.expect(&TokenKind::RightBracket)?;
-                if exprs.iter().all(|e| matches!(e, Expression::Literal(_))) {
-                    for e in exprs {
-                        if let Expression::Literal(v) = e {
-                            elements.push(v);
-                        }
-                    }
-                    Ok(Expression::Literal(Value::List(elements)))
-                } else {
-                    Ok(Expression::ListLiteral(exprs))
-                }
+                // grammar.ebnf 1.4.0: line breaks are allowed inside [ ]. Layout
+                // tokens are skipped while the literal is open, like ( ) and { }.
+                self.brace_depth += 1;
+                let list = self.parse_list_literal();
+                self.brace_depth -= 1;
+                list
             }
             TokenKind::If => {
                 // Parse conditional expression: if condition then value else value
@@ -810,6 +756,16 @@ impl TokenParser {
                     location: literal_location,
                 })
             }
+            // A line break that changes the indentation inside an expression
+            // that is not wrapped in ( ), [ ] or { } (spec 06-expressions).
+            TokenKind::Indent(_) | TokenKind::Dedent(_) => {
+                let token = self.current();
+                Err(CompilerError::parse_error(
+                    "The expression continues on the next line: a multi-line expression must be wrapped in parentheses".to_string(),
+                    Some(token.location.clone()),
+                    Some("Wrap the whole expression in ( ), for example `integer x = (a +\n\t\t2)`.".to_string()),
+                ))
+            }
             _ => {
                 let token = self.current();
                 Err(CompilerError::parse_error(
@@ -882,5 +838,73 @@ impl TokenParser {
         }
 
         Ok(Expression::StringInterpolation(parts))
+    }
+}
+
+impl TokenParser {
+    /// Parse a list literal `[a, b, ...]` (the cursor is on `[`). The caller
+    /// keeps `brace_depth` raised while the literal is open.
+    fn parse_list_literal(&mut self) -> Result<Expression, CompilerError> {
+        // Parse array/list literal: [elem1, elem2, ...]
+        self.bump(); // consume '['
+        self.skip_whitespace();
+
+        let mut elements = Vec::new();
+
+        // Check for empty array
+        if matches!(self.current_kind(), TokenKind::RightBracket) {
+            self.bump(); // consume ']'
+            return Ok(Expression::Literal(Value::List(elements)));
+        }
+
+        // Parse array elements. A list of constants stays a literal
+        // value; any other element makes it a ListLiteral whose
+        // elements are evaluated at runtime.
+        // grammar.ebnf list_element: a literal, a name, or a
+        // parenthesized expression.
+        let mut exprs = Vec::new();
+        loop {
+            let starts_parenthesized = matches!(self.current_kind(), TokenKind::LeftParen);
+            let element_location = self.current().location.clone();
+            let element = self.parse_expression()?;
+            // Only a bare `-2` is a signed literal; `(-2)` stays the
+            // parenthesized expression it was written as.
+            let element = if starts_parenthesized {
+                element
+            } else {
+                Self::fold_signed_literal(element)
+            };
+            if !starts_parenthesized
+                && !matches!(element, Expression::Literal(_) | Expression::Variable(_))
+            {
+                return Err(CompilerError::parse_error(
+                    "A list element must be a literal, a name, or an expression in parentheses"
+                        .to_string(),
+                    Some(element_location),
+                    Some("Wrap the element in parentheses, e.g. [a, (a * 3)].".to_string()),
+                ));
+            }
+            exprs.push(element);
+            self.skip_whitespace();
+
+            if matches!(self.current_kind(), TokenKind::Comma) {
+                self.bump(); // consume ','
+                self.skip_whitespace();
+            } else {
+                break;
+            }
+        }
+
+        self.expect(&TokenKind::RightBracket)?;
+        if exprs.iter().all(|e| matches!(e, Expression::Literal(_))) {
+            for e in exprs {
+                if let Expression::Literal(v) = e {
+                    elements.push(v);
+                }
+            }
+            Ok(Expression::Literal(Value::List(elements)))
+        } else {
+            Ok(Expression::ListLiteral(exprs))
+        }
     }
 }

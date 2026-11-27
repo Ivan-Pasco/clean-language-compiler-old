@@ -1,0 +1,30 @@
+// Test: bugfixes/list_literal_spans_lines
+// Grammar: list_literal, pairs_literal (grammar.ebnf 1.4.0: line breaks are allowed inside [ ])
+// Fixed in: compiler 0.33.195
+// Expected output:
+//   2
+//   2
+//   3
+//   a
+//
+// Regression: a multi-line list literal failed with "Unexpected token in
+// expression: Indent(2)" while a multi-line pairs literal was accepted
+// (issue #70).
+
+start:
+	list<integer> a = [
+		1,
+		2
+	]
+	print(a.length())
+	pairs<string, integer> p = {
+		"a": 1,
+		"b": 2
+	}
+	print(p.get("b"))
+	list<string> names = [
+		"a", "b",
+		"c"
+	]
+	print(names.length())
+	print(names.get(0))
