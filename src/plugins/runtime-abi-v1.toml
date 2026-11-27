@@ -7,7 +7,7 @@
 # Catalog every WASM host bridge function the compiler registers via
 # `src/plugins/wasm_adapter.rs::setup_linker` for the plugin sandbox.
 # This is the machine-readable companion to
-# `foundation/spec/plugins/contracts/runtime-abi.md` (§7 illustrates the shape;
+# `foundation/spec/framework/contracts/runtime-abi.md` (§7 illustrates the shape;
 # §10 gives a skeleton example; §11 identifies this file's location).
 #
 # Consumed by
@@ -1489,62 +1489,101 @@ host_class = "all"
 semantics  = "stub"
 source     = "wasm_adapter.rs:3070"
 
-[[bridge]]
-name       = "_json_encode"
-module     = "env"
-params     = ["i32"]
-returns    = "i32"
-host_class = "all"
-semantics  = "stub"
-source     = "wasm_adapter.rs:3077"
-
-[[bridge]]
-name       = "_json_decode"
-module     = "env"
-params     = ["i32", "i32"]
-returns    = "i32"
-host_class = "all"
-semantics  = "stub"
-source     = "wasm_adapter.rs:3084"
-
-# Delivery-2 boxed-Any JSON bridges and `_json_get` (stdlib-reference §8).
-# Real implementations shared with the wasmtime_runner — see
-# src/runtime/json_bridge.rs.
+# _json_encode_v2 / _json_encode_pretty_v2 / _json_decode_v2: Layer 2 host
+# bridge functions for the new-shape JSON serialization and parsing (Delivery 2
+# / Option B host-bridge migration). The "_v2" suffix is a WASM-internal name
+# that is PERMANENT — hosts and compiler agreed to a stable versioned bridge
+# rather than a coordinated rename after soak. See
+# foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md §"Bridge naming".
+#
+# Per stdlib-reference.md §8 and BOXED_ANY_ABI.md:
+#   - Grammar is RFC 8259 (normative).
+#   - Numbers are IEEE-754 double (D1). Duplicate object keys: last-wins (D2).
+#   - Serialize order = insertion order (D3).
+#   - _json_encode_v2 / _json_encode_pretty_v2 input is a boxed-Any pointer
+#     (see BOXED_ANY_ABI.md). Output is an LP string ("length-prefixed":
+#     4-byte length + content bytes) at ptr. Both MUST correctly serialize
+#     the null-tag as the literal "null" but MUST NOT return "null" as a
+#     silent fallback for invalid/unrecognized boxed-Any input — they raise
+#     instead (D5). _json_encode_pretty_v2 produces the same JSON with 2-space
+#     indentation and newlines (serde_json::to_string_pretty; JS
+#     JSON.stringify(v, null, 2)); _json_encode_v2 is compact
+#     (serde_json::to_string; JS JSON.stringify(v)). Two named entrypoints —
+#     no boolean flag.
+#   - _json_decode_v2 input is a raw string as (ptr, len). Output is a
+#     boxed-Any pointer, OR 0 (the null pointer) as a sentinel indicating
+#     JSON parse failure. Because a successfully parsed JSON `null` produces
+#     a valid non-zero boxed-Any pointer (tag=0 allocated in linear memory),
+#     the value 0 is unambiguously a failure sentinel. The compiler emits a
+#     post-call null-check: json.textToData raises the runtime error() with
+#     message "JSON parse failure"; json.tryTextToData substitutes the
+#     singleton null_boxed_any pointer. See stdlib-reference.md §8.
 [[bridge]]
 name       = "_json_encode_v2"
 module     = "env"
-params     = ["i32"]
-returns    = "i32"
+params     = ["i32"]            # boxed-Any pointer
+returns    = "i32"              # LP string pointer (compact JSON)
 host_class = "all"
 semantics  = "wired"
-source     = "runtime/json_bridge.rs"
+source     = "clean-server/src/bridges/json.rs, clean-framework runtime browser JS"
 
 [[bridge]]
 name       = "_json_encode_pretty_v2"
 module     = "env"
-params     = ["i32"]
-returns    = "i32"
+params     = ["i32"]            # boxed-Any pointer
+returns    = "i32"              # LP string pointer (2-space indented JSON)
 host_class = "all"
 semantics  = "wired"
-source     = "runtime/json_bridge.rs"
+source     = "clean-server/src/bridges/json.rs, clean-framework runtime browser JS"
 
 [[bridge]]
 name       = "_json_decode_v2"
 module     = "env"
-params     = ["i32", "i32"]
-returns    = "i32"
+params     = ["i32", "i32"]     # raw string (ptr, len)
+returns    = "i32"              # boxed-Any pointer, or 0 (null ptr) on parse failure
 host_class = "all"
 semantics  = "wired"
-source     = "runtime/json_bridge.rs"
+source     = "clean-server/src/bridges/json.rs, clean-framework runtime browser JS"
 
+# _json_encode / _json_decode: LEGACY pre-Delivery-2 shape. Preserved for
+# frame.server 2.9.5 backward compat. These are the exact bridge names
+# every user WASM binary currently deployed imports; re-registering them
+# with the new signature would trap all currently-deployed binaries at
+# instantiation. Do not remove until [P5] post-soak cleanup. See
+# foundation/docs/governance/JSON_MIGRATION_DELIVERY2.md §"Legacy bridges".
+[[bridge]]
+name       = "_json_encode"
+module     = "env"
+params     = ["i32"]            # boxed-Any pointer (legacy shape)
+returns    = "i32"              # LP string pointer
+host_class = "all"
+semantics  = "wired"
+source     = "clean-server/src/bridges/json.rs, clean-framework runtime browser JS"
+
+[[bridge]]
+name       = "_json_decode"
+module     = "env"
+params     = ["i32", "i32"]     # raw string (ptr, len) (legacy shape)
+returns    = "i32"              # boxed-Any pointer (legacy raise-on-failure convention)
+host_class = "all"
+semantics  = "wired"
+source     = "clean-server/src/bridges/json.rs, clean-framework runtime browser JS"
+
+# _json_get: extract a value from an already-parsed boxed-Any (typically an
+# object produced by _json_decode, or a raw db.query row) using a
+# dot-separated path. Path is a single length-prefixed pointer (LP: 4-byte
+# length + content bytes). Returns a boxed-Any pointer for the leaf value, or
+# a null-tag boxed-Any if the path does not resolve. Never raises on missing
+# keys — extraction failures return null, not an error (a raise would
+# strand every JSON consumer behind onError). See BOXED_ANY_ABI.md.
 [[bridge]]
 name       = "_json_get"
 module     = "env"
-params     = ["i32", "i32"]
-returns    = "i32"
+params     = ["i32", "i32"]     # boxed-Any pointer, LP path pointer
+returns    = "i32"              # boxed-Any pointer (null-tag on miss)
 host_class = "all"
 semantics  = "wired"
-source     = "runtime/json_bridge.rs"
+source     = "clean-server/src/bridges/json.rs, clean-framework runtime browser JS"
 
 # =============================================================================
 # Group: build_state
@@ -1577,7 +1616,7 @@ source     = "wasm_adapter.rs:5025"
 #          /_debug/capture handler and the errors dashboard's retest
 #          sandbox. Real impl lives in clean-server (src/dev_capture.rs);
 #          sandbox stub returns an LP empty string. See
-#          foundation/platform-architecture/SERVER_EXTENSIONS.md
+#          foundation/spec/platform/SERVER_EXTENSIONS.md
 #          §Dev-mode Capture for the payload contract.
 # =============================================================================
 

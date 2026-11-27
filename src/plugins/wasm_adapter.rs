@@ -970,7 +970,7 @@ impl WasmPluginAdapter {
     /// always in sync with the v3 linker.
     ///
     /// After registration, verifies the linker's `(module, name)` surface
-    /// matches `foundation/platform-architecture/runtime-abi/v1.toml` — the
+    /// matches `foundation/spec/platform/runtime-abi/v1.toml` — the
     /// canonical catalog authored in Phase D S2. Any drift (missing or extra
     /// bridge) fails plugin adapter construction with a diagnostic pointing
     /// at the offending name(s).
@@ -994,7 +994,7 @@ impl WasmPluginAdapter {
         {
             return Err(anyhow!(
                 "Runtime ABI v1 parity failure: {}. See \
-                 foundation/platform-architecture/runtime-abi/v1.toml.",
+                 foundation/spec/platform/runtime-abi/v1.toml.",
                 msg
             ));
         }
@@ -2569,7 +2569,7 @@ impl WasmPluginAdapter {
     // DEV CAPTURE - Server-only runtime snapshot (stub)
     // Real impl lives in clean-server (src/dev_capture.rs); sandbox returns
     // an LP empty string so plugin WASM importing _dev_snapshot instantiates
-    // cleanly. See foundation/platform-architecture/function-registry.toml
+    // cleanly. See foundation/spec/platform/function-registry.toml
     // category=dev_capture and SERVER_EXTENSIONS.md §Dev-mode Capture.
     // =========================================
     fn register_dev_capture_functions(linker: &mut Linker<PluginState>) -> Result<()> {
@@ -4428,7 +4428,7 @@ fn read_lp_from_data(data: &[u8], ptr: i32) -> Option<&[u8]> {
 /// `PluginState::build_state`, so the linker itself holds no build state.
 ///
 /// **Calling convention:** both bridges follow the canonical contract in
-/// `foundation/platform-architecture/function-registry.toml`, which the
+/// `foundation/spec/platform/function-registry.toml`, which the
 /// registry loader expands with `expand_strings=true` — every `"string"`
 /// param becomes a raw `(ptr: i32, len: i32)` pair, and `"void"` returns
 /// nothing. The compiler emits an unpacking wrapper on the plugin side, so
@@ -5786,7 +5786,7 @@ mod tests {
     /// Plugin Contracts v2 §2.5 smoke test — exercises `_build_state_set`
     /// and `_build_state_get` end-to-end via a hand-crafted WAT module that
     /// imports them with the **canonical** signatures from
-    /// `foundation/platform-architecture/function-registry.toml`
+    /// `foundation/spec/platform/function-registry.toml`
     /// (`expand_strings=true`):
     ///
     ///   `_build_state_set(key_ptr, key_len, value_ptr, value_len) -> ()`

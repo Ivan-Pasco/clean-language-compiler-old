@@ -3,7 +3,7 @@
 //! Responsibilities:
 //!
 //! 1. **Spec vendoring**: copies
-//!    `foundation/platform-architecture/function-registry.toml` into
+//!    `foundation/spec/platform/function-registry.toml` into
 //!    `src/plugins/function-registry.toml`, the runtime-ABI schema into
 //!    `src/plugins/runtime-abi-v1.toml`, and `foundation/spec/error-codes.md`
 //!    plus `foundation/spec/semantic-rules.md` into `src/error/spec/`, and
@@ -118,7 +118,7 @@ fn main() {
     // ── 1. Function-registry vendor ──────────────────────────────────────────
     let foundation_registry = manifest_dir
         .parent()
-        .map(|p| p.join("foundation/platform-architecture/function-registry.toml"));
+        .map(|p| p.join("foundation/spec/platform/function-registry.toml"));
     let vendored_registry = manifest_dir.join("src/plugins/function-registry.toml");
 
     if let Some(src) = foundation_registry {
@@ -141,14 +141,14 @@ fn main() {
     println!("cargo:rerun-if-changed={}", vendored_registry.display());
 
     // ── 1b. Runtime-ABI schema vendor ────────────────────────────────────────
-    // Copies foundation/platform-architecture/runtime-abi/v1.toml into
+    // Copies foundation/spec/platform/runtime-abi/v1.toml into
     // src/plugins/runtime-abi-v1.toml so `include_str!` in
     // src/plugins/runtime_abi_schema.rs always picks up edits during local
     // development. In CI (without the foundation sibling) the last vendored
     // copy is used. The runtime CI parity gate rejects drift between them.
     let foundation_abi = manifest_dir
         .parent()
-        .map(|p| p.join("foundation/platform-architecture/runtime-abi/v1.toml"));
+        .map(|p| p.join("foundation/spec/platform/runtime-abi/v1.toml"));
     let vendored_abi = manifest_dir.join("src/plugins/runtime-abi-v1.toml");
 
     if let Some(src) = foundation_abi {

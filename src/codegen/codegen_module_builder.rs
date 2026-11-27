@@ -9,7 +9,7 @@ use wasm_encoder::{Function, Instruction};
 
 impl super::CodeGenerator {
     /// Emit a WASM import subject to the Import Minimality Rule
-    /// (see foundation/platform-architecture/EXECUTION_LAYERS.md).
+    /// (see foundation/spec/platform/EXECUTION_LAYERS.md).
     ///
     /// Returns `true` if the import was emitted and the caller should
     /// record its function index (via `self.function_count`) and then

@@ -713,7 +713,7 @@ impl GlobalSymbolTable {
                 HirType::Number,
             ),
             // math.random / math.sign — Layer 2 bridges; registered in
-            // foundation/platform-architecture/function-registry.toml as
+            // foundation/spec/platform/function-registry.toml as
             // `math_random` / `math_sign` with `aliases = ["math.random"]` /
             // `aliases = ["math.sign"]`. spec/stdlib-reference.md §2.
             ("math.random", vec![], HirType::Number),

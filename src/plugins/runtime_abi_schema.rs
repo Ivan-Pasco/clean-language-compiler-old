@@ -5,7 +5,7 @@
 //! host bridges the compiler registers for the plugin sandbox.
 //!
 //! The TOML file is a *copy* of
-//! `foundation/platform-architecture/runtime-abi/v1.toml` bundled inside the
+//! `foundation/spec/platform/runtime-abi/v1.toml` bundled inside the
 //! compiler crate so CI (which checks out only the compiler repo, not the
 //! foundation subtree) can build. The foundation-side TOML is the authoritative
 //! spec artifact; the copy in this directory must stay in sync — a mismatch is
@@ -33,7 +33,7 @@
 use serde::Deserialize;
 
 /// Embedded catalog. Copy of
-/// `foundation/platform-architecture/runtime-abi/v1.toml`; foundation-side
+/// `foundation/spec/platform/runtime-abi/v1.toml`; foundation-side
 /// TOML is authoritative. Keep the two in sync when adding bridges.
 const V1_TOML_SRC: &str = include_str!("runtime-abi-v1.toml");
 
@@ -61,7 +61,7 @@ struct BridgeEntry {
 /// this module exists to enforce.
 pub(crate) fn expected_bridges() -> Vec<(String, String)> {
     let doc: RuntimeAbiV1 = toml::from_str(V1_TOML_SRC)
-        .expect("foundation/platform-architecture/runtime-abi/v1.toml failed to parse");
+        .expect("foundation/spec/platform/runtime-abi/v1.toml failed to parse");
     doc.bridge.into_iter().map(|b| (b.module, b.name)).collect()
 }
 

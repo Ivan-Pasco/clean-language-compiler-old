@@ -757,7 +757,7 @@ impl PluginRegistry {
     /// 3. The plugin's `[aliases]` section (`clean_name` → `bridge_name`),
     ///    for names no convention derives. Fills gaps only.
     /// 4. Explicit `aliases = [...]` list on the canonical
-    ///    `foundation/platform-architecture/function-registry.toml` entry.
+    ///    `foundation/spec/platform/function-registry.toml` entry.
     ///    This covers bridges that the compiler registers directly (e.g. via
     ///    `codegen_module_builder.rs`) without a matching plugin manifest
     ///    entry, and lets new byte-safe bridges add their language surface by
@@ -1364,7 +1364,7 @@ impl PluginRegistryBuilder {
 
         // Registry conformance validation — gated per-plugin via the
         // CLEAN_PLUGIN_REGISTRY_VALIDATION env var. Default (unset) is `all`:
-        // every plugin manifest must match foundation/platform-architecture/
+        // every plugin manifest must match foundation/spec/platform/
         // function-registry.toml at WASM-shape level.
         //
         // Set explicitly to `"off"` for emergency triage when a brand-new
@@ -1395,7 +1395,7 @@ impl PluginRegistryBuilder {
                             plugin_name: "(registry)".to_string(),
                             message: format!(
                                 "PLUGIN-REGISTRY-DRIFT: {} bridge function declaration(s) \
-do not match foundation/platform-architecture/function-registry.toml. \
+do not match foundation/spec/platform/function-registry.toml. \
 Fix the plugin.toml entries or update the registry (with developer approval). \
 To exclude a plugin from this check temporarily, narrow the \
 CLEAN_PLUGIN_REGISTRY_VALIDATION allowlist:\n{}",

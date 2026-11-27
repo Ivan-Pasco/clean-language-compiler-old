@@ -1402,7 +1402,7 @@ impl MirCodeGenerator<'_> {
     }
 
     /// This is a general-purpose reachability scan used to drive the
-    /// Import Minimality Rule (see foundation/platform-architecture/EXECUTION_LAYERS.md).
+    /// Import Minimality Rule (see foundation/spec/platform/EXECUTION_LAYERS.md).
     /// Returns the set of names that appear as call targets anywhere in the
     /// MIR program, expanded with common import-name aliases so that
     /// language-level names (`http.get`) match WASM import field names
@@ -2344,7 +2344,7 @@ impl MirCodeGenerator<'_> {
                 );
 
                 // A tree-shaken import (Import Minimality Rule,
-                // foundation/platform-architecture/EXECUTION_LAYERS.md) has no
+                // foundation/spec/platform/EXECUTION_LAYERS.md) has no
                 // host function to wrap.
                 let Some(raw_func_index) = self.wasm_generator.register_import_function(
                     module,

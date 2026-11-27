@@ -155,7 +155,7 @@ impl CompilationTarget {
 /// Memory budget tier for WASM modules.
 ///
 /// Each tier defines initial pages, max pages, and intended use case.
-/// Values are from `foundation/platform-architecture/MEMORY_POLICY.md` section 3.
+/// Values are from `foundation/spec/platform/MEMORY_POLICY.md` section 3.
 ///
 /// | Tier       | Initial Pages | Initial Size | Max Pages | Max Size |
 /// |------------|---------------|-------------|-----------|----------|
@@ -1321,7 +1321,7 @@ fn extend_with_source_plugin_bridges(
 /// by a loaded plugin manifest.
 ///
 /// Some Layer-3 bridges (e.g. `_dev_snapshot`) are declared only in the
-/// canonical `foundation/platform-architecture/function-registry.toml` and
+/// canonical `foundation/spec/platform/function-registry.toml` and
 /// never in a plugin.toml `[bridge]` section — the framework calls them
 /// directly by their `_prefixed` name. Codegen only emits WASM imports for
 /// bridges present in `bridge_functions`, and codegen already filters that

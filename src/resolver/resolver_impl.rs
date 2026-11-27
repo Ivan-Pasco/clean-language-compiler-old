@@ -2976,7 +2976,7 @@ impl NameResolver {
         };
 
         // Last-resort registry consultation: some bridges (e.g. `_dev_snapshot`)
-        // are declared only in `foundation/platform-architecture/function-registry.toml`
+        // are declared only in `foundation/spec/platform/function-registry.toml`
         // and not in any plugin.toml `[bridge]` section — the framework fragment
         // calls them directly by their `_prefixed` name. Register the missing
         // bridge on demand from the embedded registry so the call resolves
@@ -5405,7 +5405,7 @@ impl NameResolver {
     }
 
     /// Synthesize a `BridgeFunction` from an entry in the embedded
-    /// `foundation/platform-architecture/function-registry.toml`. Returns
+    /// `foundation/spec/platform/function-registry.toml`. Returns
     /// `None` when the registry cannot be loaded or the name is unknown.
     ///
     /// Accepts either the canonical bridge name (`_dev_snapshot`) or a
