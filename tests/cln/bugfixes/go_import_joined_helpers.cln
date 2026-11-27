@@ -1,0 +1,17 @@
+// Test: bugfixes/go_import_joined_helpers
+// Semantic: file joined by go_import_file_path_short_names.cln (`import: "x.cln"`)
+// Fixed in: compiler 0.33.193
+// Expected output:
+//   joined loaded
+
+start:
+	print("joined loaded")
+
+state:
+	public:
+		integer hits = 3
+
+functions:
+	public:
+		string shout(string word)
+			return word + "!"

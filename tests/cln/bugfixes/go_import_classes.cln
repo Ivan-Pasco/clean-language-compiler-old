@@ -1,0 +1,20 @@
+// Test: bugfixes/go_import_classes
+// Semantic: module imported by go_import_class_stays_unqualified.cln
+// Fixed in: compiler 0.33.193
+// Expected output:
+//   classes loaded
+
+start:
+	print("classes loaded")
+
+class GoBox
+	public:
+		integer size
+
+	constructor(integer sizeParam)
+		size = sizeParam
+
+	functions:
+		public:
+			integer area()
+				return size * size

@@ -1,0 +1,17 @@
+// Test: bugfixes/go_import_module_alias_only
+// Grammar: import_block, import_item (module_name "as" module_name)
+// Semantic: `import: utils as U` reaches the module only as `U`
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+//   utils loaded
+//   5
+//   6
+
+import:
+	go_import_utils as U
+
+start:
+	print(U.add(2, 3))
+	U.count = U.count + 1
+	print(U.count)

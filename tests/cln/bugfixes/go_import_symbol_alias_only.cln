@@ -1,0 +1,14 @@
+// Test: bugfixes/go_import_symbol_alias_only
+// Grammar: import_block, import_item (module_name "." module_name "as" module_name)
+// Semantic: `import: utils.add as plus` brings in `plus()`
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+//   utils loaded
+//   5
+
+import:
+	go_import_utils.add as plus
+
+start:
+	print(plus(2, 3))

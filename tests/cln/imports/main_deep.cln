@@ -1,11 +1,12 @@
 // main_deep.cln - Deep import tree test
 // Tests multi-level import resolution: main -> math_helpers -> utils
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
 
 import:
 	math_helpers
 
 start:
-	integer sq = square(5)
+	integer sq = math_helpers.square(5)
 	print(sq)
-	integer quad = quadruple(3)
+	integer quad = math_helpers.quadruple(3)
 	print(quad)

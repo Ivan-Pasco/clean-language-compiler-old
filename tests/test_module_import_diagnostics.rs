@@ -37,9 +37,10 @@ fn same_function_in_two_imported_modules_is_sem003() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("main.cln"),
-        "import:\n\tgreetings\n\tfarewells\n\nstart:\n\tprintl(message())\n",
+        "import:\n\tgreetings\n\tfarewells\n\nstart:\n\tprintl(greetings.message())\n",
     )
     .unwrap();
+    // Fixed: spec 18 (2026-11-27) requires module.fn for import: modules.
     // Fixed: the functions were private (no `public:`). Spec 18 "Visibility
     // Model" lets two files each declare a private `message`, so only public
     // duplicates are a SEM003 redefinition; the private case is covered by

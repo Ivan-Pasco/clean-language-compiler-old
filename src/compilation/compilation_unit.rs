@@ -21,6 +21,30 @@ pub struct ModulePluginExpansion {
     pub expansion: crate::plugins::PluginExpansion,
 }
 
+/// How an `import:` item written by name brings a module's names into the
+/// importing file (spec 18 "Imports", the Go model).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NamedImportKind {
+    /// `utils`, `utils as U`, `data.models`: the module's public names are
+    /// reached through `namespace` (`utils.add()`, `U.count`, `models.fn()`).
+    Module { namespace: String, module: String },
+    /// `utils.add`, `utils.add as plus`: the one symbol is in scope as
+    /// `local`; `module` is the module part as written (`utils`).
+    Symbol {
+        symbol: String,
+        local: String,
+        module: String,
+    },
+}
+
+/// One by-name `import:` item of a module, resolved to the module it loads.
+#[derive(Debug, Clone)]
+pub struct NamedImport {
+    pub target: CompilationModuleId,
+    pub kind: NamedImportKind,
+    pub location: SourceLocation,
+}
+
 /// Represents a single module (source file) in the compilation unit
 #[derive(Debug, Clone)]
 pub struct CompiledModule {
@@ -47,6 +71,17 @@ pub struct CompiledModule {
 
     /// Whether this is the entry module
     pub is_entry: bool,
+
+    /// The by-name `import:` items of this module, resolved to their modules.
+    pub named_imports: Vec<NamedImport>,
+
+    /// Modules this module joins by file path (`import: "helpers.cln"`):
+    /// their names share this module's namespace.
+    pub file_imports: std::collections::HashSet<CompilationModuleId>,
+
+    /// True for a file of a `shared:` folder: every file of the project sees
+    /// its names unqualified.
+    pub shared: bool,
 
     /// AST a plugin emitted for this module instead of Clean source (a
     /// typed-emission plugin's output for an HTML page entry). Merged into
@@ -81,6 +116,9 @@ impl CompiledModule {
             imports: Vec::new(),
             exports: HashMap::new(),
             is_entry,
+            named_imports: Vec::new(),
+            file_imports: std::collections::HashSet::new(),
+            shared: false,
             plugin_expansion: None,
             plugin_generated: false,
             location: SourceLocation {

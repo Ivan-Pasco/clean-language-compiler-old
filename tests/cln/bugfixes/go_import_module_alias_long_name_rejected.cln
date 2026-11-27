@@ -1,0 +1,14 @@
+// Test: bugfixes/go_import_module_alias_long_name_rejected
+// Grammar: import_block, import_item (module_name "as" module_name)
+// Semantic: `import: utils as U` does not leave `utils.add()` in scope
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+// Expected error:
+//   go_import_utils
+
+import:
+	go_import_utils as U
+
+start:
+	print(go_import_utils.add(2, 3))

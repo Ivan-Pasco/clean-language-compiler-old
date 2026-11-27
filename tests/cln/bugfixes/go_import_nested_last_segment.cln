@@ -1,0 +1,16 @@
+// Test: bugfixes/go_import_nested_last_segment
+// Grammar: import_block, import_item (module_name "." module_name)
+// Semantic: `import: data.models` reaches the module as `models`
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+//   models loaded
+//   7
+//   8
+
+import:
+	go_import_data.models
+
+start:
+	print(models.seven())
+	print(models.eight())

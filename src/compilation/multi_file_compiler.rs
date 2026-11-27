@@ -3,7 +3,10 @@
 //! Orchestrates the compilation of multi-file Clean Language programs.
 //! This is the main entry point for building programs with imports.
 
-use super::{CompilationModuleId, CompilationUnit, ModuleGraph, ModulePluginExpansion};
+use super::{
+    CompilationModuleId, CompilationUnit, ModuleGraph, ModulePluginExpansion, NamedImport,
+    NamedImportKind,
+};
 use crate::ast::SourceLocation;
 use crate::error::{CompilerError, ErrorContext, ErrorType};
 use crate::hir::hir_builder::HirBuilder;
@@ -23,6 +26,8 @@ struct ExtractedImport {
     name: String,
     /// True if this is a file path import
     is_file_import: bool,
+    /// The `as` name of the item, if any
+    alias: Option<String>,
     /// Where the import is written, for import-cycle and resolution errors
     location: SourceLocation,
 }
@@ -500,6 +505,19 @@ impl MultiFileCompiler {
                     };
                     let id = unit.add_module(name, file_path, source);
                     graph.add_module(id);
+                    if let Some(module) = unit.get_module_mut(id) {
+                        module.shared = true;
+                    }
+                }
+            }
+            // Files found through imports first are shared files too.
+            for shared_dir in &info.shared_folders {
+                for file_path in Self::collect_cln_files(shared_dir) {
+                    if let Some(id) = unit.module_id_for_path(&file_path) {
+                        if let Some(module) = unit.get_module_mut(id) {
+                            module.shared = true;
+                        }
+                    }
                 }
             }
 
@@ -1197,6 +1215,24 @@ impl MultiFileCompiler {
                                         )
                                     };
 
+                                // Record what the file wrote, so the merge can scope
+                                // names the way spec 18 says (Go model).
+                                if let Some(m) = unit.get_module_mut(current_id) {
+                                    if import.is_file_import {
+                                        m.file_imports.insert(dep_id);
+                                    } else {
+                                        m.named_imports.push(NamedImport {
+                                            target: dep_id,
+                                            kind: Self::named_import_kind(
+                                                &import.name,
+                                                import.alias.as_deref(),
+                                                &module_name,
+                                            ),
+                                            location: import.location.clone(),
+                                        });
+                                    }
+                                }
+
                                 // Add to graph (`utils.add` and `utils.mul` are one edge)
                                 if linked.insert(dep_id) {
                                     graph.add_dependency(
@@ -1227,6 +1263,33 @@ impl MultiFileCompiler {
             Ok(())
         } else {
             Err(errors)
+        }
+    }
+
+    /// What a by-name import item brings in, from the name as written
+    /// (`utils`, `data.models`, `utils.add`), its `as` name and the module
+    /// name `resolve_module_import` loaded for it: the module itself when
+    /// that is the whole written name, otherwise one symbol of the module.
+    fn named_import_kind(
+        written: &str,
+        alias: Option<&str>,
+        loaded_module: &str,
+    ) -> NamedImportKind {
+        if written == loaded_module {
+            let last = written.rsplit('.').next().unwrap_or(written);
+            return NamedImportKind::Module {
+                namespace: alias.unwrap_or(last).to_string(),
+                module: written.to_string(),
+            };
+        }
+        let symbol = written
+            .strip_prefix(loaded_module)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .unwrap_or(written);
+        NamedImportKind::Symbol {
+            symbol: symbol.to_string(),
+            local: alias.unwrap_or(symbol).to_string(),
+            module: loaded_module.to_string(),
         }
     }
 
@@ -1350,6 +1413,7 @@ impl MultiFileCompiler {
                     },
                     name: key,
                     is_file_import: import.is_file_import,
+                    alias: import.alias.clone(),
                 });
             }
         }

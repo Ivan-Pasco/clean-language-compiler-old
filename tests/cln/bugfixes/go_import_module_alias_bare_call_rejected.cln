@@ -1,0 +1,15 @@
+// Test: bugfixes/go_import_module_alias_bare_call_rejected
+// Grammar: import_block, import_item (module_name "as" module_name)
+// Semantic: SEM007 - `import: utils as U` leaves no bare `add()`
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+// Expected error:
+//   SEM007
+//   write U.add(...) or import go_import_utils.add
+
+import:
+	go_import_utils as U
+
+start:
+	print(add(2, 3))

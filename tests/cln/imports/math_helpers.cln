@@ -1,5 +1,6 @@
 // math_helpers.cln - Math utilities that import from utils
 // Tests deeper import tree
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
 
 import:
 	utils
@@ -8,7 +9,7 @@ functions:
 	// Changed in 0.33.184: an imported module function outside public: (square, quadruple) is private, SEM005 per developer decision
 	public:
 		integer square(integer n)
-			return multiply(n, n)
+			return utils.multiply(n, n)
 
 		integer quadruple(integer n)
-			return double_value(double_value(n))
+			return utils.double_value(utils.double_value(n))

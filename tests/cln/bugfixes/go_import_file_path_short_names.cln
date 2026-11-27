@@ -1,0 +1,16 @@
+// Test: bugfixes/go_import_file_path_short_names
+// Grammar: import_block, import_item (file path import)
+// Semantic: a file joined by `import: "x.cln"` shares the namespace, short names stay in scope
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+//   joined loaded
+//   hi!
+//   3
+
+import:
+	"go_import_joined_helpers.cln"
+
+start:
+	print(shout("hi"))
+	print(hits)

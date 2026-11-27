@@ -1,0 +1,15 @@
+// Test: bugfixes/go_import_bare_state_write_rejected
+// Grammar: import_block, import_item
+// Semantic: SEM007 - a bare write of a state variable of a module imported by name
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+// Expected error:
+//   SEM007
+//   write go_import_utils.count or import go_import_utils.count
+
+import:
+	go_import_utils
+
+start:
+	count = 9

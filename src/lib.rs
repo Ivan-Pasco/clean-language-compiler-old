@@ -1962,7 +1962,11 @@ fn run_multi_file_frontend(
         // "Visibility Model"). Give a private name that another file also
         // declares a file-qualified internal name before the modules merge
         // into one namespace.
-        let private_renames: std::collections::HashMap<_, _> = {
+        let (private_renames, module_members): (
+            std::collections::HashMap<_, _>,
+            std::collections::HashMap<_, _>,
+        ) = {
+            use crate::hir::module_scope::ModuleMembers;
             use crate::hir::private_scope::{plan_renames, ModuleDeclarations};
             let mut ids = Vec::new();
             let mut declarations = Vec::new();
@@ -1987,8 +1991,28 @@ fn run_multi_file_frontend(
                     |f| ast::is_user_source_location(&f.location),
                 ));
             }
-            ids.into_iter().zip(plan_renames(&declarations)).collect()
+            let plans = plan_renames(&declarations);
+            let members = ids
+                .iter()
+                .zip(declarations.iter().zip(plans.iter()))
+                .filter_map(|(id, (declared, renames))| {
+                    let module = unit.get_module(*id)?;
+                    Some((
+                        *id,
+                        ModuleMembers {
+                            name: module.name.clone(),
+                            functions: declared.functions.clone(),
+                            state: declared.state.clone(),
+                            renames: renames.clone(),
+                        },
+                    ))
+                })
+                .collect();
+            (ids.into_iter().zip(plans).collect(), members)
         };
+        // Names each file reaches through its by-name imports (spec 18, Go
+        // model); bare references to them are SEM007.
+        let mut import_scope_errors: Vec<CompilerError> = Vec::new();
 
         for module_id in &unit.compilation_order {
             if let Some(module) = unit.get_module(*module_id) {
@@ -2017,7 +2041,7 @@ fn run_multi_file_frontend(
                     );
                     continue;
                 }
-                let renamed_hir = match (&module.hir, private_renames.get(module_id)) {
+                let mut renamed_hir = match (&module.hir, private_renames.get(module_id)) {
                     (Some(hir), Some(renames)) if !renames.is_empty() => {
                         let mut hir = hir.clone();
                         crate::hir::private_scope::apply_renames(&mut hir, renames);
@@ -2025,6 +2049,50 @@ fn run_multi_file_frontend(
                     }
                     _ => None,
                 };
+                if !module.plugin_generated && !module.named_imports.is_empty() {
+                    use crate::compilation::NamedImportKind;
+                    use crate::hir::module_scope::{
+                        apply_import_scope, ImportScope, ImportedModule,
+                    };
+                    let imports: Vec<ImportedModule> = module
+                        .named_imports
+                        .iter()
+                        .filter_map(|import| {
+                            let members = module_members.get(&import.target)?;
+                            let joined = module.file_imports.contains(&import.target)
+                                || unit.get_module(import.target).is_some_and(|t| t.shared);
+                            Some(match &import.kind {
+                                NamedImportKind::Module { namespace, .. } => {
+                                    ImportedModule::Module {
+                                        namespace: namespace.clone(),
+                                        members,
+                                        joined,
+                                    }
+                                }
+                                NamedImportKind::Symbol { symbol, local, .. } => {
+                                    ImportedModule::Symbol {
+                                        symbol: symbol.clone(),
+                                        local: local.clone(),
+                                        members,
+                                        joined,
+                                    }
+                                }
+                            })
+                        })
+                        .collect();
+                    if let Some(source) = renamed_hir.as_ref().or(module.hir.as_ref()) {
+                        let mut own: std::collections::HashSet<String> =
+                            source.functions.iter().map(|f| f.name.clone()).collect();
+                        if let Some(state) = &source.state {
+                            own.extend(state.declarations.iter().map(|d| d.name.clone()));
+                            own.extend(state.computed.iter().map(|c| c.name.clone()));
+                        }
+                        let scope = ImportScope::new(own, &imports);
+                        let mut hir = source.clone();
+                        import_scope_errors.extend(apply_import_scope(&mut hir, &scope));
+                        renamed_hir = Some(hir);
+                    }
+                }
                 if let Some(hir) = renamed_hir.as_ref().or(module.hir.as_ref()) {
                     // Dedup by name: plugin preamble injection on the entry module can
                     // re-emit helpers (e.g. __redirect_0) already generated by a non-entry
@@ -2244,6 +2312,9 @@ fn run_multi_file_frontend(
             });
         }
 
+        if !import_scope_errors.is_empty() {
+            return Err(import_scope_errors);
+        }
         if !duplicate_functions.is_empty() {
             return Err(duplicate_functions);
         }

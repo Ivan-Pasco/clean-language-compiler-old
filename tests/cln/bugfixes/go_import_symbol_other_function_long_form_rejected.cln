@@ -1,0 +1,15 @@
+// Test: bugfixes/go_import_symbol_other_function_long_form_rejected
+// Grammar: import_block, import_item (module_name "." module_name)
+// Semantic: SEM007 - `import: utils.add` does not make `utils.mul()` reachable
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+// Expected error:
+//   SEM007
+//   'go_import_utils' is not imported as a module
+
+import:
+	go_import_utils.add
+
+start:
+	print(go_import_utils.mul(2, 3))

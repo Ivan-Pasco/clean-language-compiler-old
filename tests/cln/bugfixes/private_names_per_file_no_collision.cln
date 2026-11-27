@@ -4,6 +4,7 @@
 //   declares is private to that file, so equal private names in different
 //   files (or the importing file) are separate and never SEM003/SEM007
 // Fixed in: compiler 0.33.190
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
 // Expected output:
 //   module b start
 //   module a start
@@ -21,11 +22,11 @@ import:
 	private_name_module_b_private_names
 
 start:
-	print(fromA())
-	print(fromB())
+	print(private_name_module_a_private_names.fromA())
+	print(private_name_module_b_private_names.fromB())
 	print(helper())
 	print(calls)
-	print(fromA())
+	print(private_name_module_a_private_names.fromA())
 
 state:
 	integer calls = 7

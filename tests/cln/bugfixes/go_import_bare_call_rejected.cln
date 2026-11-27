@@ -1,0 +1,15 @@
+// Test: bugfixes/go_import_bare_call_rejected
+// Grammar: import_block, import_item
+// Semantic: SEM007 - a bare call to a function of a module imported by name
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+// Expected error:
+//   SEM007
+//   write go_import_utils.add(...) or import go_import_utils.add
+
+import:
+	go_import_utils
+
+start:
+	print(add(2, 3))

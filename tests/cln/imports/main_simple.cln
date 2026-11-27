@@ -1,9 +1,10 @@
 // main_simple.cln - Simple two-file import test
 // Tests basic module import functionality
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
 
 import:
 	utils
 
 start:
-	integer result = add(5, 3)
+	integer result = utils.add(5, 3)
 	print(result)

@@ -1,0 +1,15 @@
+// Test: bugfixes/go_import_symbol_alias_original_name_rejected
+// Grammar: import_block, import_item (module_name "." module_name "as" module_name)
+// Semantic: SEM007 - `import: utils.add as plus` leaves no `add()`
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+// Expected error:
+//   SEM007
+//   Function 'add' is not in scope
+
+import:
+	go_import_utils.add as plus
+
+start:
+	print(add(2, 3))

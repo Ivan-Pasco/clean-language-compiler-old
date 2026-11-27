@@ -2,6 +2,7 @@
 // Grammar: start_block (grammar.ebnf §6), import_block
 // Semantic: SCOPE (each file's start: body is its own block scope)
 // Fixed in: compiler 0.33.166
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
 // Expected output:
 //   other 2
 //   main 1
@@ -13,4 +14,4 @@ import:
 start:
 	integer s = 1
 	printl("main " + s.toString())
-	printl(helper().toString())
+	printl(start_scope_other.helper().toString())

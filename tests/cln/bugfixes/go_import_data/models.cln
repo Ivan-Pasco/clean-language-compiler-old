@@ -1,0 +1,16 @@
+// Test: bugfixes/go_import_data/models
+// Semantic: nested module imported by go_import_nested_*.cln (spec 18, `import: data.models`)
+// Fixed in: compiler 0.33.193
+// Expected output:
+//   models loaded
+
+start:
+	print("models loaded")
+
+functions:
+	public:
+		integer seven()
+			return 7
+
+		integer eight()
+			return 8

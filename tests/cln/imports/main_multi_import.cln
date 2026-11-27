@@ -1,5 +1,6 @@
 // main_multi_import.cln - Multiple imports test
 // Tests importing from multiple modules
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
 
 import:
 	utils
@@ -7,13 +8,13 @@ import:
 
 start:
 	// Direct use from utils
-	integer sum = add(10, 5)
+	integer sum = utils.add(10, 5)
 	print(sum)
 
 	// Use from math_helpers
-	integer sq = square(4)
+	integer sq = math_helpers.square(4)
 	print(sq)
 
 	// Combined usage
-	integer result = multiply(sq, 2)
+	integer result = utils.multiply(sq, 2)
 	print(result)

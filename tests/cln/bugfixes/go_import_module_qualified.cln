@@ -1,0 +1,19 @@
+// Test: bugfixes/go_import_module_qualified
+// Grammar: import_block, import_item
+// Semantic: `import: utils` reaches functions and state as `utils.add()` and `utils.count`
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+//   utils loaded
+//   5
+//   6
+//   7
+
+import:
+	go_import_utils
+
+start:
+	print(go_import_utils.add(2, 3))
+	go_import_utils.count = go_import_utils.count + 1
+	print(go_import_utils.count)
+	print(go_import_utils.mul(7, 1))

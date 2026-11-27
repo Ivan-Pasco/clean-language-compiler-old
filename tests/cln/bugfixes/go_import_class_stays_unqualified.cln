@@ -1,0 +1,15 @@
+// Test: bugfixes/go_import_class_stays_unqualified
+// Grammar: import_block, import_item
+// Semantic: classes of a module imported by name keep their bare name; its functions do not
+// Fixed in: compiler 0.33.193
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
+// Expected output:
+//   classes loaded
+//   49
+
+import:
+	go_import_classes
+
+start:
+	GoBox box = GoBox(7)
+	print(box.area())

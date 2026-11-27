@@ -5,6 +5,9 @@
 //! run. Every `HashMap` gets its own random hash keys, so compiling the same
 //! project several times in one process exercises every hash-map iteration
 //! that could leak into the output.
+//!
+//! Fixed: spec 18 (2026-11-27) requires module.fn for import: modules, so the
+//! programs below call imported functions through their module name.
 
 use clean_language_compiler::MemoryTier;
 use std::fs;
@@ -18,9 +21,9 @@ import:
 start:
 \tSquare s = Square(3)
 \tprint(s.area())
-\tprint(perimeter(s))
-\tprint(total([1, 2, 3]))
-\tprint(next())
+\tprint(geometry.perimeter(s))
+\tprint(geometry.total([1, 2, 3]))
+\tprint(counters.next())
 ";
 
 const SHAPES: &str = "\
@@ -53,7 +56,7 @@ functions:
 \t// Changed in 0.33.184: an imported module function outside public: (perimeter, total) is private, SEM005 per developer decision
 \tpublic:
 \t\tinteger perimeter(Square s)
-\t\t\treturn times(s.side, 4)
+\t\t\treturn utils.times(s.side, 4)
 
 \t\tinteger total(list<integer> xs)
 \t\t\tinteger sum = 0
@@ -81,14 +84,14 @@ import:
 \tutils
 
 start:
-\tinteger seed = plus(1, 2)
+\tinteger seed = utils.plus(1, 2)
 \tprint(seed)
 
 functions:
 \t// Changed in 0.33.184: an imported module function outside public: (next) is private, SEM005 per developer decision
 \tpublic:
 \t\tinteger next()
-\t\t\treturn plus(times(2, 3), 1)
+\t\t\treturn utils.plus(utils.times(2, 3), 1)
 ";
 
 #[test]

@@ -4,6 +4,7 @@
 // Semantic: SEM005 — public functions and state of an imported module are usable, and a
 //   public function may use its own file's private members
 // Fixed in: compiler 0.33.184
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
 // Expected output:
 //   43
 //   43
@@ -15,8 +16,8 @@ import:
 	sem005_module_helpers as H
 
 start:
-	print(revealed())
 	print(H.revealed())
-	print(total)
-	total = total + 1
-	print(total)
+	print(H.revealed())
+	print(H.total)
+	H.total = H.total + 1
+	print(H.total)

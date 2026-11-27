@@ -1,6 +1,7 @@
 // Test: bugfixes/import_search_paths_lib_modules_src
 // Semantic: spec 18 Module Resolution searches ./lib/, ./modules/ and ./src/ next to the importing file
 // Fixed in: compiler 0.33.190
+// Fixed: spec 18 (2026-11-27) requires module.fn for import: modules
 // Expected output:
 //   lib
 //   modules
@@ -12,6 +13,6 @@ import:
 	search_path_src_helper
 
 start:
-	print(from_lib())
-	print(from_modules())
-	print(from_src())
+	print(search_path_lib_helper.from_lib())
+	print(search_path_modules_helper.from_modules())
+	print(search_path_src_helper.from_src())
