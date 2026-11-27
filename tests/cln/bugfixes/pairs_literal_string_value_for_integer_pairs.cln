@@ -1,0 +1,12 @@
+// Test: bugfixes/pairs_literal_string_value_for_integer_pairs
+// Grammar: pairs_literal, variable_declaration
+// Semantic: SEM001 — the values of a pairs literal are checked against the
+//   declared value type; a string is not an integer
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   SEM
+
+start:
+	pairs<string, integer> p = {"a": "x"}
+	print(p["a"])

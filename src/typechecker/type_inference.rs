@@ -1507,6 +1507,16 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// Where to report a problem with a value inside a literal: the value
+    /// itself, or the enclosing `fallback` when the value carries no position.
+    fn located_value(value: &SourceLocation, fallback: &SourceLocation) -> SourceLocation {
+        if value.line == 0 {
+            fallback.clone()
+        } else {
+            value.clone()
+        }
+    }
+
     /// `value` is stored where a `target` is expected (assignment, argument,
     /// return): widen a literal to the target type and require the value's
     /// type to be assignable to it (directional, type-system.md §5).
@@ -1560,11 +1570,12 @@ impl<'a> TypeInference<'a> {
             (TastExpressionKind::ObjectLiteral { fields }, ConcreteType::Pairs(_, value_type)) => {
                 let value_type = (**value_type).clone();
                 let boxes = value_type.optional_primitive().is_some();
+                // Every value is stored into the declared value type: a
+                // `number` is not an `integer`, a string is not either
+                // (type-system.md §5/§6).
                 for field in fields.iter_mut() {
-                    if field.value.expr_type == ConcreteType::Null || boxes {
-                        let location = field.value.location.clone();
-                        self.require_assignable(&mut field.value, &value_type, &location);
-                    }
+                    let location = Self::located_value(&field.value.location, location);
+                    self.require_assignable(&mut field.value, &value_type, &location);
                 }
                 if boxes {
                     value.expr_type = target.clone();
