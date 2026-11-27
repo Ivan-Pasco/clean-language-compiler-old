@@ -1,0 +1,23 @@
+// Test: bugfixes/list_of_parent_not_assignable_to_list_of_child
+// Grammar: variable_declaration, list_type
+// Semantic: type-system §10 — `list<T>` is covariant only: a `list<Animal>`
+//   is not a `list<Dog>`
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   SEM004
+
+start:
+	Animal a = Animal("x")
+	list<Animal> as = [a]
+	list<Dog> ds = as
+	print(ds.length())
+
+class Animal
+	string name
+
+	constructor(string name)
+
+class Dog is Animal
+	constructor(string dogName)
+		base(dogName)

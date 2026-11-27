@@ -1,0 +1,37 @@
+// Test: bugfixes/list_of_child_assignable_to_list_of_parent_declaration
+// Grammar: variable_declaration, list_type
+// Semantic: type-system §5 and §10 — `list<T1>` converts to `list<T2>` when T1
+//   is a subtype of T2; a declaration accepts it like an assignment,
+//   argument and return do
+// Fixed in: compiler 0.33.195
+// Expected output:
+//   1
+//   ...
+//
+// Regression: `list<Animal> as = ds` with `list<Dog> ds` failed with SEM004
+// "Type annotation ... contradicts the inferred type" while assignment, argument
+// and return accepted the same value.
+
+start:
+	Dog d = Dog("r", "lab")
+	list<Dog> ds = [d]
+	list<Animal> as = ds
+	print(as.length())
+	print(as[0].speak())
+
+class Animal
+	string name
+
+	constructor(string name)
+
+	functions:
+		public:
+			string speak()
+				return "..."
+
+class Dog is Animal
+	string breed
+
+	constructor(string dogName, string dogBreed)
+		base(dogName)
+		breed = dogBreed

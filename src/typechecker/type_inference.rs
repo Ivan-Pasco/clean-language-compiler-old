@@ -1507,6 +1507,31 @@ impl<'a> TypeInference<'a> {
         }
     }
 
+    /// `from` is assignable to `to` through class inheritance: a subclass for
+    /// its parent, a class for a capability type (the constraint solver
+    /// checks conformance, SEM011), and a list of such values for a list of
+    /// the parent (lists are covariant, type-system.md §10).
+    fn class_subtype_assignable(&self, from: &ConcreteType, to: &ConcreteType) -> bool {
+        match (from, to) {
+            (
+                ConcreteType::Class {
+                    symbol_id: child_id,
+                    ..
+                },
+                ConcreteType::Class {
+                    symbol_id: parent_id,
+                    ..
+                },
+            ) => self.class_is_subclass_of(*child_id, *parent_id),
+            (ConcreteType::Class { .. }, ConcreteType::Interface { .. }) => true,
+            (ConcreteType::Array(from_element), ConcreteType::Array(to_element)) => {
+                from_element == to_element
+                    || self.class_subtype_assignable(from_element, to_element)
+            }
+            _ => false,
+        }
+    }
+
     /// Where to report a problem with a value inside a literal: the value
     /// itself, or the enclosing `fallback` when the value carries no position.
     fn located_value(value: &SourceLocation, fallback: &SourceLocation) -> SourceLocation {
@@ -3229,23 +3254,10 @@ impl<'a> TypeInference<'a> {
                                 | ConcreteType::Generic { .. }
                                 | ConcreteType::Optional(_)
                         );
-                        // For class types, also allow subclass → parent assignment (polymorphism)
-                        let class_subtype_ok = match (init_ty, declared_ty) {
-                            (
-                                ConcreteType::Class {
-                                    symbol_id: child_id,
-                                    ..
-                                },
-                                ConcreteType::Class {
-                                    symbol_id: parent_id,
-                                    ..
-                                },
-                            ) => self.class_is_subclass_of(*child_id, *parent_id),
-                            // A class value in a capability-typed variable: the
-                            // constraint solver checks conformance (SEM011).
-                            (ConcreteType::Class { .. }, ConcreteType::Interface { .. }) => true,
-                            _ => false,
-                        };
+                        // For class types, also allow subclass → parent assignment
+                        // (polymorphism), also as the element type of a list
+                        // (`list<Dog>` → `list<Animal>`, type-system.md §10).
+                        let class_subtype_ok = self.class_subtype_assignable(init_ty, declared_ty);
                         // An integer constant stored into a sized integer is
                         // range-checked instead ("... does not fit in ...",
                         // `fit_into_sized_integer`).
