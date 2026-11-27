@@ -4886,7 +4886,7 @@ impl<'a> TypeInference<'a> {
                 match &resolved_receiver_type {
                     ConcreteType::Class { symbol_id, .. } => {
                         if let Some(method_sym) =
-                            self.symbol_table.lookup_class_member(*symbol_id, method)
+                            self.symbol_table.lookup_class_method(*symbol_id, method)
                         {
                             tracing::debug!(
                                 class_symbol = symbol_id.0,
@@ -5157,7 +5157,7 @@ impl<'a> TypeInference<'a> {
                         Some(SymbolKind::Class { .. })
                     )
                 })
-                .and_then(|class_id| self.symbol_table.lookup_class_member(class_id, method))
+                .and_then(|class_id| self.symbol_table.lookup_class_method(class_id, method))
         };
         if full_class_name == "list" {
             self.check_list_namespace_arguments(method, &mut tast_arguments, location);
@@ -7149,7 +7149,7 @@ impl<'a> TypeInference<'a> {
                 // Look up the method in the class's symbol table
                 if let Some(method_symbol) = self
                     .symbol_table
-                    .lookup_class_member(*symbol_id, method_name)
+                    .lookup_class_method(*symbol_id, method_name)
                 {
                     // Get the method info from the symbol table
                     if let Some(symbol) = self.symbol_table.get_symbol(method_symbol) {
@@ -7449,7 +7449,7 @@ impl<'a> TypeInference<'a> {
                 if let Some(class_symbol_id) = class_symbol_id {
                     if let Some(method_symbol_id) = self
                         .symbol_table
-                        .lookup_class_member(class_symbol_id, method_name)
+                        .lookup_class_method(class_symbol_id, method_name)
                     {
                         if let Some(method_symbol) = self.symbol_table.get_symbol(method_symbol_id)
                         {

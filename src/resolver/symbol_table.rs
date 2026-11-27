@@ -562,6 +562,40 @@ impl GlobalSymbolTable {
         None
     }
 
+    /// Look up a method declared by `class_id` or any of its ancestors,
+    /// nearest class first. A field that shares the method's name is never
+    /// returned: a call `obj.n()` names the method even when the class also
+    /// has a field `n`.
+    pub fn lookup_class_method(&self, class_id: SymbolId, method_name: &str) -> Option<SymbolId> {
+        let mut visited = std::collections::HashSet::new();
+        let mut current = Some(class_id);
+        while let Some(id) = current {
+            if !visited.insert(id) {
+                return None;
+            }
+            let SymbolKind::Class {
+                methods, parent, ..
+            } = &self.symbols.get(&id)?.kind
+            else {
+                return None;
+            };
+            for &method_id in methods {
+                if let Some(Symbol {
+                    name,
+                    kind: SymbolKind::Method { .. },
+                    ..
+                }) = self.symbols.get(&method_id)
+                {
+                    if name == method_name {
+                        return Some(method_id);
+                    }
+                }
+            }
+            current = *parent;
+        }
+        None
+    }
+
     /// Find a field declared by `class_id` or any of its ancestors, nearest
     /// class first. Returns the field's symbol and declared type.
     pub fn lookup_class_field(

@@ -1,0 +1,39 @@
+// Test: bugfixes/class_field_and_method_same_name
+// Grammar: class_declaration, method_call, field_access
+// Semantic: CLASS002, CLASS003 — field names are unique among fields and method
+//   names among methods; a field and a method may share a name, and a call
+//   `obj.n()` names the method while `obj.n` names the field
+// Fixed in: compiler 0.33.195
+// Expected output:
+//   2
+//   1
+//   2
+//   3
+//   2
+//
+// Regression: `b.n()` on a class with a field `n` and a method `n()` failed
+// with "Function 'n' not found in function map" because the method lookup
+// returned the field symbol; `base.n()` in a child failed with SEM002.
+
+start:
+	Box b = Box()
+	print(b.n())
+	print(b.n)
+	Kid k = Kid()
+	print(k.n())
+	print(k.twice())
+	print(k.n())
+
+class Box
+	public:
+		integer n = 1
+	functions:
+		public:
+			integer n()
+				return 2
+
+class Kid is Box
+	functions:
+		public:
+			integer twice()
+				return base.n() + 1

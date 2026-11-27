@@ -528,7 +528,7 @@ impl NameResolver {
         }
 
         // Apply synthesis: append to class.methods and update class symbol's
-        // method list so downstream lookup_class_member sees them.
+        // method list so downstream lookup_class_method sees them.
         for (class_id, method) in synthesized {
             let method_sym_id = method.symbol_id;
             if let Some(class) = classes.iter_mut().find(|c| c.symbol_id == class_id) {
@@ -580,7 +580,7 @@ impl NameResolver {
             // Look up the forwarder method on the field's class via symbol table.
             let Some(forwarder_sym_id) = self
                 .symbol_table
-                .lookup_class_member(field_class_id, &cap_method.name)
+                .lookup_class_method(field_class_id, &cap_method.name)
             else {
                 continue;
             };
@@ -634,7 +634,7 @@ impl NameResolver {
         // Look up the forwarder method's symbol id (we know it exists from above).
         let Some(forwarder_sym_id) = self
             .symbol_table
-            .lookup_class_member(field_class_id, &cap_method.name)
+            .lookup_class_method(field_class_id, &cap_method.name)
         else {
             return None;
         };
@@ -1783,7 +1783,7 @@ impl NameResolver {
             method_symbol_ids.push(method_symbol_id);
         }
 
-        // Update class symbol with method IDs now so lookup_class_member works
+        // Update class symbol with method IDs now so lookup_class_method works
         // during body resolution below.
         if let Some(class_symbol) = self.symbol_table.get_symbol_mut(class_symbol_id) {
             if let SymbolKind::Class { methods, .. } = &mut class_symbol.kind {
@@ -2915,7 +2915,7 @@ impl NameResolver {
         // the current class.  Methods need `this` as an implicit first argument, so
         // we emit MethodCall { receiver: This } rather than a bare Call.  This applies
         // whether the method was found through scope chain walking (two-pass registration)
-        // or via the lookup_class_member fallback.
+        // or via the lookup_class_method fallback.
         if let Some(current_class_id) = self.current_class {
             let method_symbol_id_opt = function_symbol_opt
                 .and_then(|sym_id| {
@@ -2936,7 +2936,7 @@ impl NameResolver {
                     // An inherited method, or one whose name a top-level
                     // function shares: the class's own method comes first.
                     self.symbol_table
-                        .lookup_class_member(current_class_id, function)
+                        .lookup_class_method(current_class_id, function)
                         .filter(|id| {
                             self.symbol_table
                                 .get_symbol(*id)
@@ -3211,7 +3211,7 @@ impl NameResolver {
         };
         let method_symbol = self
             .symbol_table
-            .lookup_class_member(parent_id, method)
+            .lookup_class_method(parent_id, method)
             .filter(|id| {
                 self.symbol_table
                     .get_symbol(*id)
@@ -3325,7 +3325,7 @@ impl NameResolver {
                         // of whether the method symbol resolved here.
                         let method_symbol_id = self
                             .symbol_table
-                            .lookup_class_member(class_symbol_id, method)
+                            .lookup_class_method(class_symbol_id, method)
                             .unwrap_or({
                                 // Create a placeholder symbol for built-in static methods if not found
                                 // This allows built-in static methods to work even if not explicitly defined
@@ -3589,7 +3589,7 @@ impl NameResolver {
                     .get_symbol(id)
                     .is_some_and(|sym| matches!(sym.kind, SymbolKind::Class { .. }))
             })
-            .and_then(|id| self.symbol_table.lookup_class_member(id, method_name))
+            .and_then(|id| self.symbol_table.lookup_class_method(id, method_name))
             .is_some()
     }
 
@@ -3816,7 +3816,7 @@ impl NameResolver {
                 }
                 let method_symbol_id = self
                     .symbol_table
-                    .lookup_class_member(current_class_id, function);
+                    .lookup_class_method(current_class_id, function);
                 return Ok(ResolvedHirExpression::MethodCall {
                     argument_labels: Vec::new(),
                     receiver: Box::new(ResolvedHirExpression::This {
@@ -4196,7 +4196,7 @@ impl NameResolver {
         // ab7f9b3f) for the full repro.
         let method_symbol_id = if class_symbol_id.0 != 0 {
             self.symbol_table
-                .lookup_class_member(class_symbol_id, method)
+                .lookup_class_method(class_symbol_id, method)
                 .unwrap_or(SymbolId(0))
         } else {
             SymbolId(0)
