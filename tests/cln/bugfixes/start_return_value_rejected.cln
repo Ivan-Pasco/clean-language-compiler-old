@@ -1,6 +1,6 @@
 // Test: bugfixes/start_return_value_rejected
 // Grammar: return_statement, start_block
-// Semantic: SEM001 — `start:` returns no value (FUNC007)
+// Semantic: SEM001 — `start:` returns no value (FUNC007 was removed from the spec on 2026-11-27)
 // Regression: `return 5` inside `start:` compiled cleanly, then the program
 //   failed at runtime with "expected 1 results, got 0" before any output.
 // Fixed in: compiler 0.33.190

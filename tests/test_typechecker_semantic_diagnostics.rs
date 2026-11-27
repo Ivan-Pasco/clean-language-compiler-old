@@ -6,7 +6,7 @@
 //! * IDX001 / IDX004 — index-type mismatches were warnings although
 //!   foundation/spec/error-codes.md defines them as errors.
 //! * Binary-operator type errors were reported at line 0, column 0.
-//! * Warnings (FUNC004/FUNC005/FUNC007) were computed but never returned,
+//! * Warnings (FUNC004/FUNC005) were computed but never returned,
 //!   and FUNC004 was computed by two stages.
 
 use clean_language_compiler::error::{CompilerError, ErrorContext, ErrorSeverity};

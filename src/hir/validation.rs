@@ -205,7 +205,7 @@ impl ValidationContext {
             .push(CompilerError::validation_warning(message, location));
     }
 
-    /// Add a warning with a spec error code (e.g. "FUNC007")
+    /// Add a warning with a spec error code (e.g. "FUNC005")
     pub fn warning_with_code(&mut self, message: &str, location: SourceLocation, code: &str) {
         self.warnings.push(CompilerError::Validation {
             context: Box::new(
@@ -233,7 +233,7 @@ impl HirValidator {
     /// available so every plugin declaring `registers_handler_at_arg` in
     /// plugin.toml is honored.
     ///
-    /// On success returns the warnings found (FUNC005, FUNC007, CLASS004, ...);
+    /// On success returns the warnings found (FUNC005, CLASS004, ...);
     /// on failure returns the errors.
     pub fn validate(hir: &HirProgram) -> Result<Vec<CompilerError>, Vec<CompilerError>> {
         Self::validate_with_handler_bridges(hir, &[])
@@ -740,17 +740,6 @@ impl HirValidator {
                 function.location.clone(),
                 "FUNC006",
             );
-        }
-
-        // Start function return type should be void or None
-        if let Some(return_type) = &function.return_type {
-            if *return_type != HirType::Void {
-                context.warning_with_code(
-                    "Start function should return void",
-                    function.location.clone(),
-                    "FUNC007",
-                );
-            }
         }
 
         // Validate the body

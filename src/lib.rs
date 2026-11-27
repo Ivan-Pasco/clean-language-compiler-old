@@ -667,7 +667,7 @@ pub fn lint_source(
 }
 
 /// Render a non-fatal diagnostic (HIR validation, name resolution or type
-/// checking: FUNC004, FUNC005, FUNC007, IDX004 on `any`, ...) as
+/// checking: FUNC004, FUNC005, IDX004 on `any`, ...) as
 /// `warning[CODE]: message` plus a `-->` location line. `None` when the user
 /// cannot act on it: lexer and plugin errors, diagnostics without a source
 /// position (compiler-injected plugin type stubs) and diagnostics inside

@@ -1,6 +1,7 @@
 // Test: spec_compliance/types/void_type_spec
 // Grammar: core_type
-// Semantic: FUNC007 — start block should return void; functions with void return have no return value
+// Semantic: SEM001 — a void function has no return value
+// Fixed: FUNC007 was deleted from the spec (round 4, 2026-11-27); `return <value>` in void code is SEM001
 // Expected output: (see inline comments per test)
 
 start:
