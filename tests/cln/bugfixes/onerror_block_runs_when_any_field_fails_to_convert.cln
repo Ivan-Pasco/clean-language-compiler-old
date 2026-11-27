@@ -1,0 +1,36 @@
+// Test: bugfixes/onerror_block_runs_when_any_field_fails_to_convert
+// Grammar: onerror_expression, variable_declaration
+// Semantic: 14-error-handling.md - `onError:` followed by an indented block runs
+//   the block when the expression raises, including the conversion of an `any`
+//   field to the declared type
+// Fixed in: compiler 0.33.195
+// Expected output:
+//   caught
+//   -1
+//   caught
+//   -2
+//   caught
+//   -3
+//   7
+//
+// Regression: the conversion to the declared type ran after the onError
+// region of a block handler, so the handler was skipped.
+
+start:
+	any data = json.textToData("{\"n\": \"abc\", \"big\": 5000000000, \"huge\": 1e300, \"ok\": 7}")
+	integer x = data.n onError:
+		print("caught")
+		x = -1
+	print(x)
+	integer y = data.big onError:
+		print("caught")
+		y = -2
+	print(y)
+	integer z = data.huge onError:
+		print("caught")
+		z = -3
+	print(z)
+	integer w = data.ok onError:
+		print("never")
+		w = -4
+	print(w)
