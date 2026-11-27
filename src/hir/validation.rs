@@ -47,15 +47,6 @@ pub struct ValidationContext {
     /// These are valid as method-call receivers without being declared variables.
     pub plugin_namespaces: HashSet<String>,
 
-    /// Names of all module-level mutable state variables (from the top-level `state:` block).
-    /// Used by the CONC001 check to detect unsynchronised shared-state access from
-    /// inside `background:` expressions.
-    pub state_var_names: HashSet<String>,
-
-    /// Set to `true` while validating the expression of a `background:` statement.
-    /// Any access to a module-level state variable in this context triggers CONC001.
-    pub inside_background: bool,
-
     /// Set to `true` while validating a function that is a request handler.
     /// Request handlers are identified by: a parameter named `req` or `request`,
     /// a parameter whose type is named `Request`, a function whose name starts
@@ -101,8 +92,6 @@ impl ValidationContext {
             current_class: None,
             current_return_type: None,
             plugin_namespaces: HashSet::new(),
-            state_var_names: HashSet::new(),
-            inside_background: false,
             inside_request_handler: false,
             plugin_registered_handlers: HashSet::new(),
             handler_bridges: Vec::new(),
@@ -362,13 +351,9 @@ impl HirValidator {
         // Collect top-level state variables into global scope so expressions
         // referencing them do not produce spurious "Undefined variable" errors.
         // (SCOPE005 enforcement is handled later by the resolver.)
-        // Also record all mutable state variable names for the CONC001 check —
-        // accessing these from inside a `background:` block without synchronisation
-        // is a concurrency violation.
         if let Some(ref state_block) = hir.state {
             for decl in &state_block.declarations {
                 context.declare_variable(decl.name.clone(), decl.state_type.clone());
-                context.state_var_names.insert(decl.name.clone());
             }
         }
 
@@ -1140,15 +1125,11 @@ impl HirValidator {
                 expression,
                 location,
             } => {
-                // CONC001: expressions inside a `background:` statement run asynchronously
-                // in a fire-and-forget task.  Direct reads or writes of module-level mutable
-                // state variables without synchronisation are a data-race hazard.
-                // Flag every state-variable access found within this expression.
-                let was_inside_background = context.inside_background;
-                context.inside_background = true;
+                // State variables may be used in `background` lines: the call
+                // runs later, one task at a time (spec 19), with the values
+                // taken where the line stands.
                 Self::validate_expression(context, expression);
-                context.inside_background = was_inside_background;
-                let _ = location; // location used by error messages inside validate_expression
+                let _ = location;
             }
 
             HirStatement::Break { .. } => {
@@ -1187,24 +1168,6 @@ impl HirValidator {
             }
 
             HirExpression::Variable { name, location } => {
-                // CONC001: accessing a module-level mutable state variable from inside a
-                // `background:` expression is unsynchronised shared-state access.
-                // The background task runs concurrently with the main execution and any other
-                // tasks; without a mutex or atomic operation the access is a data race.
-                if context.inside_background && context.state_var_names.contains(name.as_str()) {
-                    context.error_with_code(
-                        &format!(
-                            "Shared state variable '{}' is accessed inside a `background:` block \
-                             without synchronisation — this is an unsynchronised concurrent \
-                             access (CONC001). Capture the value before the `background:` call \
-                             or use an atomic/mutex wrapper.",
-                            name
-                        ),
-                        location.clone(),
-                        "CONC001",
-                    );
-                }
-
                 // Check if it's a variable or a function reference.
                 // Builtin namespaces (string, list, math, etc.) are valid as receiver
                 // expressions in method calls even though they are not declared as local
@@ -2073,7 +2036,7 @@ mod class005_tests {
     }
 }
 
-/// Unit tests for CONC001 (unsynchronised shared-state access from background) and
+/// Unit tests for background state access and
 /// CONC002 (request-context builtins used outside a request handler).
 #[cfg(test)]
 mod concurrency_tests {
@@ -2124,12 +2087,11 @@ mod concurrency_tests {
         }
     }
 
-    /// CONC001 positive: a `background:` statement that reads a state variable directly
-    /// must be rejected with a CONC001 error.
+    /// A `background` line may read a state variable (spec decision 2026-11-27, round 5).
     #[test]
-    fn test_conc001_background_reads_state_var() {
+    fn test_background_reads_state_var_is_allowed() {
         // Simulate: background someFunc(counter)
-        // `counter` is a state variable — reading it inside background is CONC001.
+        // `counter` is a state variable — reading it inside background is allowed.
         let bg_stmt = HirStatement::Background {
             expression: HirExpression::Call {
                 function: "someFunc".to_string(),
@@ -2178,77 +2140,8 @@ mod concurrency_tests {
 
         let program = program_with_state(vec![some_func], Some(start));
         let result = HirValidator::validate(&program);
-        assert!(
-            result.is_err(),
-            "CONC001: background accessing state var should fail"
-        );
-        let errors = result.unwrap_err();
-        assert!(
-            errors.iter().any(|e| e.to_string().contains("CONC001")),
-            "Expected CONC001 error, got: {:?}",
-            errors
-        );
-    }
-
-    /// CONC001 negative: a `background:` statement that does NOT access state variables
-    /// must pass without error.
-    #[test]
-    fn test_conc001_background_no_state_var_is_valid() {
-        // Simulate: background someFunc(42) — 42 is a literal, not a state var
-        let bg_stmt = HirStatement::Background {
-            expression: HirExpression::Call {
-                function: "someFunc".to_string(),
-                arguments: vec![HirExpression::Literal {
-                    value: crate::ast::Value::Integer(42),
-                    location: loc(),
-                }],
-                location: loc(),
-            },
-            location: loc(),
-        };
-
-        let some_func = HirFunction {
-            name: "someFunc".to_string(),
-            parameters: vec![HirParameter {
-                name: "x".to_string(),
-                param_type: HirType::Integer,
-                default_value: None,
-                location: loc(),
-            }],
-            return_type: Some(HirType::Void),
-            body: HirBlock {
-                statements: vec![],
-                location: loc(),
-            },
-            is_start: false,
-            is_private: false,
-            owner_screen: None,
-            location: loc(),
-        };
-
-        let start = HirFunction {
-            name: "__start".to_string(),
-            parameters: vec![],
-            return_type: Some(HirType::Void),
-            body: HirBlock {
-                statements: vec![bg_stmt],
-                location: loc(),
-            },
-            is_start: true,
-            is_private: false,
-            owner_screen: None,
-            location: loc(),
-        };
-
-        let program = program_with_state(vec![some_func], Some(start));
-        let result = HirValidator::validate(&program);
-        // May have other unrelated warnings but must not have CONC001.
-        if let Err(ref errors) = result {
-            assert!(
-                !errors.iter().any(|e| e.to_string().contains("CONC001")),
-                "Unexpected CONC001 when no state var is accessed: {:?}",
-                errors
-            );
+        if let Err(errors) = result {
+            panic!("background reading a state variable must be valid: {errors:?}");
         }
     }
 

@@ -1,0 +1,22 @@
+// Test: bugfixes/async_background_state_variable_arg
+// Grammar: background_statement (§4.9)
+// Semantic: 19-async.md "State variables may be used in a `background` line": the
+//   argument is taken where the line stands, the call runs after start returns.
+//   CONC001 removed (spec decision 2026-11-27, round 5).
+// Fixed in: compiler 0.33.196
+// Expected output:
+//   count is 6
+//   count was 5
+
+start:
+	count = 5
+	background report(count)
+	count = 6
+	print("count is " + count.toString())
+
+state:
+	integer count = 0
+
+functions:
+	void report(integer n)
+		print("count was " + n.toString())
