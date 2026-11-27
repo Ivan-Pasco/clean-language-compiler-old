@@ -1254,7 +1254,7 @@ impl MultiFileCompiler {
                     }
                 }
                 Err(e) => {
-                    errors.push(e);
+                    errors.extend(e);
                 }
             }
         }
@@ -1361,12 +1361,12 @@ impl MultiFileCompiler {
         &self,
         source: &str,
         file_path: &Path,
-    ) -> Result<crate::ast::Program, CompilerError> {
+    ) -> Result<crate::ast::Program, Vec<CompilerError>> {
         // Stage 1: Tokenize
         let source_code =
             SourceCode::new(source.to_string(), file_path.to_string_lossy().to_string());
         let mut lexer = SpecificationLexer::new(&source_code);
-        let tokens = lexer.tokenize().map_err(CompilerError::from)?;
+        let tokens = lexer.tokenize().map_err(|e| vec![CompilerError::from(e)])?;
 
         // Stage 2: Parse to AST (use plugin keywords if available)
         let plugin_keywords = if let Some(ref registry) = self.config.plugin_registry {
@@ -1378,7 +1378,7 @@ impl MultiFileCompiler {
         if let Some(ref registry) = self.config.plugin_registry {
             parser.set_block_header_attributes(registry.get_block_header_attributes());
         }
-        parser.parse_program()
+        parser.parse_program_all()
     }
 
     /// Extract import statements from source code
@@ -1388,7 +1388,7 @@ impl MultiFileCompiler {
         &self,
         source: &str,
         file_path: &Path,
-    ) -> Result<Vec<ExtractedImport>, CompilerError> {
+    ) -> Result<Vec<ExtractedImport>, Vec<CompilerError>> {
         let ast = self.parse_ast(source, file_path)?;
 
         // Extract imports from AST, preserving file import flag
@@ -1459,7 +1459,13 @@ impl MultiFileCompiler {
             return Err(Self::module_not_found(name, search_paths, import));
         };
 
-        let ast = self.parse_ast(&source, &path)?;
+        // This check reports the imported module's first syntax error only.
+        let ast = self.parse_ast(&source, &path).map_err(|errors| {
+            errors
+                .into_iter()
+                .next()
+                .expect("a failed parse reports at least one error")
+        })?;
         // A module that declares `plugins:` may export symbols its plugins
         // generate, which do not exist before expansion: do not judge those.
         if ast.plugins.is_empty() && !Self::module_exports(&ast, symbol) {
@@ -1595,7 +1601,7 @@ impl MultiFileCompiler {
                         module.set_hir(hir);
                     }
                     Err(e) => {
-                        errors.push(e);
+                        errors.extend(e);
                     }
                 }
             }
@@ -1619,12 +1625,12 @@ impl MultiFileCompiler {
         file_path: &Path,
         is_entry: bool,
         plugin_expansion: Option<ModulePluginExpansion>,
-    ) -> Result<HirProgram, CompilerError> {
+    ) -> Result<HirProgram, Vec<CompilerError>> {
         // Stage 1: Tokenize
         let source_code =
             SourceCode::new(source.to_string(), file_path.to_string_lossy().to_string());
         let mut lexer = SpecificationLexer::new(&source_code);
-        let tokens = lexer.tokenize().map_err(CompilerError::from)?;
+        let tokens = lexer.tokenize().map_err(|e| vec![CompilerError::from(e)])?;
 
         // Stage 2: Parse to AST
         // Get plugin keywords so the parser recognizes plugin-defined syntax
@@ -1637,7 +1643,7 @@ impl MultiFileCompiler {
         if let Some(ref registry) = self.config.plugin_registry {
             parser.set_block_header_attributes(registry.get_block_header_attributes());
         }
-        let mut parsed_ast = parser.parse_program()?;
+        let mut parsed_ast = parser.parse_program_all()?;
 
         // Stage 2.5a: Plugin Enforcement
         if let Some(ref registry) = self.config.plugin_registry {
@@ -1667,7 +1673,7 @@ impl MultiFileCompiler {
                     );
                 }
                 if !result.errors.is_empty() {
-                    return Err(CompilerError::PluginError {
+                    return Err(vec![CompilerError::PluginError {
                         message: result
                             .errors
                             .iter()
@@ -1681,7 +1687,7 @@ impl MultiFileCompiler {
                             byte_start: None,
                             byte_end: None,
                         }),
-                    });
+                    }]);
                 }
             }
         }
@@ -1765,8 +1771,8 @@ impl MultiFileCompiler {
                         byte_end: None,
                     }),
                 )
-            })?;
-            expander.check_permissions()?;
+            }).map_err(|e| vec![e])?;
+            expander.check_permissions().map_err(|e| vec![e])?;
             expanded
         } else {
             parsed_ast
@@ -1780,7 +1786,7 @@ impl MultiFileCompiler {
             .map(|r| r.generic_instance_classes())
             .unwrap_or_default();
         let mut hir_builder = HirBuilder::new().with_generic_instance_classes(generic_instances);
-        let hir_result = hir_builder.build_hir(ast)?;
+        let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
 
         Ok(hir_result.hir)
     }

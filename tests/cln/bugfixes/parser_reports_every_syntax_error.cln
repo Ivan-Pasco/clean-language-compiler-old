@@ -1,0 +1,20 @@
+// Test: bugfixes/parser_reports_every_syntax_error
+// Semantic: SYN007 — a section out of order; each one is reported, not only the first
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   'state:' section is out of order
+//   'start:' section is out of order
+//
+// Regression: the parser collected every top-level error but the CLI, the
+// JSON output and the MCP parse tool printed only the first one
+// (issue #70).
+
+class A
+	integer x
+
+state:
+	integer c = 0
+
+start:
+	print(1)

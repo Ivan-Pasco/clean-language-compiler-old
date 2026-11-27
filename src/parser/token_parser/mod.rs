@@ -210,8 +210,47 @@ impl TokenParser {
         ))
     }
 
-    /// Parse a complete program
+    /// Parse a complete program. On failure the first error carries the
+    /// remaining ones as `related_errors` (text only); callers that report
+    /// diagnostics use [`TokenParser::parse_program_all`] to keep every error
+    /// as its own diagnostic.
     pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
+        self.parse_program_all().map_err(Self::fold_errors)
+    }
+
+    /// Fold collected parse errors into the first one, listing the rest as
+    /// `related_errors`.
+    fn fold_errors(errors: Vec<CompilerError>) -> CompilerError {
+        let mut iter = errors.into_iter();
+        let mut first_error = iter
+            .next()
+            .expect("a failed parse reports at least one error");
+        let rest: Vec<CompilerError> = iter.collect();
+        if !rest.is_empty() {
+            match &mut first_error {
+                CompilerError::Syntax { context }
+                | CompilerError::Type { context }
+                | CompilerError::Memory { context }
+                | CompilerError::Codegen { context }
+                | CompilerError::IO { context }
+                | CompilerError::Runtime { context }
+                | CompilerError::Validation { context }
+                | CompilerError::Module { context } => {
+                    for error in &rest {
+                        context.related_errors.push(error.to_string());
+                    }
+                }
+                // LexError and PluginError carry no ErrorContext.
+                CompilerError::LexError(_) | CompilerError::PluginError { .. } => {}
+            }
+        }
+        first_error
+    }
+
+    /// Parse a complete program, returning every error the parser collected
+    /// (per-declaration recovery continues after an error) as its own
+    /// diagnostic.
+    pub fn parse_program_all(&mut self) -> Result<Program, Vec<CompilerError>> {
         self.skip_whitespace();
 
         let mut functions = Vec::new();
@@ -555,36 +594,7 @@ impl TokenParser {
         }
 
         if !self.errors.is_empty() {
-            // Return first error with all subsequent errors as related_errors
-            // This allows IDE tools to access all parser errors for better diagnostics
-            let mut first_error = self.errors[0].clone();
-
-            // Add remaining errors as related messages
-            if self.errors.len() > 1 {
-                // Extract the context and add related errors
-                match &mut first_error {
-                    CompilerError::Syntax { context }
-                    | CompilerError::Type { context }
-                    | CompilerError::Memory { context }
-                    | CompilerError::Codegen { context }
-                    | CompilerError::IO { context }
-                    | CompilerError::Runtime { context }
-                    | CompilerError::Validation { context }
-                    | CompilerError::Module { context } => {
-                        for error in &self.errors[1..] {
-                            context.related_errors.push(error.to_string());
-                        }
-                    }
-                    CompilerError::LexError(_) => {
-                        // LexError doesn't have ErrorContext, skip related errors
-                    }
-                    CompilerError::PluginError { .. } => {
-                        // PluginError doesn't have ErrorContext, skip related errors
-                    }
-                }
-            }
-
-            return Err(first_error);
+            return Err(std::mem::take(&mut self.errors));
         }
 
         let start_function = functions.iter().find(|f| f.name == "start").cloned();

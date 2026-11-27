@@ -552,7 +552,7 @@ pub fn parse_to_ast(source: &str, file_path: &str) -> Result<ast::Program, Vec<C
 
     // Stage 2: Parsing to AST
     let mut parser = SpecificationParser::with_plugin_keywords(tokens, Vec::new());
-    let ast = parser.parse_program().map_err(|e| vec![e])?;
+    let ast = parser.parse_program_all()?;
 
     Ok(ast)
 }
@@ -658,7 +658,7 @@ pub fn lint_source(
     let plugin_keywords = registry.get_all_block_keywords();
     let mut parser = SpecificationParser::with_plugin_keywords(tokens, plugin_keywords);
     parser.set_block_header_attributes(registry.get_block_header_attributes());
-    let program = parser.parse_program().map_err(|e| vec![e])?;
+    let program = parser.parse_program_all()?;
 
     // The pre-expansion snapshot IS the just-parsed program — we run lint
     // before ever calling `PluginExpander::expand_program`.

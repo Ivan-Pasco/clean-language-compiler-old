@@ -64,14 +64,36 @@ impl SpecificationParser {
     /// following the architecture of rustc's parser (see rust-lang/rustc-dev-guide).
     pub fn parse_program(&mut self) -> Result<Program, CompilerError> {
         if self.consumed {
-            return Err(CompilerError::parse_error(
-                "parse_program was already called on this parser; its token stream is consumed"
-                    .to_string(),
-                None,
-                Some("Create a new SpecificationParser for each parse.".to_string()),
-            ));
+            return Err(Self::already_consumed_error());
         }
         self.consumed = true;
+        let mut parser = self.take_parser();
+        parser.parse_program()
+    }
+
+    /// Like [`SpecificationParser::parse_program`], but a failed parse returns
+    /// every error the parser collected, each as its own diagnostic, instead
+    /// of the first error with the rest folded into `related_errors`.
+    pub fn parse_program_all(&mut self) -> Result<Program, Vec<CompilerError>> {
+        if self.consumed {
+            return Err(vec![Self::already_consumed_error()]);
+        }
+        self.consumed = true;
+        let mut parser = self.take_parser();
+        parser.parse_program_all()
+    }
+
+    fn already_consumed_error() -> CompilerError {
+        CompilerError::parse_error(
+            "parse_program was already called on this parser; its token stream is consumed"
+                .to_string(),
+            None,
+            Some("Create a new SpecificationParser for each parse.".to_string()),
+        )
+    }
+
+    /// Build the token parser from the configured stream (moves it out).
+    fn take_parser(&mut self) -> TokenParser {
         let mut parser = if self.plugin_keywords.is_empty() {
             TokenParser::new(std::mem::take(&mut self.token_stream))
         } else {
@@ -85,8 +107,7 @@ impl SpecificationParser {
         if self.lenient_section_order {
             parser.set_lenient_section_order(true);
         }
-
-        parser.parse_program()
+        parser
     }
 }
 
