@@ -196,10 +196,10 @@ The canonical behavior suffixes are:
 - `.line` — FIFO queue behavior
 - `.pile` — LIFO stack behavior
 - `.unique` — set behavior (no duplicates)
-- `.line.pile` — FIFO + LIFO combined
 - `.line.unique` — FIFO queue with uniqueness
 - `.pile.unique` — LIFO stack with uniqueness
-- `.line.unique.pile` — all three behaviors
+
+`.line` and `.pile` cannot be combined: a list gives up either its oldest element or its newest, never both. A type with both, such as `list<integer>.line.pile` or `list<integer>.line.unique.pile`, is a compile error (SEM004). Each modifier may also appear only once.
 
 #### Supported Properties
 
@@ -293,8 +293,8 @@ list<string>.line.unique uniqueQueue = []
 // Unique stack — LIFO with no duplicates
 list<integer>.pile.unique uniqueStack = []
 
-// All three behaviors combined
-list<integer>.line.unique.pile allFeatures = []
+// Error SEM004: .line and .pile cannot be combined
+// list<integer>.line.pile both = []
 ```
 
 #### Available Methods
@@ -315,7 +315,7 @@ All list types support these methods regardless of behavior:
 - `isNotEmpty()` → Returns `true` if list contains items
 
 **Behavior Declaration:**
-- Behavior is declared as part of the type at variable declaration time: `list<T>.line`, `list<T>.pile`, `list<T>.unique`, or combinations thereof.
+- Behavior is declared as part of the type at variable declaration time: `list<T>.line`, `list<T>.pile`, `list<T>.unique`, or `.unique` combined with `.line` or `.pile`. `.line` together with `.pile` is a compile error (SEM004).
 
 #### Performance Characteristics
 - `.line`: O(1) add, O(1) remove, O(1) peek

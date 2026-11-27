@@ -65,10 +65,10 @@ Emitted during HIR validation, name resolution, and type checking.
 | SEM001 | `TypeMismatch` | Expression type does not match the required type | Error | semantic-rules.md §SEM001 |
 | SEM002 | `UndefinedSymbol` | Variable, function, class, or module referenced but not declared | Error | semantic-rules.md §SEM002 |
 | SEM003 | `SymbolRedefinition` | Symbol declared more than once in the same scope | Error | semantic-rules.md §SEM003 |
-| SEM004 | `InvalidOperationForType` | Operator or operation applied to an unsupported type | Error | semantic-rules.md §SEM004 |
+| SEM004 | `InvalidOperationForType` | Operator or operation applied to an unsupported type; a list type with both `.line` and `.pile` | Error | semantic-rules.md §SEM004 |
 | SEM005 | `AccessViolation` | Private member accessed from outside its allowed scope | Error | semantic-rules.md §SEM005 |
 | SEM006 | `InheritanceError` | A method override is invalid: its signature differs from the parent's public method, or it is not under `public:` | Error | semantic-rules.md §SEM006 |
-| SEM007 | `UnresolvedName` | Undefined variable or function, unknown `validate` pattern, or another validation error with no specific code | Error | semantic-rules.md §SEM007 |
+| SEM007 | `UnresolvedName` | Undefined variable or function (including the short name of a function of a module imported whole: write `utils.add()`), unknown `validate` pattern, or another validation error with no specific code | Error | semantic-rules.md §SEM007 |
 | SEM008 | `InheritanceCycle` | Class inherits from itself directly or indirectly | Error | semantic-rules.md §SEM008 |
 | SEM009 | `InvalidTypeSpecification` | Type name does not refer to a valid type | Error | semantic-rules.md §SEM009 |
 | SEM010 | `InvalidMatchPattern` | Argument to `string.matches()` is not one of the allowed pattern names | Error | semantic-rules.md §SEM010 |
@@ -101,7 +101,7 @@ Emitted during HIR validation of function definitions and call sites.
 | FUNC004 | `MissingReturn` | Non-void function has no return on some execution path | Error | semantic-rules.md §FUNC004 |
 | FUNC005 | `EmptyReturnInNonVoid` | `return` with no value in a non-void function | Warning | semantic-rules.md §FUNC005 |
 | FUNC006 | `StartBlockHasParameters` | The `start:` entry point block declares parameters | Error | semantic-rules.md §FUNC006 |
-| FUNC007 | `StartBlockReturnsValue` | The `start:` entry point returns a value | Warning | semantic-rules.md §FUNC007 |
+| FUNC007 | — | **Retired.** `return <value>` in `start:` or a void function is SEM001 ("A void function cannot return a value"). The code is not reused. | — | semantic-rules.md §SEM001 |
 | FUNC008 | `UnknownNamedArgument` | Named argument label does not match any parameter name | Error | semantic-rules.md §FUNC008 |
 | FUNC009 | `DuplicateNamedArgument` | Same named argument label appears more than once in a call | Error | semantic-rules.md §FUNC009 |
 | FUNC010 | `PositionalAfterNamed` | Positional argument appears after a named argument in a call | Error | semantic-rules.md §FUNC010 |
@@ -263,6 +263,7 @@ The following code numbers are reserved for future use. Do not assign them witho
 | SYN102–SYN199 | Reserved (extension range for AI-metadata syntax codes) |
 | SEM015–SEM099 | Reserved |
 | SCOPE006–SCOPE099 | Reserved |
+| FUNC007 | Retired (now SEM001); never reassigned |
 | FUNC013–FUNC099 | Reserved |
 | CLASS010–CLASS099 | Reserved |
 | IDX005–IDX099 | Reserved |

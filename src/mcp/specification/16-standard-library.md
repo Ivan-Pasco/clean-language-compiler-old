@@ -256,14 +256,12 @@ The list module provides powerful data collection capabilities. Whether you're m
 | `items.isNotEmpty()` | boolean | True if length is non-zero |
 | `items.first()` | element type | First element |
 | `items.last()` | element type | Last element |
-| `items.peek()` | element type | The element the list would give up next, without removing it (see List Behaviors in [Type System](./04-type-system.md#list-behaviors--collection-behavior-modifiers)) |
+| `items.peek()` | element type | The element the list would give up next, without removing it (see List Behaviors in [Type System](./04-type-system.md#list-behaviors--collection-behavior-modifiers); a list cannot be both `.line` and `.pile`, SEM004) |
 | `items.push(item)` | void | Add item to the end (same as `add`) |
 | `items.pop()` | element type | Remove and return the last element (same as `removeLast`) |
 | `items.concat(other)` | list | New list: this list followed by `other` |
-| `items.map(fn)` | list | New list with fn applied to each element |
-| `items.filter(fn)` | list | New list with only elements where fn is true |
-| `items.reduce(fn, init)` | any | Combine all elements into one value |
-| `items.forEach(fn)` | void | Execute fn for each element |
+
+There are no `map`, `filter`, `reduce` or `forEach` methods: Clean has no arrow lambdas (`x => x * 2`). Transform, filter or combine a list with an `iterate` loop.
 
 **Index errors.** `items[i]`, `items[i] = v`, `items.get(i)`, `items.set(i, v)` and `items.remove(i)` need `0 <= i < items.length()`. Any other index raises the catchable error `index <i> is out of range for a list of length <n>` (see [Error Handling](./14-error-handling.md#errors-raised-by-the-language)):
 
@@ -305,9 +303,14 @@ start:
 
     // Data processing and transformation
     list<integer> data = [1, 2, 3, 4, 5]
-    list<integer> doubled = data.map(x => x * 2)          // [2, 4, 6, 8, 10]
-    list<integer> evens = data.filter(x => x % 2 == 0)    // [2, 4]
-    integer sum = data.reduce((total, x) => total + x, 0) // 15
+    list<integer> doubled = []
+    list<integer> evens = []
+    integer sum = 0
+    iterate x in data
+        doubled.add(x * 2)                        // [2, 4, 6, 8, 10]
+        if x % 2 == 0
+            evens.add(x)                          // [2, 4]
+        sum = sum + x                             // 15
 
     // List manipulation
     list<string> names1 = ["Alice", "Bob"]

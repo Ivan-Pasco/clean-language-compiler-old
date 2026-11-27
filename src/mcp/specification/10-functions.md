@@ -29,6 +29,7 @@ start:
 - Must be at the top level (not inside `functions:` or any other block)
 - Only one `start:` block per file
 - Library modules can skip `start:` entirely
+- `start:` returns nothing. A bare `return` ends it early; `return <value>` is a compile error (SEM001, "A void function cannot return a value"), the same as in a `void` function or method
 
 **Important:** The `start:` entry block is different from the `start` keyword that marks a deferred call in `later name = start f()`. See [Asynchronous Programming](./19-async.md) for details.
 
@@ -108,6 +109,26 @@ functions:
             integer y
         return x + y
 ```
+
+#### Input Lines Not in the Header
+
+An `input` line whose name matches a header parameter describes that parameter (and may give it a default). An `input` line whose name is **not** in the header adds a parameter: it comes after the header parameters, in the order of the `input` lines, and with a default value it is optional:
+
+```clean
+start:
+    print(greet("Ana"))                    // Hello, Ana
+    print(greet("Ana", "Hi"))              // Hi, Ana
+    print(greet("Ana", greeting: "Hey"))   // Hey, Ana
+
+functions:
+    string greet(string name)
+        input
+            string name
+            string greeting = "Hello"      // not in the header: second parameter, optional
+        return greeting + ", " + name
+```
+
+An added `input` line without a default is a required parameter like any other.
 
 ### Default Parameter Values
 
@@ -252,6 +273,8 @@ functions:
             return -1
         return 0       // without this line: error FUNC004
 ```
+
+The other way round, a `void` function (and `start:`) returns nothing. It may end early with a bare `return`, but `return <value>` in it is a compile error, SEM001 "A void function cannot return a value (got <type>)".
 
 ### Automatic Return
 

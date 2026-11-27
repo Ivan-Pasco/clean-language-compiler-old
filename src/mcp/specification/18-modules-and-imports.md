@@ -26,7 +26,7 @@ functions:
 
 ### Importing Modules
 
-Use the `import:` block to import other modules. The imported module's classes and its public functions and state variables become available (see [Visibility Model](#visibility-model)).
+Use the `import:` block to import other modules. What an import brings in depends on its form. Importing a whole module brings in its classes and its public functions and state variables (see [Visibility Model](#visibility-model)); the functions and state are used **through the module name**:
 
 ```clean
 // file: main.cln
@@ -34,12 +34,13 @@ import:
     utils
 
 start:
-    // Use functions from utils module
-    integer sum = add(5, 3)
-    integer product = multiply(4, 2)
+    integer sum = utils.add(5, 3)
+    integer product = utils.multiply(4, 2)
     print(sum)
     print(product)
 ```
+
+The short name alone is not in scope. `add(5, 3)` here is error **SEM007** "Function 'add' not found", with the help "write `utils.add`, or import `utils.add`".
 
 #### Import Block Syntax
 
@@ -52,45 +53,64 @@ import:
     data.models     // Import from nested path (data/models.cln)
 ```
 
-#### Import Variations
+#### Import Forms
+
+| Import | Brings in | Called as |
+|--------|-----------|-----------|
+| `utils` | the whole module | `utils.add()`, `utils.count` |
+| `utils as U` | the whole module, under another name | `U.add()`, `U.count` (`utils.add()` and `add()` are not in scope) |
+| `data.models` | the module in `data/models.cln` | `models.describe()` (the last part of the path) |
+| `utils.add` | one public function or state variable | `add()` (no other `utils` member is in scope) |
+| `utils.add as plus` | one public function or state variable, renamed | `plus()` |
+| `"helpers.cln"` | the file, joined to this one | `double()` (short names, see [File Path Imports](#file-path-imports)) |
+
+A dotted name `a.b` means the module file `a/b.cln` when that file exists; otherwise it is the symbol `b` of module `a`.
 
 ```clean
-import:
-    Math                // whole module
-    math.sqrt           // single symbol (import specific function)
-    Utils as U          // module alias
-    Json.decode as jd   // symbol alias
+// file: data/models.cln
+functions:
+    public:
+        string describe(integer id)
+            return "model " + id.toString()
 ```
 
-**A module alias adds a name; it does not hide the short names.** After `import: utils as U`, both `U.add(1, 2)` and `add(1, 2)` call the same public function:
-
 ```clean
+// file: main.cln
 import:
     utils as U
+    data.models
+    utils.multiply as times
 
 start:
-    print(U.add(1, 2))     // 3
-    print(add(3, 4))       // 7: the short name still works
+    print(U.add(1, 2))              // 3
+    print(models.describe(4))       // model 4
+    print(times(3, 4))              // 12
 ```
+
+**Classes stay unqualified.** The class names of an imported module are used by their own name, whatever the import form: after `import: shapes`, write `Circle c = Circle(2.0)`, not `shapes.Circle`. There is no `module.Type` syntax.
 
 #### File Path Imports
 
-In addition to module-name imports, Clean Language supports **direct file path imports** using string literals. This is useful for importing files from specific locations without relying on module resolution.
+In addition to module-name imports, an `import:` block can list **file paths** as string literals. This is useful for importing files from specific locations without relying on module resolution.
 
 ```clean
-// Import a file using its relative path
-import "app/data/models.cln"
-import "../lib/utils.cln"
-import "./helpers.cln"
+// Import files using their relative paths
+import:
+    "app/data/models.cln"
+    "../lib/utils.cln"
+    "./helpers.cln"
 ```
+
+**One project, one namespace.** A module import brings in code from outside the file's own project, so its functions keep their origin in the name (`utils.add()`). Files joined by a file path import, or by the `shared:` folders of a package manifest (`package:` in `main.cln`), are parts of **one** program: together they form one namespace, and their public functions and state are used by their short names (`double(21)`). This is the Go package model: inside a package, names are short; from another package, they carry the package name.
 
 **Key differences from module imports:**
 
 | Feature | Module Import | File Path Import |
 |---------|---------------|------------------|
-| Syntax | `import: module_name` | `import "path/to/file.cln"` |
+| Syntax | `import:` + `module_name` | `import:` + `"path/to/file.cln"` |
 | Resolution | Search paths (`./`, `./lib/`, etc.) | Relative to importing file |
 | Nested paths | `data.models` → `data/models.cln` | `"data/models.cln"` (explicit) |
+| Names | `module.fn()` | `fn()` (one namespace) |
 
 **Path Resolution:**
 
@@ -98,10 +118,10 @@ File path imports are resolved **relative to the directory of the importing file
 
 ```
 project/
-├── main.cln              # import "app/data/models.cln"
+├── main.cln              # imports "app/data/models.cln"
 ├── app/
 │   ├── data/
-│   │   └── models.cln    # import "../../lib/utils.cln"
+│   │   └── models.cln    # imports "../../lib/utils.cln"
 │   └── services/
 │       └── api.cln
 └── lib/
@@ -110,16 +130,18 @@ project/
 
 ```clean
 // file: main.cln
-import "app/data/models.cln"  // Resolves to ./app/data/models.cln
+import:
+    "app/data/models.cln"     // Resolves to ./app/data/models.cln
 
 start:
-    integer result = double(21)
-    print(result)
+    integer result = squareDouble(3)
+    print(result)             // 36
 ```
 
 ```clean
 // file: app/data/models.cln
-import "../../lib/utils.cln"  // Resolves to ./lib/utils.cln (relative to app/data/)
+import:
+    "../../lib/utils.cln"     // Resolves to ./lib/utils.cln (relative to app/data/)
 
 functions:
     public:
@@ -128,7 +150,15 @@ functions:
 
         integer squareDouble(integer x)
             integer doubled = double(x)
-            return square(doubled)  // From utils.cln (public there)
+            return square(doubled)    // from lib/utils.cln (public there)
+```
+
+```clean
+// file: lib/utils.cln
+functions:
+    public:
+        integer square(integer x)
+            return x * x
 ```
 
 **Chained Imports:**
@@ -142,8 +172,8 @@ File path imports can be chained - imported files can import other files:
 
 **When to use each import style:**
 
-- **Module imports** (`import: utils`): For project modules in standard locations
-- **File path imports** (`import "path/file.cln"`): For explicit paths, external files, or non-standard project structures
+- **Module imports** (`import: utils`): for modules brought in from outside the file's project, such as libraries in `./lib/`; their members carry the module name
+- **File path imports** (`import:` + `"path/file.cln"`) and `shared:` folders: for the files of one project, which share short names
 
 ### Module `start:` Blocks
 
@@ -167,7 +197,7 @@ import:
 
 start:
     print("main start")
-    print(add(1, 2))
+    print(utils.add(1, 2))
 ```
 
 Output:
@@ -198,7 +228,7 @@ cln build main.cln -L ./lib -L ./modules
 cln build main.cln -O3
 ```
 
-**Note:** File path imports (`import "path/file.cln"`) are resolved relative to the importing file and do not use `-L` search paths. Module-name imports (`import: module`) use the search paths.
+**Note:** File path imports (`"path/file.cln"` in an `import:` block) are resolved relative to the importing file and do not use `-L` search paths. Module-name imports (`import: module`) use the search paths.
 
 #### Module Resolution
 
@@ -301,9 +331,9 @@ import:
     mymodule
 
 start:
-    integer x = publicFunc()   // OK
-    print(limit)               // OK
-    integer y = helperFunc()   // ERROR SEM005: 'helperFunc' is private and cannot be accessed from outside 'mymodule'
+    integer x = mymodule.publicFunc()   // OK
+    print(mymodule.limit)               // OK
+    integer y = mymodule.helperFunc()   // ERROR SEM005: 'helperFunc' is private and cannot be accessed from outside 'mymodule'
 ```
 
 **Plugin-generated code.** Code that a plugin generates into a module (for example functions expanded from a framework block) may call that module's private functions.
@@ -336,10 +366,10 @@ import:
 functions:
     public:
         integer square(integer n)
-            return multiply(n, n)
+            return utils.multiply(n, n)
 
         integer quadruple(integer n)
-            return double_value(double_value(n))
+            return utils.double_value(utils.double_value(n))
 ```
 
 ```clean
@@ -350,15 +380,15 @@ import:
 
 start:
     // Use functions from utils
-    integer sum = add(10, 5)
+    integer sum = utils.add(10, 5)
     print(sum)  // Output: 15
 
     // Use functions from math_helpers
-    integer sq = square(4)
+    integer sq = math_helpers.square(4)
     print(sq)  // Output: 16
 
     // Combined usage
-    integer result = multiply(sq, 2)
+    integer result = utils.multiply(sq, 2)
     print(result)  // Output: 32
 ```
 

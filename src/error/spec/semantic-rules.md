@@ -189,6 +189,7 @@ The type of an expression does not match what the context requires.
 - `none` (alias `null`) stored into a plain type: only a `T?` or an `any` holds none (type-system.md §8) — at all the sites above and as an element of a list or pairs literal stored into a typed list or pairs
 - A `T?` used as a `T`: stored into a plain `T`, or its field read, method called or element indexed without `!` / `default`
 - The result of a call to a `void` function used as a value ("returns nothing (void)")
+- `return <value>` in `start:`, in a `void` function or in a `void` method ("A void function cannot return a value (got <type>)"). A bare `return` is fine. (This replaces the retired warning FUNC007.)
 - The two sides of `==`, `!=` or `is` have unrelated types — the same check as for `<`, `>`, `<=`, `>=`. Compatible pairs are: the same type; types with an implicit conversion between them (`integer` and `number`, a child class and its parent, a class and a capability it claims); `T?` and `T`; `T?` and `none`; and `any` with anything. `true == 1`, `"5" == 5` and `[1] == 1` are SEM001 ("Cannot unify types: boolean and integer")
 
 **Example (passes):**
@@ -244,9 +245,12 @@ functions:
 ### SEM004 — Invalid Operation for Type
 An operator or operation is applied to a type that does not support it.
 
+Also SEM004: a list type with both the `.line` and `.pile` behavior suffixes, in any order and with or without `.unique` ("A list cannot be both .line and .pile"). A list gives up either its oldest or its newest element, not both (type-system.md §List Behavior Modes).
+
 **Example (fails — SEM004):**
 ```clean
 string result = "hello" - "world"    // subtraction not valid for strings
+list<integer>.line.pile jobs = []    // .line and .pile cannot be combined
 ```
 
 ### SEM005 — Access Violation
@@ -283,7 +287,7 @@ import:
     mymodule
 
 start:
-    integer x = helper()    // error: helper is private to mymodule
+    integer x = mymodule.helper()    // error: helper is private to mymodule
 ```
 
 **Example (fails — SEM005, class field):**
@@ -369,6 +373,7 @@ The registry first described SEM007 as a generic-type error (bad type arguments,
 - A variable that is not declared — `"Undefined variable '{name}'"` (also inside string interpolation)
 - A call to a function that is not declared — `"Function '{name}' not found"`
 - A call to a function a module does not define — `"Function '{fn}' not found in module '{module}'"`
+- The short name of a function or state variable of a module imported whole (`import: utils` or `utils as U`): it must be written `utils.add()` / `U.add()`. The help says to write `utils.add` or to import `utils.add` (see §Import Rules)
 - `req`, `res` or `session` used outside a frame.server endpoint handler
 - An unknown pattern name in a `validate` block `match:` constraint — `"Unknown pattern name '{name}' in validate match constraint. Valid patterns: …"`
 - Any other validation error raised without its own code
@@ -626,9 +631,6 @@ A return statement in a function with a non-void return type must provide a valu
 
 ### FUNC006 — Start Block Cannot Have Parameters
 The `start:` entry point block does not accept parameters.
-
-### FUNC007 — Start Block Should Return Void
-The `start:` entry point should not return a value. (Warning)
 
 ### FUNC008 — Named Argument Label Must Match Parameter
 The identifier in a named argument must exactly match a parameter name of the called function or constructor.
@@ -976,6 +978,21 @@ state:
 ---
 
 ## Import Rules
+
+### Names an import brings in
+
+(root 18 "Import Forms")
+
+| Import | Public functions and state are written | Not in scope |
+|--------|----------------------------------------|--------------|
+| `utils` | `utils.add()`, `utils.count` | `add()` (SEM007) |
+| `utils as U` | `U.add()` | `utils.add()`, `add()` |
+| `data.models` (file `data/models.cln`) | `models.describe()` | `describe()`, `data.models.describe()` |
+| `utils.add` | `add()` | every other member of `utils` |
+| `utils.add as plus` | `plus()` | `add()`, other members of `utils` |
+| `"helpers.cln"` | `double()` (short) | — |
+
+A dotted item `a.b` is the module file `a/b.cln` when that file exists; otherwise it is the symbol `b` of module `a`. Files joined by file-path imports or by a package manifest's `shared:` folders form one namespace and use short names. Class names of an imported module are always unqualified (`Circle`, never `shapes.Circle`).
 
 ### IMPORT001 — Circular Dependency
 Modules cannot have circular import dependencies.
