@@ -20,7 +20,7 @@ mod declarations;
 mod expressions;
 mod statements;
 
-use crate::ast::{Class, Expression, Program};
+use crate::ast::{Class, Expression, Program, Type};
 use crate::error::CompilerError;
 use crate::lexer::specification_token::{Token, TokenKind, TokenStream};
 use std::collections::{HashMap, HashSet};
@@ -208,6 +208,25 @@ impl TokenParser {
             Some(token.location.clone()),
             None,
         ))
+    }
+
+    /// Parse `source` as exactly one type annotation (grammar.ebnf `type`),
+    /// with the same rules as a declaration in a source file: nullable `?`,
+    /// sized numbers, generics and list behaviors. Anything after the type is
+    /// an error.
+    pub fn parse_type_annotation(&mut self) -> Result<Type, CompilerError> {
+        self.skip_whitespace();
+        let parsed = self.parse_type()?;
+        self.skip_whitespace();
+        if !self.is_at_end() {
+            let token = self.current();
+            return Err(CompilerError::parse_error(
+                format!("Unexpected {:?} after the type", token.kind),
+                Some(token.location.clone()),
+                None,
+            ));
+        }
+        Ok(parsed)
     }
 
     /// Parse a complete program. On failure the first error carries the

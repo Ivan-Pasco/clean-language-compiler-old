@@ -1234,26 +1234,16 @@ impl HirBuilder {
     /// as a type annotation in a source file. Plugin manifests declare the
     /// field types of their `types` this way.
     pub fn type_from_source(source: &str) -> Result<HirType, CompilerError> {
-        use crate::parser::grammar::Rule;
-        use crate::parser::CleanParser;
-        use pest::Parser;
-
         let source = source.trim();
-        let invalid = || {
+        let invalid = |reason: String| {
             CompilerError::syntax_error(
-                format!("'{source}' is not a valid type"),
-                Some("Write the type as it appears in a Clean declaration, such as `string`, `integer:64`, `list<Item>` or a class name".to_string()),
+                format!("'{source}' is not a valid type ({reason})"),
+                Some("Write the type as it appears in a Clean declaration, such as `string`, `string?`, `integer:64`, `list<Item>` or a class name".to_string()),
                 None,
             )
         };
-        let pair = CleanParser::parse(Rule::type_, source)
-            .map_err(|_| invalid())?
-            .next()
-            .ok_or_else(invalid)?;
-        if pair.as_str().len() != source.len() {
-            return Err(invalid());
-        }
-        let ast_type = crate::parser::type_parser::parse_type(pair)?;
+        let ast_type = crate::parser::specification_parser::parse_type_source(source)
+            .map_err(|e| invalid(e.message().to_string()))?;
         HirBuilder::new().build_type(&ast_type)
     }
 

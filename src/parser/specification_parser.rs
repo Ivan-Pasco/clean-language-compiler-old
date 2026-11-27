@@ -111,6 +111,19 @@ impl SpecificationParser {
     }
 }
 
+/// Parse `source` as exactly one type annotation, such as `string?`,
+/// `integer:64` or `list<Item>.line.unique`, with the token parser that reads
+/// every other type in Clean source.
+pub fn parse_type_source(source: &str) -> Result<crate::ast::Type, CompilerError> {
+    use crate::lexer::specification_lexer::{SourceCode, SpecificationLexer};
+
+    let code = SourceCode::new(source.to_string(), "<type>".to_string());
+    let tokens = SpecificationLexer::new(&code)
+        .tokenize()
+        .map_err(CompilerError::from)?;
+    TokenParser::new(tokens).parse_type_annotation()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

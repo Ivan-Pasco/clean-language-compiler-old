@@ -630,6 +630,24 @@ mod type_from_source {
         );
     }
 
+    /// grammar.ebnf `type = base_type , [ "?" ]` and `list_behavior`: the
+    /// manifest spelling follows the same grammar as a source annotation.
+    #[test]
+    fn nullable_and_list_behavior_follow_the_source_grammar() {
+        assert_eq!(
+            parsed("string?"),
+            HirType::Optional(Box::new(HirType::String))
+        );
+        assert_eq!(
+            parsed("list<integer>.line.unique"),
+            HirType::List(Box::new(HirType::Integer))
+        );
+        assert_eq!(
+            parsed("list<string>.pile"),
+            HirType::List(Box::new(HirType::String))
+        );
+    }
+
     #[test]
     fn invalid_spelling_is_an_error() {
         assert!(HirBuilder::type_from_source("list<").is_err());
