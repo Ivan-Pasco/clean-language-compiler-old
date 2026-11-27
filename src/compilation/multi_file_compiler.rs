@@ -1760,17 +1760,25 @@ impl MultiFileCompiler {
                         "PLUGIN011",
                     );
                 }
-                CompilerError::syntax_error(
-                    e.to_string(),
-                    Some("Plugin expansion failed".to_string()),
-                    Some(SourceLocation {
-                        file: file_path.to_string_lossy().to_string(),
-                        line: 1,
-                        column: 1,
-                        byte_start: None,
-                        byte_end: None,
-                    }),
-                )
+                // plugin-contract.md §5.4: the diagnostic points at the
+                // user's block, not at the start of the file. No SYN code
+                // applies: the user's syntax is not what failed. The location
+                // moves from the message text into the diagnostic.
+                let location = match &e {
+                    crate::plugins::PluginError::ExpansionFailed { location, .. }
+                    | crate::plugins::PluginError::ValidationFailed { location, .. }
+                    | crate::plugins::PluginError::UnknownBlockType { location, .. } => {
+                        location.clone()
+                    }
+                    _ => None,
+                };
+                let mut message = e.to_string();
+                if let Some(loc) = &location {
+                    if let Some(stripped) = message.strip_suffix(&format!(" at {}", loc)) {
+                        message = stripped.to_string();
+                    }
+                }
+                CompilerError::PluginError { message, location }
             }).map_err(|e| vec![e])?;
             expander.check_permissions().map_err(|e| vec![e])?;
             expanded
