@@ -64,7 +64,7 @@ Emitted during HIR validation, name resolution, and type checking.
 |------|------|-------------------|----------|------------|
 | SEM001 | `TypeMismatch` | Expression type does not match the required type | Error | semantic-rules.md §SEM001 |
 | SEM002 | `UndefinedSymbol` | Variable, function, class, or module referenced but not declared | Error | semantic-rules.md §SEM002 |
-| SEM003 | `SymbolRedefinition` | Symbol declared more than once in the same scope | Error | semantic-rules.md §SEM003 |
+| SEM003 | `SymbolRedefinition` | Symbol declared more than once in the same scope (files of one namespace count as one scope; modules imported by name do not) | Error | semantic-rules.md §SEM003 |
 | SEM004 | `InvalidOperationForType` | Operator or operation applied to an unsupported type; a list type with both `.line` and `.pile` | Error | semantic-rules.md §SEM004 |
 | SEM005 | `AccessViolation` | Private member accessed from outside its allowed scope | Error | semantic-rules.md §SEM005 |
 | SEM006 | `InheritanceError` | A method override is invalid: its signature differs from the parent's public method, or it is not under `public:` | Error | semantic-rules.md §SEM006 |

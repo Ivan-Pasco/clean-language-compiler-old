@@ -103,6 +103,20 @@ import:
 
 **One project, one namespace.** A module import brings in code from outside the file's own project, so its functions keep their origin in the name (`utils.add()`). Files joined by a file path import, or by the `shared:` folders of a package manifest (`package:` in `main.cln`), are parts of **one** program: together they form one namespace, and their public functions and state are used by their short names (`double(21)`). This is the Go package model: inside a package, names are short; from another package, they carry the package name.
 
+Because every module keeps its own names, two modules imported by name may each declare the same public function or state:
+
+```clean
+import:
+    greetings
+    farewells
+
+start:
+    print(greetings.message())   // greetings' own message()
+    print(farewells.message())   // farewells' own message()
+```
+
+Inside one namespace the names must be unique: two files joined by file path imports or `shared:` folders that both declare a public `message` are a redefinition (SEM003).
+
 **Key differences from module imports:**
 
 | Feature | Module Import | File Path Import |

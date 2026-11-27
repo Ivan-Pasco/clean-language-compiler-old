@@ -228,7 +228,7 @@ A symbol (variable, function, class) is declared more than once in the same scop
 
 **Applies to:**
 - Variable declared twice in same scope
-- Function defined twice at top level
+- Function defined twice at top level, including in two files of one namespace (files joined by file path imports or `shared:` folders). Two modules imported by name (`import: greetings` / `import: farewells`) may each declare the same public function or state name; they are reached as `greetings.message()` and `farewells.message()` (18-modules-and-imports.md)
 - Class defined twice
 - Duplicate import items
 - A top-level user function with the name of a function a plugin block emits (for example a frame.ui `events:` handler export). The error names the plugin and the block: `"Function '{name}' is already defined at {location}; plugin '{plugin}' also emits a function '{name}' for the '{block}:' block"`, with the help `Rename your function '{name}': the plugin's function keeps its name because the plugin's generated code calls it`.
