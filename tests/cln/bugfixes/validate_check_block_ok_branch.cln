@@ -1,0 +1,32 @@
+// Test: bugfixes/validate_check_block_ok_branch
+// Grammar: validate_check_block (ok: and error: each take an inline statement or an indented block)
+// Fixed in: compiler 0.33.195
+// Expected output:
+//   bad
+//   after
+//   valid
+//   yes
+//   after
+//
+// Regression: an `ok:` branch with an indented block left a Dedent token in
+// front of `error:`, so the `error:` label failed to parse (issue #80).
+
+start:
+	validate login:
+		user: string required trim length: 3 to 20
+	pairs<string, any> short = {"user": "  bo  "}
+	login.check short:
+		ok:
+			print("valid")
+			print("yes")
+		error:
+			print("bad")
+	print("after")
+	pairs<string, any> good = {"user": "Ada"}
+	login.check good:
+		ok:
+			print("valid")
+			print("yes")
+		error:
+			print("bad")
+	print("after")

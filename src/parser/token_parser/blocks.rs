@@ -3635,6 +3635,12 @@ impl TokenParser {
         // block-style branch: the body on the following lines.
         if matches!(self.current_kind(), TokenKind::Indent(level) if *level > header_level) {
             body = self.parse_block(header_level)?;
+            // The block ends at the Dedent that returns to the label's own
+            // level. That Dedent belongs to this branch: leaving it in place
+            // hides the sibling label (`error:`) that follows.
+            if matches!(self.current_kind(), TokenKind::Dedent(level) if *level == header_level) {
+                self.bump();
+            }
         } else {
             // Inline style: the one statement on the label's line. (A
             // statement may consume its own newline, so the next line — the
