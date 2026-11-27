@@ -1,0 +1,29 @@
+// Test: bugfixes/dce_keeps_unused_any_to_number_boolean_optional
+// Semantic: 14-error-handling.md 'Errors Raised by the Language' - a conversion
+//   of an any that fails is caught by onError even when the result is unused
+//   (each conversion kind: number, boolean, integer?)
+// Fixed in: compiler 0.33.195
+// Expected output:
+//   number caught
+//   boolean caught
+//   optional caught
+//   done
+//
+// Regression: dead-code elimination at -O2 removed the unused conversion
+// instructions, so the handlers never ran.
+
+start:
+	any a = "x"
+	number n = 0.0
+	n = a onError:
+		print("number caught")
+		n = 1.0
+	boolean b = false
+	b = a onError:
+		print("boolean caught")
+		b = true
+	integer? o = none
+	o = a onError:
+		print("optional caught")
+		o = none
+	print("done")

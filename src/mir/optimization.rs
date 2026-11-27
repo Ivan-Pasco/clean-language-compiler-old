@@ -654,7 +654,7 @@ impl OptimizationPass for DeadCodeEliminationPass {
 /// and global writes, every kind of call (including dynamic capability
 /// dispatch), the `!` check (it halts on none even when its value is not
 /// used), a division that may divide by zero, a list element address that may
-/// be out of range, source arithmetic that may overflow, and a short-circuit `and`/`or` whose right-hand side contains one
+/// be out of range, an `any` read as a primitive, source arithmetic that may overflow, and a short-circuit `and`/`or` whose right-hand side contains one
 /// of those.
 fn has_side_effects(operation: &MirOperation) -> bool {
     match operation {
@@ -671,6 +671,17 @@ fn has_side_effects(operation: &MirOperation) -> bool {
         // The address of a list element raises "index <i> is out of range
         // ..." (RUN006) when the index is outside the list.
         MirOperation::GetElementPtr { is_array: true, .. } => true,
+        // Reading an `any` as a primitive raises when it holds another kind of
+        // value or one that does not fit (the same operations
+        // `add_instruction` follows with an `onError` check).
+        MirOperation::UnboxAnyToI32 { .. }
+        | MirOperation::UnboxAnyToI64 { .. }
+        | MirOperation::UnboxAnyToF64 { .. }
+        | MirOperation::UnboxAnyToBoolean { .. }
+        | MirOperation::OptionalConvert {
+            conversion: crate::mir::mir_types::OptionalConversion::FromAny { .. },
+            ..
+        } => true,
         // Source `+`, `-`, `*` and `-x` raise "integer overflow" on integers.
         MirOperation::BinaryOp {
             op: MirBinaryOp::CheckedAdd | MirBinaryOp::CheckedSub | MirBinaryOp::CheckedMul,

@@ -1,0 +1,17 @@
+// Test: bugfixes/dce_keeps_unused_any_to_integer_conversion
+// Semantic: 14-error-handling.md 'Errors Raised by the Language' - a conversion
+//   that can raise keeps running at every optimization level, even when its
+//   result is never used
+// Fixed in: compiler 0.33.195
+// Expected output:
+//   begin
+//   'hello' is not a valid integer
+//
+// Regression: dead-code elimination at -O2 removed the conversion because its
+// destination was unused, so the program printed end-reached and exited 0.
+
+start:
+	print("begin")
+	any a = "hello"
+	integer unused = a
+	print("end-reached")

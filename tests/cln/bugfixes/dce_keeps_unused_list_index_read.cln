@@ -1,0 +1,16 @@
+// Test: bugfixes/dce_keeps_unused_list_index_read
+// Semantic: 14-error-handling.md 'Errors Raised by the Language' - reading a
+//   list element outside the list raises, even when the value is never used
+// Fixed in: compiler 0.33.195
+// Expected output:
+//   begin
+//   index 5 is out of range for a list of length 2
+//
+// Regression: dead-code elimination at -O2 removed the unused element read, so
+// the program printed end-reached and exited 0.
+
+start:
+	print("begin")
+	list<integer> xs = [1, 2]
+	integer unused = xs[5]
+	print("end-reached")
