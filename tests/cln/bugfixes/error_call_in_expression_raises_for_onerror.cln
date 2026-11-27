@@ -1,0 +1,28 @@
+// Test: bugfixes/error_call_in_expression_raises_for_onerror
+// Grammar: onerror_expression, function_call
+// Semantic: 14-error-handling.md 'Raising Errors' - `error(...)` raises, so an
+//   `onError` on an expression containing it gives the fallback, not the message
+// Fixed in: compiler 0.33.195
+// Expected output:
+//   caught
+//   block: boom
+//   2
+//
+// Regression: `string e = error("boom") onError "caught"` set `e` to "boom"
+// because error(...) in expression position only returned its message.
+
+start:
+	string e = error("boom") onError "caught"
+	print(e)
+	string f = error("boom") onError:
+		print("block: " + error)
+		f = "x"
+	integer n = pick(false) onError 2
+	print(n)
+
+functions:
+	integer pick(boolean ok)
+		if ok
+			return 1
+		string unused = error("no")
+		return 0

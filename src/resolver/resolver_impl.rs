@@ -4788,6 +4788,13 @@ impl NameResolver {
             Some(HirType::Void),
             builtin_location.clone(),
         );
+        // `error(msg)` used as a value: raises like `__err_raise`.
+        self.register_builtin_fn(
+            "__err_raise_value",
+            vec![HirType::String],
+            Some(HirType::String),
+            builtin_location.clone(),
+        );
         for marker in ["__err_region_begin", "__err_region_end"] {
             self.register_builtin_fn(
                 marker,

@@ -2533,8 +2533,18 @@ impl HirBuilder {
                 } else {
                     let location = self.enclosing_statement_location();
                     let hir_args = self.build_call_args(name, args, &location)?;
+                    // `error(message)` in an expression raises like the
+                    // statement form (14-error-handling.md): `onError` on
+                    // the expression gives its fallback or runs its block.
+                    // `__err_raise_value` raises and, if the error is
+                    // handled, unwinds before the value is used.
+                    let function = if name == "error" && hir_args.len() == 1 {
+                        "__err_raise_value".to_string()
+                    } else {
+                        name.clone()
+                    };
                     Ok(HirExpression::Call {
-                        function: name.clone(),
+                        function,
                         arguments: hir_args,
                         location,
                     })

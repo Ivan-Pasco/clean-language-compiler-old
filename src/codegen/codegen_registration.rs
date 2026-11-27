@@ -1633,6 +1633,26 @@ impl super::CodeGenerator {
             ],
         )?;
 
+        // `error(message)` used as a value: raise, and hand back the message
+        // (only reached when no handler is active to unwind to).
+        let err_raise = self.get_function_index("__err_raise").ok_or_else(|| {
+            CompilerError::codegen_error(
+                "__err_raise_value requires __err_raise, which was not registered".to_string(),
+                None,
+                None,
+            )
+        })?;
+        self.register_function(
+            "__err_raise_value",
+            &[WasmType::I32],
+            Some(WasmType::I32),
+            &[
+                Instruction::LocalGet(0),
+                Instruction::Call(err_raise),
+                Instruction::LocalGet(0),
+            ],
+        )?;
+
         // A broken contract or a `value!` on none (RUN004, RUN005): the
         // message is printed and execution stops whether or not an `onError`
         // region is active, because `onError` does not catch these.
