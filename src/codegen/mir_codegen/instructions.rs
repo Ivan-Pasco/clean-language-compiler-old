@@ -1034,7 +1034,7 @@ impl MirCodeGenerator<'_> {
                     self.load_string_pointer_only(arg)?;
                 }
             }
-            Some("input_range") => {
+            Some("input_range") | Some("input.range") => {
                 // input_range expects (prompt_ptr, prompt_len, min, max) -> result
                 // Only expand the first argument (prompt string)
                 if !arguments.is_empty() {
