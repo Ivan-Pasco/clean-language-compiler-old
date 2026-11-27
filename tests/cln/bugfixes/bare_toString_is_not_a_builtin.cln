@@ -1,9 +1,10 @@
 // Test: bugfixes/bare_toString_is_not_a_builtin
-// Semantic: SEM007 — `toString(...)` is not in the standard library; the spec form is the method `n.toString()`
+// Semantic: SEM002 — `toString(...)` is not in the standard library; the spec form is the method `n.toString()`
 // Fixed in: compiler 0.33.190
+// Fixed: 0.33.195 reports an undefined function as SEM002 (semantic-rules.md SEM002), was SEM007
 // Expected output:
 // Expected error:
-//   SEM007
+//   SEM002
 //   Function 'toString' not found
 //
 // Regression (#51): the resolver registered a bare `toString` built-in that no

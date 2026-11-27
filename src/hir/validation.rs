@@ -1029,9 +1029,10 @@ impl HirValidator {
                 // Check for redeclaration in current scope
                 if let Some(current_scope) = context.variables.last() {
                     if current_scope.contains_key(name) {
-                        context.error(
+                        context.error_with_code(
                             &format!("Variable '{}' is already declared in this scope", name),
                             location.clone(),
+                            "SCOPE002",
                         );
                     }
                 }
@@ -1281,7 +1282,11 @@ impl HirValidator {
                             "SEM007",
                         );
                     } else {
-                        context.error(&format!("Undefined variable '{}'", name), location.clone());
+                        context.error_with_code(
+                            &format!("Undefined variable '{}'", name),
+                            location.clone(),
+                            "SEM002",
+                        );
                     }
                 }
             }
@@ -1453,9 +1458,10 @@ impl HirValidator {
                 location,
             } => {
                 if !context.classes.contains_key(class_name) {
-                    context.error(
+                    context.error_with_code(
                         &format!("Undefined class '{}'", class_name),
                         location.clone(),
+                        "SEM002",
                     );
                 }
 
@@ -1571,7 +1577,11 @@ impl HirValidator {
                     .unwrap_or(false);
 
                 if context.lookup_variable(name).is_none() && !is_class_field {
-                    context.error(&format!("Undefined variable '{}'", name), location.clone());
+                    context.error_with_code(
+                        &format!("Undefined variable '{}'", name),
+                        location.clone(),
+                        "SEM002",
+                    );
                 }
             }
 
@@ -1604,7 +1614,11 @@ impl HirValidator {
             HirType::Named { name, .. }
                 if !context.classes.contains_key(name) && !context.capabilities.contains(name) =>
             {
-                context.error(&format!("Undefined type '{}'", name), location.clone());
+                context.error_with_code(
+                    &format!("Undefined type '{}'", name),
+                    location.clone(),
+                    "SEM009",
+                );
             }
             HirType::Named { .. } => {}
 

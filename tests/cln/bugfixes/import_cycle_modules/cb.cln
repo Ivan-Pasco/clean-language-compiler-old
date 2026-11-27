@@ -1,0 +1,7 @@
+import:
+	import_cycle_modules.ca
+
+functions:
+	public:
+		integer fromB()
+			return 2

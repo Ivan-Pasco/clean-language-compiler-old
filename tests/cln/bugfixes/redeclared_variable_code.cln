@@ -1,0 +1,11 @@
+// Test: bugfixes/redeclared_variable_code
+// Semantic: SCOPE002 variable redeclared in the same scope (was reported as SEM007)
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[SCOPE002]: Variable 'x' is already declared in this scope
+
+start:
+	integer x = 1
+	integer x = 2
+	print(x)

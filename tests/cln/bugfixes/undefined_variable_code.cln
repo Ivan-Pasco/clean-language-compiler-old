@@ -1,0 +1,9 @@
+// Test: bugfixes/undefined_variable_code
+// Semantic: SEM002 undefined symbol (was reported as SEM007, Generic Type Error)
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[SEM002]: Undefined variable 'x'
+
+start:
+	print(x)

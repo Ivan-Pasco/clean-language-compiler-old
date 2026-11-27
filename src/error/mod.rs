@@ -466,20 +466,21 @@ impl CompilerError {
         }
     }
 
-    /// Import resolution error
-    pub fn import_error<T: Into<String>>(
-        message: T,
-        import_name: &str,
-        location: Option<SourceLocation>,
-    ) -> Self {
-        let detailed_message = format!("Import '{import_name}': {}", message.into());
-        let help = Some(format!(
-            "Check if the module '{import_name}' exists and is accessible"
-        ));
+    /// IMPORT001: the modules named in `message` import each other in a cycle.
+    pub fn import_cycle<T: Into<String>>(message: T, location: Option<SourceLocation>) -> Self {
         CompilerError::Module {
             context: Box::new(
-                ErrorContext::new(detailed_message, help, ErrorType::Import, location)
-                    .with_error_code("IMPORT001"),
+                ErrorContext::new(
+                    message,
+                    Some(
+                        "Break the cycle: remove one of the imports, or move what the modules \
+                         share into a third module that both import"
+                            .to_string(),
+                    ),
+                    ErrorType::Import,
+                    location,
+                )
+                .with_error_code("IMPORT001"),
             ),
         }
     }

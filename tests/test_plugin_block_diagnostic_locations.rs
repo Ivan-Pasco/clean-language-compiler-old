@@ -170,7 +170,7 @@ fn unknown_function_in_endpoint_handler_names_the_handler_line() {
             "integer c = missingRouteHelper(a)"
         };
         assert_points_at(
-            diagnostic(&output, "SEM007", "missingRouteHelper"),
+            diagnostic(&output, "SEM002", "missingRouteHelper"),
             "app/server/api/health.cln",
             error_line,
             source_line,
@@ -206,7 +206,7 @@ fn type_error_on_model_query_in_class_method_names_the_statement_line() {
     let (ok, output) = cln(root, &["build", "main.cln"]);
     assert!(!ok, "build must fail:\n{}", output);
     assert_points_at(
-        diagnostic(&output, "SEM004", "result"),
+        diagnostic(&output, "SEM001", "result"),
         "app/server/logic/Notes.cln",
         6,
         "string result = Note.find:",
@@ -257,7 +257,7 @@ fn unknown_function_in_component_event_names_the_event_line() {
     );
     assert!(!ok, "compile must fail:\n{}", output);
     assert_points_at(
-        diagnostic(&output, "SEM007", "missingEventHelper"),
+        diagnostic(&output, "SEM002", "missingEventHelper"),
         "demo-box.cln",
         11,
         "integer n = missingEventHelper(1)",

@@ -1,0 +1,10 @@
+// Test: bugfixes/declaration_type_mismatch_code
+// Semantic: SEM001 a declaration whose initializer has another type (was SEM004)
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[SEM001]: Type annotation 'integer' contradicts the inferred type 'string' for variable 'x'
+
+start:
+	integer x = "hi"
+	print(x)

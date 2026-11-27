@@ -3246,21 +3246,27 @@ impl<'a> TypeInference<'a> {
                             && !class_subtype_ok
                             && !integer_constant_into_sized
                         {
+                            // SEM001: the initializer's type is not assignable to
+                            // the declared type (semantic-rules.md SEM001,
+                            // "Variable assignment"). Types are named as the
+                            // source writes them, never by internal symbol id.
+                            let declared_name = declared_ty.source_name(Some(self.symbol_table));
+                            let init_name = init_ty.source_name(Some(self.symbol_table));
                             self.errors.push(CompilerError::Validation {
                                 context: Box::new(
                                     crate::error::ErrorContext::new(
                                         format!(
                                             "Type annotation '{}' contradicts the inferred type '{}' for variable '{}'",
-                                            declared_ty, init_ty, name
+                                            declared_name, init_name, name
                                         ),
                                         Some(format!(
                                             "Change the type annotation to '{}' or change the initializer to produce a '{}'",
-                                            init_ty, declared_ty
+                                            init_name, declared_name
                                         )),
                                         crate::error::ErrorType::Validation,
                                         Some(location.clone()),
                                     )
-                                    .with_error_code("SEM004"),
+                                    .with_error_code("SEM001"),
                                 ),
                             });
                         } else {

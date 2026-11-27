@@ -1,0 +1,9 @@
+// Test: bugfixes/undefined_function_code
+// Semantic: SEM002 call to an undefined function (was reported as SEM007)
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[SEM002]: Function 'nope' not found
+
+start:
+	print(nope(1))

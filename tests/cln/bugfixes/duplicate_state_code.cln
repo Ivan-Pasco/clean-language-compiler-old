@@ -1,0 +1,13 @@
+// Test: bugfixes/duplicate_state_code
+// Semantic: SEM003 state variable declared twice (was reported as SEM007)
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[SEM003]: State variable 'count' conflicts with existing symbol
+
+start:
+	print(1)
+
+state:
+	integer count = 3
+	integer count = 4

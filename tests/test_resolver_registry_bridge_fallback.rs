@@ -80,8 +80,8 @@ fn registry_alias_call_resolves_to_canonical_bridge() {
 fn unknown_underscore_call_still_fails_sem007() {
     let err = compile_err("start:\n\tprintl(_this_is_definitely_not_a_bridge())\n");
     assert!(
-        err.contains("_this_is_definitely_not_a_bridge") && err.contains("SEM007"),
-        "unknown _prefixed name must still fail SEM007. Got: {err}"
+        err.contains("_this_is_definitely_not_a_bridge") && err.contains("SEM002"),
+        "unknown _prefixed name must still fail SEM002. Got: {err}"
     );
 }
 

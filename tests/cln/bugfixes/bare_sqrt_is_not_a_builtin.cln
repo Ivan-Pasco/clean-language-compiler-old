@@ -1,9 +1,10 @@
 // Test: bugfixes/bare_sqrt_is_not_a_builtin
-// Semantic: SEM007 — `sqrt(...)` is not in the standard library; the spec form is math.sqrt(x)
+// Semantic: SEM002 — `sqrt(...)` is not in the standard library; the spec form is math.sqrt(x)
 // Fixed in: compiler 0.33.190
+// Fixed: 0.33.195 reports an undefined function as SEM002 (semantic-rules.md SEM002), was SEM007
 // Expected output:
 // Expected error:
-//   SEM007
+//   SEM002
 //   Function 'sqrt' not found
 //
 // Regression (#51): the resolver registered a bare `sqrt` built-in that no

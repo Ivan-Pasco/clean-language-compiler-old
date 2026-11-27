@@ -65,7 +65,7 @@ fn parseint_at_resolver_emits_curated_hint() {
     let combined = compile_source_expect_error(source);
     assert!(
         combined.contains("not found"),
-        "expected \"Function ... not found\" (SEM007) in output, got:\n{combined}"
+        "expected \"Function ... not found\" (SEM002) in output, got:\n{combined}"
     );
     assert!(
         combined.contains("string.toInteger"),
@@ -79,7 +79,7 @@ fn parsefloat_at_resolver_emits_curated_hint() {
     let combined = compile_source_expect_error(source);
     assert!(
         combined.contains("not found"),
-        "expected \"Function ... not found\" (SEM007) in output, got:\n{combined}"
+        "expected \"Function ... not found\" (SEM002) in output, got:\n{combined}"
     );
     assert!(
         combined.contains("string.toNumber"),
@@ -93,7 +93,7 @@ fn unknown_name_falls_back_to_fuzzy_suggestion() {
     let combined = compile_source_expect_error(source);
     assert!(
         combined.contains("not found"),
-        "expected \"Function ... not found\" (SEM007) in output, got:\n{combined}"
+        "expected \"Function ... not found\" (SEM002) in output, got:\n{combined}"
     );
     assert!(
         combined.contains("Did you mean"),

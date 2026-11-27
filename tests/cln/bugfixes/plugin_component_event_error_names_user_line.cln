@@ -1,11 +1,11 @@
 // Test: bugfixes/plugin_component_event_error_names_user_line
 // Grammar: frame-ui.ebnf component_block
-// Semantic: SEM002 undefined symbol (reported as SEM007) inside a component
+// Semantic: SEM002 undefined symbol (was SEM007 before 0.33.195) inside a component
 //   event handler names the handler line in this file, not a plugin fragment
 // Fixed in: compiler 0.33.174
 // Expected output:
 // Expected error:
-//   error[SEM007]: Function 'missingEventHelper' not found
+//   error[SEM002]: Function 'missingEventHelper' not found
 //   plugin_component_event_error_names_user_line.cln:22:
 //   integer n = missingEventHelper(1)
 

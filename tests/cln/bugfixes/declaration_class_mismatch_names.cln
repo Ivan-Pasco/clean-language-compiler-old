@@ -1,0 +1,21 @@
+// Test: bugfixes/declaration_class_mismatch_names
+// Semantic: SEM001 class mismatch in a declaration names the classes as written, not as Class#id
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[SEM001]: Type annotation 'Dog' contradicts the inferred type 'Animal' for variable 'd'
+
+start:
+	Animal a = Animal("x")
+	Dog d = a
+	print(d.name)
+
+class Animal
+	string name
+
+	constructor(string n)
+		name = n
+
+class Dog is Animal
+	constructor(string n)
+		base(n)

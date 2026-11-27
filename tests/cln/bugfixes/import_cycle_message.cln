@@ -1,0 +1,13 @@
+// Test: bugfixes/import_cycle_message
+// Semantic: IMPORT001 circular import, message names the cycle and the help says how to break it
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[IMPORT001]: Circular dependency detected
+//   Break the cycle
+
+import:
+	import_cycle_modules.ca
+
+start:
+	print(ca.fromA())

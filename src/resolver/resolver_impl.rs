@@ -1029,8 +1029,9 @@ impl NameResolver {
                 .symbol_table
                 .has_symbol_in_current_scope(&start_fn.name)
             {
-                self.error(
+                self.error_with_code(
                     &format!("Function '{}' conflicts with start function", start_fn.name),
+                    "SEM003",
                     start_fn.location.clone(),
                 );
             } else {
@@ -1054,8 +1055,9 @@ impl NameResolver {
         for class in &hir.classes {
             // Check for duplicates BEFORE creating the symbol
             if self.symbol_table.has_symbol_in_current_scope(&class.name) {
-                self.error(
+                self.error_with_code(
                     &format!("Class '{}' is already defined", class.name),
+                    "SEM003",
                     class.location.clone(),
                 );
             } else {
@@ -1148,11 +1150,12 @@ impl NameResolver {
                     .symbol_table
                     .has_symbol_in_current_scope(&state_decl.name)
                 {
-                    self.error(
+                    self.error_with_code(
                         &format!(
                             "State variable '{}' conflicts with existing symbol",
                             state_decl.name
                         ),
+                        "SEM003",
                         state_decl.location.clone(),
                     );
                 } else {
@@ -1182,11 +1185,12 @@ impl NameResolver {
                     .symbol_table
                     .has_symbol_in_current_scope(&computed_decl.name)
                 {
-                    self.error(
+                    self.error_with_code(
                         &format!(
                             "Computed state '{}' conflicts with existing symbol",
                             computed_decl.name
                         ),
+                        "SEM003",
                         computed_decl.location.clone(),
                     );
                 } else {
@@ -1257,11 +1261,12 @@ impl NameResolver {
                     }
                 }
                 // Only error if it conflicts with a non-builtin symbol
-                self.error(
+                self.error_with_code(
                     &format!(
                         "External function '{}' conflicts with existing symbol",
                         external.name
                     ),
+                    "SEM003",
                     external.location.clone(),
                 );
             } else {
@@ -3048,7 +3053,7 @@ impl NameResolver {
                         .unwrap_or_else(|| Self::undeclared_function_hint(&function)),
                 ),
             };
-            self.error_with_help(&msg, hint, location.clone(), "SEM007");
+            self.error_with_help(&msg, hint, location.clone(), "SEM002");
         })?;
 
         let mut resolved_arguments = Vec::new();

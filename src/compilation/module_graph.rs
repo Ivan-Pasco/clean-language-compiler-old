@@ -172,9 +172,8 @@ impl ModuleGraph {
             None
         };
 
-        CompilerError::import_error(
+        CompilerError::import_cycle(
             format!("Circular dependency detected: {}", cycle_str),
-            "import",
             location,
         )
     }

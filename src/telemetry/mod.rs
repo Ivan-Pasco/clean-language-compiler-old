@@ -324,8 +324,11 @@ fn infer_expected_behavior(error: &crate::error::CompilerError) -> &'static str 
 /// source code. Only the former is appropriate for the bug dashboard.
 ///
 /// Policy:
-/// - `Codegen` / `Validation` / `Memory` — compiler-internal failures,
-///   always treated as bugs.
+/// - `Codegen` / `Memory` — compiler-internal failures, always treated as
+///   bugs.
+/// - `Validation` — the compiler rejecting the user's own code (undefined
+///   names, redeclarations, SEM011, ...). Never a bug, except when the
+///   location is code a plugin generated (`<plugin:NAME>`).
 /// - `PluginError` — a bug (in the plugin or the compiler that ran it),
 ///   except PLUGIN001: a plugin named in `plugins:` that is not installed
 ///   or cannot be loaded for this build is the project's configuration.
@@ -336,7 +339,12 @@ fn infer_expected_behavior(error: &crate::error::CompilerError) -> &'static str 
 fn is_likely_compiler_bug(error: &crate::error::CompilerError) -> bool {
     use crate::error::CompilerError::*;
     match error {
-        Codegen { .. } | Validation { .. } | Memory { .. } => true,
+        Codegen { .. } | Memory { .. } => true,
+        // A validation error is the compiler rejecting the user's code
+        // (undefined name, redeclaration, SEM011, ...). It is a toolchain bug
+        // only when it points into code a plugin generated (`<plugin:NAME>`),
+        // which the user did not write.
+        Validation { .. } => component_override_from_location(location_of(error)).is_some(),
         PluginError { message, .. } => !message.contains("PLUGIN001"),
         _ => false,
     }
@@ -576,12 +584,36 @@ mod tests {
     fn missing_or_circular_imports_are_not_bugs() {
         let missing = CompilerError::module_error("Module 'NoSuchModule' not found", None, None);
         assert!(!is_likely_compiler_bug(&missing));
-        let cycle = CompilerError::import_error(
-            "Circular dependency detected: A -> B -> A",
-            "import",
-            None,
-        );
+        let cycle = CompilerError::import_cycle("Circular dependency detected: A -> B -> A", None);
         assert!(!is_likely_compiler_bug(&cycle));
+    }
+
+    #[test]
+    fn validation_errors_in_user_code_are_not_bugs() {
+        use crate::ast::SourceLocation;
+        let loc = SourceLocation {
+            line: 2,
+            column: 2,
+            file: "/home/user/app.cln".to_string(),
+            byte_start: None,
+            byte_end: None,
+        };
+        let err = CompilerError::validation_error("Undefined variable 'x'", loc);
+        assert!(!is_likely_compiler_bug(&err));
+    }
+
+    #[test]
+    fn validation_errors_in_plugin_generated_code_are_bugs() {
+        use crate::ast::SourceLocation;
+        let loc = SourceLocation {
+            line: 0,
+            column: 0,
+            file: "<plugin:frame.ui>".to_string(),
+            byte_start: None,
+            byte_end: None,
+        };
+        let err = CompilerError::validation_error("Undefined variable 'x'", loc);
+        assert!(is_likely_compiler_bug(&err));
     }
 
     #[test]
