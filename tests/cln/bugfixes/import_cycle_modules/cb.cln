@@ -1,3 +1,13 @@
+// Test: bugfixes/import_cycle_modules/cb
+// Semantic: helper module for import_cycle_message.cln (IMPORT001 cycle cb -> ca)
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[IMPORT002]: Module 'import_cycle_modules.ca' not found
+//
+// Compiled on its own, the dotted path resolves from this folder, so the
+// sibling is not found; the cycle itself is pinned by import_cycle_message.cln.
+
 import:
 	import_cycle_modules.ca
 
