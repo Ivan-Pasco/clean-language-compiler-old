@@ -6,6 +6,7 @@
  */
 
 use clean_language_compiler::error::CompilerError;
+use std::path::Path;
 use tower_lsp::lsp_types::*;
 
 pub struct DiagnosticsProvider;
@@ -15,24 +16,56 @@ impl DiagnosticsProvider {
         Self
     }
 
+    /// Convert the result of checking one document into LSP diagnostics.
+    ///
+    /// `errors` become `ERROR` diagnostics and `warnings` become `WARNING`
+    /// diagnostics; each carries the compiler's error code when it has one.
+    /// `document_path` is the file the document is; a diagnostic located in
+    /// another file (an imported module) cannot be placed in this document, so
+    /// it is shown at the top of the document with the file and position in
+    /// its message.
     pub async fn convert_compiler_errors(
         &self,
         errors: &[CompilerError],
+        warnings: &[CompilerError],
         _source: &str,
+        document_path: Option<&Path>,
     ) -> Vec<Diagnostic> {
-        errors
+        let errors = errors
             .iter()
-            .map(|error| self.convert_error(error))
-            .collect()
+            .map(|error| self.convert_error(error, None, document_path));
+        let warnings = warnings.iter().map(|warning| {
+            self.convert_error(warning, Some(DiagnosticSeverity::WARNING), document_path)
+        });
+        errors.chain(warnings).collect()
     }
 
-    fn convert_error(&self, error: &CompilerError) -> Diagnostic {
-        let (severity, message, range) = self.analyze_error(error);
+    fn convert_error(
+        &self,
+        error: &CompilerError,
+        severity_override: Option<DiagnosticSeverity>,
+        document_path: Option<&Path>,
+    ) -> Diagnostic {
+        let (severity, mut message, mut range) = self.analyze_error(error);
+        let severity = severity_override.unwrap_or(severity);
+
+        if let Some(location) = error.context().and_then(|c| c.location.as_ref()) {
+            if !location.file.is_empty() && !is_same_file(&location.file, document_path) {
+                message = format!(
+                    "{}:{}:{}: {}",
+                    location.file, location.line, location.column, message
+                );
+                range = Range::default();
+            }
+        }
 
         Diagnostic {
             range,
             severity: Some(severity),
-            code: None,
+            code: error
+                .context()
+                .and_then(|c| c.error_code.clone())
+                .map(NumberOrString::String),
             code_description: None,
             source: Some("clean-compiler".to_string()),
             message,
@@ -241,11 +274,84 @@ impl DiagnosticsProvider {
             msg.to_string()
         }
     }
-
 }
 
 impl Default for DiagnosticsProvider {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// True when a diagnostic's file name refers to the document being checked.
+/// Without a document path (an unsaved buffer with no file) every located
+/// diagnostic is taken to be in the document.
+fn is_same_file(diagnostic_file: &str, document_path: Option<&Path>) -> bool {
+    let Some(document_path) = document_path else {
+        return true;
+    };
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    canonical(Path::new(diagnostic_file)) == canonical(document_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clean_language_compiler::ast::SourceLocation;
+
+    fn located(message: &str, code: &'static str, file: &str, line: usize) -> CompilerError {
+        let location = SourceLocation {
+            file: file.to_string(),
+            line,
+            column: 3,
+            ..Default::default()
+        };
+        CompilerError::syntax_error_with_code(message, None, Some(location), code)
+    }
+
+    async fn convert(
+        errors: &[CompilerError],
+        warnings: &[CompilerError],
+        path: Option<&Path>,
+    ) -> Vec<Diagnostic> {
+        DiagnosticsProvider::new()
+            .convert_compiler_errors(errors, warnings, "", path)
+            .await
+    }
+
+    #[tokio::test]
+    async fn errors_carry_their_code_and_error_severity() {
+        let errors = [located("boom", "SEM001", "a.cln", 2)];
+        let diagnostics = convert(&errors, &[], Some(Path::new("a.cln"))).await;
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(
+            diagnostics[0].code,
+            Some(NumberOrString::String("SEM001".to_string()))
+        );
+        assert_eq!(diagnostics[0].range.start.line, 1);
+    }
+
+    #[tokio::test]
+    async fn warnings_are_sent_as_warnings_with_their_code() {
+        let warnings = [located("careful", "FUNC005", "a.cln", 5)];
+        let diagnostics = convert(&[], &warnings, Some(Path::new("a.cln"))).await;
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(
+            diagnostics[0].code,
+            Some(NumberOrString::String("FUNC005".to_string()))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_diagnostic_in_another_file_is_pinned_to_the_top_with_its_origin() {
+        let errors = [located("bad import body", "SEM002", "other.cln", 9)];
+        let diagnostics = convert(&errors, &[], Some(Path::new("a.cln"))).await;
+        assert_eq!(diagnostics[0].range, Range::default());
+        assert!(
+            diagnostics[0].message.starts_with("other.cln:9:3: "),
+            "message: {}",
+            diagnostics[0].message
+        );
     }
 }

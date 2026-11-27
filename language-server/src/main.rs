@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use clean_language_compiler::compile_with_file;
+use clean_language_compiler::diagnose_source;
 use clean_language_compiler::plugins::{LanguageRegistry, PluginDiscovery, PluginRegistry};
 use dashmap::DashMap;
 use ropey::Rope;
@@ -101,17 +101,17 @@ impl LanguageServer for Backend {
                                 work_done_progress_options: WorkDoneProgressOptions::default(),
                                 legend: SemanticTokensLegend {
                                     token_types: vec![
-                                        SemanticTokenType::KEYWORD,      // 0 - blue
-                                        SemanticTokenType::TYPE,         // 1
-                                        SemanticTokenType::FUNCTION,     // 2 - blue (built-in)
-                                        SemanticTokenType::VARIABLE,     // 3
-                                        SemanticTokenType::STRING,       // 4
-                                        SemanticTokenType::NUMBER,       // 5
-                                        SemanticTokenType::COMMENT,      // 6
-                                        SemanticTokenType::OPERATOR,     // 7
-                                        SemanticTokenType::CLASS,        // 8
-                                        SemanticTokenType::PROPERTY,     // 9
-                                        SemanticTokenType::NAMESPACE,    // 10 - purple (plugin functions)
+                                        SemanticTokenType::KEYWORD,   // 0 - blue
+                                        SemanticTokenType::TYPE,      // 1
+                                        SemanticTokenType::FUNCTION,  // 2 - blue (built-in)
+                                        SemanticTokenType::VARIABLE,  // 3
+                                        SemanticTokenType::STRING,    // 4
+                                        SemanticTokenType::NUMBER,    // 5
+                                        SemanticTokenType::COMMENT,   // 6
+                                        SemanticTokenType::OPERATOR,  // 7
+                                        SemanticTokenType::CLASS,     // 8
+                                        SemanticTokenType::PROPERTY,  // 9
+                                        SemanticTokenType::NAMESPACE, // 10 - purple (plugin functions)
                                     ],
                                     token_modifiers: vec![
                                         SemanticTokenModifier::DECLARATION,
@@ -150,7 +150,10 @@ impl LanguageServer for Backend {
         self.client
             .log_message(
                 MessageType::INFO,
-                &format!("Clean Language Server ready - v{}", env!("CARGO_PKG_VERSION")),
+                &format!(
+                    "Clean Language Server ready - v{}",
+                    env!("CARGO_PKG_VERSION")
+                ),
             )
             .await;
     }
@@ -456,32 +459,33 @@ impl Backend {
         if let Some(document) = self.documents.get(uri) {
             let text = document.text.to_string();
 
-            // Use the main compiler for parsing and analysis
-            match compile_with_file(&text, "lsp-temp.cln") {
-                Ok(_) => {
-                    // Successful compilation - no errors
-                    debug!("Document compiled successfully: {}", uri);
-                    self.client
-                        .publish_diagnostics(uri.clone(), vec![], Some(document.version))
-                        .await;
-                }
-                Err(errors) => {
-                    // Convert compiler errors to LSP diagnostics
-                    let diagnostics = self
-                        .diagnostics_provider
-                        .convert_compiler_errors(&errors, &text)
-                        .await;
+            // Check the buffer as the real file so `import:` resolves relative
+            // to it, exactly as `cln compile` would resolve it.
+            let document_path = uri.to_file_path().ok();
+            let file_path = document_path
+                .as_ref()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "untitled.cln".to_string());
+            let result = diagnose_source(&text, &file_path);
 
-                    debug!(
-                        "Found {} diagnostics for document: {}",
-                        diagnostics.len(),
-                        uri
-                    );
-                    self.client
-                        .publish_diagnostics(uri.clone(), diagnostics, Some(document.version))
-                        .await;
-                }
-            }
+            debug!(
+                "Found {} errors and {} warnings for document: {}",
+                result.errors.len(),
+                result.warnings.len(),
+                uri
+            );
+            let diagnostics = self
+                .diagnostics_provider
+                .convert_compiler_errors(
+                    &result.errors,
+                    &result.warnings,
+                    &text,
+                    document_path.as_deref(),
+                )
+                .await;
+            self.client
+                .publish_diagnostics(uri.clone(), diagnostics, Some(document.version))
+                .await;
         }
     }
 
@@ -546,55 +550,113 @@ impl Backend {
         // Core language keywords (token_type 0: KEYWORD)
         let keywords: &[&str] = &[
             // Control flow
-            "if", "else", "iterate", "in", "to", "step", "repeat", "break", "continue",
-            "return", "onError",
+            "if",
+            "else",
+            "iterate",
+            "in",
+            "to",
+            "step",
+            "repeat",
+            "break",
+            "continue",
+            "return",
+            "onError",
             // Declarations
-            "functions", "class", "start", "state", "computed", "watch", "rules",
-            "constants", "tests", "build", "plugins",
+            "functions",
+            "class",
+            "start",
+            "state",
+            "computed",
+            "watch",
+            "rules",
+            "constants",
+            "tests",
+            "build",
+            "plugins",
             // Modifiers
-            "private", "constant", "extends", "base", "new",
+            "private",
+            "constant",
+            "extends",
+            "base",
+            "new",
             // Operators
-            "and", "or", "not", "is", "can",
+            "and",
+            "or",
+            "not",
+            "is",
+            "can",
             // Async
-            "later", "background",
+            "later",
+            "background",
             // AI integration
-            "spec", "intent", "source",
+            "spec",
+            "intent",
+            "source",
             // Error handling
-            "error", "assert",
+            "error",
+            "assert",
         ];
 
         // Type keywords (token_type 1: TYPE)
         let type_keywords: &[&str] = &[
-            "integer", "number", "string", "boolean", "void", "any",
-            "list", "matrix", "pairs",
+            "integer",
+            "number",
+            "string",
+            "boolean",
+            "void",
+            "any",
+            "list",
+            "matrix",
+            "pairs",
             // Sized types
-            "integer:8", "integer:16", "integer:32", "integer:64",
-            "integer:8u", "integer:16u", "integer:32u", "integer:64u",
-            "number:32", "number:64",
+            "integer:8",
+            "integer:16",
+            "integer:32",
+            "integer:64",
+            "integer:8u",
+            "integer:16u",
+            "integer:32u",
+            "integer:64u",
+            "number:32",
+            "number:64",
         ];
 
         // Built-in functions/namespaces (token_type 2: FUNCTION)
-        let builtin_functions: &[&str] = &[
-            "print", "printl", "input",
-        ];
+        let builtin_functions: &[&str] = &["print", "printl", "input"];
 
         // Built-in classes/namespaces (token_type 8: CLASS)
-        let builtin_classes: &[&str] = &[
-            "Math", "String", "Integer", "List", "File", "Http", "JSON",
-        ];
+        let builtin_classes: &[&str] =
+            &["Math", "String", "Integer", "List", "File", "Http", "JSON"];
 
         // Framework block keywords (token_type 10: NAMESPACE for plugin blocks)
         let framework_blocks: &[&str] = &[
-            "data", "migrate", "endpoints", "server", "component", "screen", "page",
-            "styles", "html", "ui", "auth", "protected", "login", "roles",
-            "canvasScene", "draw", "onFrame", "onPointerDown", "onPointerMove", "onKeyDown",
+            "data",
+            "migrate",
+            "endpoints",
+            "server",
+            "component",
+            "screen",
+            "page",
+            "styles",
+            "html",
+            "ui",
+            "auth",
+            "protected",
+            "login",
+            "roles",
+            "canvasScene",
+            "draw",
+            "onFrame",
+            "onPointerDown",
+            "onPointerMove",
+            "onKeyDown",
         ];
 
         // Sub-block keywords (token_type 9: PROPERTY)
         let sub_blocks: &[&str] = &[
-            "where", "order", "limit", "offset", "guard", "returns", "cache", "handle",
-            "props", "render", "handlers", "session", "jwt",
-            "up", "down", "tenant", "theme", "colors", "spacing", "maxAge", "noCache",
+            "where", "order", "limit", "offset", "guard", "returns", "cache", "handle", "props",
+            "render", "handlers", "session", "jwt", "up", "down", "tenant", "theme", "colors",
+            "spacing", "maxAge", "noCache",
         ];
 
         // HTTP methods (token_type 10: NAMESPACE)
@@ -602,11 +664,35 @@ impl Backend {
 
         // Namespace prefixes for plugin/stdlib calls (token_type 10: NAMESPACE)
         let namespace_prefixes: &[&str] = &[
-            "math.", "string.", "list.", "integer.", "file.", "json.",
-            "http.", "db.", "crypto.", "request.", "response.",
-            "route.", "session.", "auth.", "cache.", "email.", "queue.", "storage.",
-            "canvas.", "sprite.", "audio.", "input.", "collision.", "camera.", "ease.",
-            "scene.", "tenant.", "Data.", "ctx.",
+            "math.",
+            "string.",
+            "list.",
+            "integer.",
+            "file.",
+            "json.",
+            "http.",
+            "db.",
+            "crypto.",
+            "request.",
+            "response.",
+            "route.",
+            "session.",
+            "auth.",
+            "cache.",
+            "email.",
+            "queue.",
+            "storage.",
+            "canvas.",
+            "sprite.",
+            "audio.",
+            "input.",
+            "collision.",
+            "camera.",
+            "ease.",
+            "scene.",
+            "tenant.",
+            "Data.",
+            "ctx.",
         ];
 
         // Also check language registry for plugin-defined functions
@@ -630,7 +716,8 @@ impl Backend {
                         }
                     }
                     let rest = &line[abs_pos..];
-                    let end = rest.find(|c: char| c == '(' || c.is_whitespace() || c == ')' || c == ',')
+                    let end = rest
+                        .find(|c: char| c == '(' || c.is_whitespace() || c == ')' || c == ',')
                         .unwrap_or(rest.len());
                     if end > prefix.len() {
                         tokens.push((abs_pos as u32, end as u32, 10));
@@ -883,7 +970,10 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    info!("Starting Clean Language Server v{}", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Starting Clean Language Server v{}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();

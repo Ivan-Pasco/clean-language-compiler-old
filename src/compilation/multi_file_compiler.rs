@@ -204,25 +204,47 @@ impl MultiFileCompiler {
         &self,
         entry_path: P,
     ) -> Result<CompilationUnit, Vec<CompilerError>> {
-        let entry_path = entry_path.as_ref();
+        self.build_from_entry(entry_path.as_ref(), None)
+    }
 
-        // Validate entry file exists
-        if !entry_path.exists() {
-            return Err(vec![CompilerError::io_error(
-                format!("Entry file not found: {}", entry_path.display()),
-                None,
-                None,
-            )]);
-        }
+    /// Like [`build_from_file`](Self::build_from_file), but the entry file's
+    /// text is `source` instead of what is on disk. Imports resolve relative
+    /// to `entry_path` exactly as if the file held `source`, and the file does
+    /// not have to exist. Editors use this for unsaved buffers.
+    pub fn build_from_source<P: AsRef<Path>>(
+        &self,
+        entry_path: P,
+        source: &str,
+    ) -> Result<CompilationUnit, Vec<CompilerError>> {
+        self.build_from_entry(entry_path.as_ref(), Some(source))
+    }
 
-        // Read entry file
-        let manifest_source = fs::read_to_string(entry_path).map_err(|e| {
-            vec![CompilerError::io_error(
-                format!("Failed to read entry file {}: {}", entry_path.display(), e),
-                None,
-                None,
-            )]
-        })?;
+    fn build_from_entry(
+        &self,
+        entry_path: &Path,
+        source_override: Option<&str>,
+    ) -> Result<CompilationUnit, Vec<CompilerError>> {
+        // Read the entry file (or take the editor buffer in its place)
+        let manifest_source = match source_override {
+            Some(source) => source.to_string(),
+            None => {
+                // Validate entry file exists
+                if !entry_path.exists() {
+                    return Err(vec![CompilerError::io_error(
+                        format!("Entry file not found: {}", entry_path.display()),
+                        None,
+                        None,
+                    )]);
+                }
+                fs::read_to_string(entry_path).map_err(|e| {
+                    vec![CompilerError::io_error(
+                        format!("Failed to read entry file {}: {}", entry_path.display(), e),
+                        None,
+                        None,
+                    )]
+                })?
+            }
+        };
 
         // Get the canonical path for the entry file
         let manifest_canonical = entry_path
@@ -1793,7 +1815,9 @@ impl MultiFileCompiler {
             .as_ref()
             .map(|r| r.generic_instance_classes())
             .unwrap_or_default();
-        let mut hir_builder = HirBuilder::new().with_generic_instance_classes(generic_instances);
+        let mut hir_builder = HirBuilder::new()
+            .with_generic_instance_classes(generic_instances)
+            .with_release_mode(self.config.release_mode);
         let hir_result = hir_builder.build_hir(ast).map_err(|e| vec![e])?;
 
         Ok(hir_result.hir)

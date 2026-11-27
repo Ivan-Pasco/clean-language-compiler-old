@@ -1666,8 +1666,15 @@ pub fn type_check_project<P: AsRef<std::path::Path>>(
     // See `compile_with_external_plugins_and_opt_level`: a package
     // `target:` must not leak into later work on this thread.
     let caller_host_class = target_host_class_override();
-    let frontend =
-        run_multi_file_frontend(entry_path.as_ref(), search_paths, 2, false, false, None);
+    let frontend = run_multi_file_frontend(
+        entry_path.as_ref(),
+        search_paths,
+        2,
+        false,
+        false,
+        None,
+        None,
+    );
     set_target_host_class_override(caller_host_class);
     let mut frontend = frontend?;
     remap_entry_paths(&mut frontend.warnings);
@@ -1678,6 +1685,49 @@ pub fn type_check_project<P: AsRef<std::path::Path>>(
         duration_ms: start_time.elapsed().as_millis() as u64,
         diagnostics: user_facing_warnings(&frontend.warnings),
     })
+}
+
+/// What editors need from one check of a source buffer: the errors that stop
+/// compilation and the warnings that do not. Both name the file the buffer
+/// belongs to (or an imported file the problem is in).
+#[derive(Debug, Default)]
+pub struct SourceDiagnostics {
+    /// Fatal diagnostics. Empty when the source type-checks.
+    pub errors: Vec<CompilerError>,
+    /// Non-fatal diagnostics (see [`render_warning`] for which are shown).
+    pub warnings: Vec<CompilerError>,
+}
+
+/// Check `source` as the contents of `file_path` through the same front end
+/// as `cln check` (module discovery, `package:` manifests, plugins, imports,
+/// name resolution and type checking), without generating WASM.
+///
+/// The file does not need to exist or match what is on disk, so this suits
+/// unsaved editor buffers; its imports resolve relative to `file_path` as
+/// `cln compile` resolves them.
+pub fn diagnose_source(source: &str, file_path: &str) -> SourceDiagnostics {
+    let entry = std::path::Path::new(file_path);
+    let parent = entry
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    // See `compile_with_external_plugins_and_opt_level`: a package `target:`
+    // must not leak into later work on this thread.
+    let caller_host_class = target_host_class_override();
+    let frontend =
+        run_multi_file_frontend(entry, vec![parent], 2, false, false, None, Some(source));
+    set_target_host_class_override(caller_host_class);
+    match frontend {
+        Ok(frontend) => SourceDiagnostics {
+            errors: Vec::new(),
+            warnings: user_facing_warnings(&frontend.warnings),
+        },
+        Err(errors) => SourceDiagnostics {
+            errors,
+            warnings: Vec::new(),
+        },
+    }
 }
 
 /// The single multi-file pipeline shared by development and release builds.
@@ -1723,6 +1773,7 @@ fn compile_multi_file_impl(
         client_mode,
         release,
         given_registry,
+        None,
     )?;
     let mut warnings = warnings;
     remap_entry_paths(&mut warnings);
@@ -1849,19 +1900,23 @@ fn run_multi_file_frontend(
     client_mode: bool,
     release: bool,
     given_registry: Option<std::sync::Arc<plugins::PluginRegistry>>,
+    entry_source_override: Option<&str>,
 ) -> Result<MultiFileFrontend, Vec<CompilerError>> {
     use crate::compilation::{MultiFileCompiler, MultiFileCompilerConfig};
     use crate::typechecker::TypeChecker;
     use std::sync::Arc;
 
     // Step 0: Read entry file to extract plugins
-    let entry_source = std::fs::read_to_string(entry_path).map_err(|e| {
-        vec![CompilerError::io_error(
-            format!("Failed to read entry file: {}", e),
-            None,
-            None,
-        )]
-    })?;
+    let entry_source = match entry_source_override {
+        Some(source) => source.to_string(),
+        None => std::fs::read_to_string(entry_path).map_err(|e| {
+            vec![CompilerError::io_error(
+                format!("Failed to read entry file: {}", e),
+                None,
+                None,
+            )]
+        })?,
+    };
 
     let plugin_names = collect_package_plugins(entry_path, &entry_source);
 
@@ -1943,7 +1998,10 @@ fn run_multi_file_frontend(
     }
 
     let compiler = MultiFileCompiler::with_config(config);
-    let unit = compiler.build_from_file(entry_path)?;
+    let unit = match entry_source_override {
+        Some(source) => compiler.build_from_source(entry_path, source)?,
+        None => compiler.build_from_file(entry_path)?,
+    };
 
     // Files of plugin-injected modules, which may call private functions of
     // user modules (SEM005).
