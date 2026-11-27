@@ -3150,9 +3150,18 @@ impl WasmPluginAdapter {
         let mut parser = SpecificationParser::new(tokens);
         // Plugin output may have sections in any order (e.g., external: before functions: before start:)
         parser.set_lenient_section_order(true);
-        parser
+        let mut program = parser
             .parse_program()
-            .map_err(|e| anyhow!("Failed to parse plugin output: {}", e))
+            .map_err(|e| anyhow!("Failed to parse plugin output: {}", e))?;
+        // The parser keeps `start:` both as `start_function` and as a function
+        // named `start` in `functions`. The expansion carries the start body
+        // once, in `start_function`, where it is merged into the user's
+        // `start:`; the copy in `functions` would be a second `start` and
+        // collide with the user's (SEM003).
+        if program.start_function.is_some() {
+            program.functions.retain(|f| f.name != "start");
+        }
+        Ok(program)
     }
 
     /// Parse v1 plugin output: a Clean Language snippet that is either a
