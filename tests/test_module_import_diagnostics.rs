@@ -40,10 +40,14 @@ fn same_function_in_two_imported_modules_is_sem003() {
         "import:\n\tgreetings\n\tfarewells\n\nstart:\n\tprintl(message())\n",
     )
     .unwrap();
+    // Fixed: the functions were private (no `public:`). Spec 18 "Visibility
+    // Model" lets two files each declare a private `message`, so only public
+    // duplicates are a SEM003 redefinition; the private case is covered by
+    // `private_function_of_two_imported_modules_is_sem005` below.
     for (module, text) in [("greetings", "hello"), ("farewells", "bye")] {
         std::fs::write(
             dir.path().join(format!("{module}.cln")),
-            format!("functions:\n\tstring message()\n\t\treturn \"{text}\"\n"),
+            format!("functions:\n\tpublic:\n\t\tstring message()\n\t\t\treturn \"{text}\"\n"),
         )
         .unwrap();
     }
@@ -55,6 +59,33 @@ fn same_function_in_two_imported_modules_is_sem003() {
     );
     assert!(
         joined.contains("greetings.cln") && joined.contains("farewells.cln"),
+        "{joined}"
+    );
+}
+
+#[test]
+fn private_function_of_two_imported_modules_is_sem005() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("main.cln"),
+        "import:\n\tgreetings\n\tfarewells\n\nstart:\n\tprintl(message())\n",
+    )
+    .unwrap();
+    for (module, text) in [("greetings", "hello"), ("farewells", "bye")] {
+        std::fs::write(
+            dir.path().join(format!("{module}.cln")),
+            format!("functions:\n\tstring message()\n\t\treturn \"{text}\"\n"),
+        )
+        .unwrap();
+    }
+    let errors = compile_errors(dir.path(), "main.cln");
+    let joined = errors.join("\n");
+    assert!(
+        joined.contains("'message' is private and cannot be accessed from outside"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("'greetings'") && joined.contains("'farewells'"),
         "{joined}"
     );
 }

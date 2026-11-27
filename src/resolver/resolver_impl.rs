@@ -2990,6 +2990,44 @@ impl NameResolver {
         // Mirrors the codegen-side hint in mir_codegen/instructions.rs so users
         // hitting the resolver-side SEM007 get the same actionable suggestion.
         let function_symbol_id = function_symbol_opt.ok_or_else(|| {
+            // Private functions that several files declare get a
+            // file-qualified internal name `<name>__<module>` before the
+            // modules merge (hir::private_scope). A call to the bare name
+            // from another file is then a private access (SEM005), not an
+            // undeclared name.
+            let renamed_prefix = format!("{}__", function);
+            let mut private_owners: Vec<String> = self
+                .symbol_table
+                .all_symbols()
+                .values()
+                .filter(|s| s.is_private && matches!(s.kind, SymbolKind::Function { .. }))
+                .filter_map(|s| s.name.strip_prefix(&renamed_prefix).map(str::to_string))
+                .collect();
+            if !private_owners.is_empty() {
+                private_owners.sort();
+                private_owners.dedup();
+                let owners = private_owners
+                    .iter()
+                    .map(|m| format!("'{}'", m))
+                    .collect::<Vec<_>>()
+                    .join(" or ");
+                self.error_with_help(
+                    &format!(
+                        "'{}' is private and cannot be accessed from outside {}",
+                        function, owners
+                    ),
+                    Some(format!(
+                        "Module functions are private to the file that declares them \
+                         (semantic-rules.md §SEM005). To call `{}` from another file, move \
+                         its declaration under the `public:` sub-section of the `functions:` \
+                         block in the module that should provide it.",
+                        function
+                    )),
+                    location.clone(),
+                    "SEM005",
+                );
+                return;
+            }
             let msg = format!("Function '{}' not found", function);
             let screen_owner = self
                 .screen_names
