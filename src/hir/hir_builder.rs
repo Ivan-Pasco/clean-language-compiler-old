@@ -8088,14 +8088,21 @@ impl HirBuilder {
                             "alpha",
                         ];
                         if !VALID_PATTERNS.contains(&pattern.as_str()) {
-                            return Err(CompilerError::validation_error(
-                                format!(
-                                    "Unknown pattern name '{}' in validate match constraint. Valid patterns: {}",
-                                    pattern,
-                                    VALID_PATTERNS.join(", ")
+                            return Err(CompilerError::Validation {
+                                context: Box::new(
+                                    crate::error::ErrorContext::new(
+                                        format!(
+                                            "Unknown pattern name '{}' in validate match constraint. Valid patterns: {}",
+                                            pattern,
+                                            VALID_PATTERNS.join(", ")
+                                        ),
+                                        None,
+                                        crate::error::ErrorType::Validation,
+                                        Some(loc.clone()),
+                                    )
+                                    .with_error_code("SEM010"),
                                 ),
-                                loc.clone(),
-                            ));
+                            });
                         }
                         stmts.push(rule_call(
                             "validator.match",
