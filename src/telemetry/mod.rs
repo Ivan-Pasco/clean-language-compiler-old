@@ -584,6 +584,15 @@ mod tests {
     }
 
     #[test]
+    fn plugin_expansion_failure_is_a_bug() {
+        let err = CompilerError::PluginError {
+            message: "PLUGIN003: Plugin 'acme.greet' failed to expand 'greet:': boom".to_string(),
+            location: None,
+        };
+        assert!(is_likely_compiler_bug(&err));
+    }
+
+    #[test]
     fn missing_or_circular_imports_are_not_bugs() {
         let missing = CompilerError::module_error("Module 'NoSuchModule' not found", None, None);
         assert!(!is_likely_compiler_bug(&missing));

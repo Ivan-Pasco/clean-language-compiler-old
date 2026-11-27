@@ -1800,6 +1800,20 @@ impl MultiFileCompiler {
                         message = stripped.to_string();
                     }
                 }
+                // PLUGIN003 PluginExpansionFailed: a plugin's expand or
+                // validate returned an error. A message that already carries
+                // a more specific PLUGINnnn code (e.g. PLUGIN002) keeps it,
+                // and a block no plugin handles stays without a code.
+                // Telemetry still counts every plugin error other than
+                // PLUGIN001/PLUGIN002 as a potential bug.
+                if matches!(
+                    e,
+                    crate::plugins::PluginError::ExpansionFailed { .. }
+                        | crate::plugins::PluginError::ValidationFailed { .. }
+                ) && !message.contains("PLUGIN0")
+                {
+                    message = format!("PLUGIN003: {message}");
+                }
                 CompilerError::PluginError { message, location }
             }).map_err(|e| vec![e])?;
             expander.check_permissions().map_err(|e| vec![e])?;

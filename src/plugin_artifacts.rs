@@ -60,7 +60,7 @@ impl std::fmt::Display for ArtifactError {
         match self {
             ArtifactError::BuildCycle { artifact } => write!(
                 f,
-                "PLUGIN003: artifact `{}` triggers a nested build cycle (artifacts.md §6)",
+                "PLUGIN004: artifact `{}` triggers a nested build cycle (artifacts.md §6)",
                 artifact
             ),
             ArtifactError::UnsupportedSource { artifact, reason } => write!(

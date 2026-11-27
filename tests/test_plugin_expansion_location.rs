@@ -31,4 +31,9 @@ fn expansion_failure_points_at_the_users_block() {
         "the user's syntax is not what failed: {}",
         all
     );
+    assert!(
+        all.contains("PLUGIN003"),
+        "a plugin that fails to expand a block is PLUGIN003: {}",
+        all
+    );
 }
