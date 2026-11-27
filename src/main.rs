@@ -210,12 +210,11 @@ enum Commands {
         #[arg(long)]
         release: bool,
 
-        /// Promote BRIDGE-HOST-MISMATCH warnings to hard errors. By default,
-        /// calls to bridge functions not available on the target host class
-        /// are silently replaced with no-op stubs and a warning is emitted.
-        /// With --strict-hosts the compile fails instead.
-        /// See foundation/spec/plugins/contracts/bridge-host-classes.md §6.
-        #[arg(long)]
+        /// Accepted for compatibility; has no effect. A call to a bridge
+        /// function the target host class does not provide is always a
+        /// compile error (PLUGIN007), so there is no warning mode to promote.
+        /// Other components' scripts still pass the flag (issue #82).
+        #[arg(long, hide = true)]
         strict_hosts: bool,
 
         /// Emit heap-probe instrumentation for STATE-A hunt.
