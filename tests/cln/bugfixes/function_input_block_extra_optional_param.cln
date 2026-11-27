@@ -1,0 +1,20 @@
+// Test: bugfixes/function_input_block_extra_optional_param
+// Grammar: setup_block, input_block, input_declaration (§6.2b)
+// Semantic: an input line with no matching header parameter becomes an extra
+//   optional parameter (spec decision 2026-11-27, round 4)
+// Fixed in: compiler 0.33.193
+// Expected output:
+//   20
+//   28
+//   6
+
+start:
+	print(area(4))
+	print(area(4, 7))
+	print(area(2, 3))
+
+functions:
+	integer area(integer width)
+		input
+			integer height = 5
+		return width * height
