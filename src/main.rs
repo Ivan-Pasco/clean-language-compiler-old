@@ -597,7 +597,7 @@ async fn run(args: Args) -> Result<(), Box<dyn std::error::Error>> {
             description,
             component,
         } => handle_report(error, code, description, &component, &output_config),
-        Commands::DevQueue(cmd) => handle_dev_queue(cmd),
+        Commands::DevQueue(cmd) => handle_dev_queue(cmd, output_config.json_mode),
     }
 }
 
@@ -2912,7 +2912,7 @@ fn handle_config(
     Ok(())
 }
 
-fn handle_dev_queue(cmd: DevQueueCommands) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_dev_queue(cmd: DevQueueCommands, json: bool) -> Result<(), Box<dyn std::error::Error>> {
     use clean_language_compiler::telemetry::dev_queue;
     match cmd {
         DevQueueCommands::Count => {
@@ -2920,12 +2920,16 @@ fn handle_dev_queue(cmd: DevQueueCommands) -> Result<(), Box<dyn std::error::Err
         }
         DevQueueCommands::List { full } => {
             let mut entries = dev_queue::load();
+            // Newest first by last_seen_at
+            entries.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
+            if json {
+                println!("{}", serde_json::to_string_pretty(&entries)?);
+                return Ok(());
+            }
             if entries.is_empty() {
                 println!("Dev queue is empty.");
                 return Ok(());
             }
-            // Newest first by last_seen_at
-            entries.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
             println!(
                 "{:<16}  {:<8}  {:>5}  {:<19}  message",
                 "fingerprint", "code", "×", "last seen (UTC)"
@@ -2962,6 +2966,9 @@ fn handle_dev_queue(cmd: DevQueueCommands) -> Result<(), Box<dyn std::error::Err
                 0 => {
                     eprintln!("No entry matching prefix '{}'", fingerprint);
                     std::process::exit(1);
+                }
+                1 if json => {
+                    println!("{}", serde_json::to_string_pretty(matches[0])?);
                 }
                 1 => {
                     let e = matches[0];
