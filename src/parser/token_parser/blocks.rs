@@ -1080,17 +1080,46 @@ impl TokenParser {
         })
     }
 
-    /// True when the cursor is at `name =` and `name` is a header attribute
-    /// `block_name` declares (`[blocks.<name>].attributes` in plugin.toml).
+    /// True when the cursor is at the header attributes of a plugin block:
+    /// `name =` where `name` is a header attribute `block_name` declares
+    /// (`[blocks.<name>].attributes` in plugin.toml), or where the rest of
+    /// the line has the shape of a block header (`name="value"` pairs ending
+    /// in `:`), so an attribute the block does not declare reaches
+    /// `parse_block_header_attributes` and is reported there as SYN002
+    /// instead of failing later as a malformed assignment.
     pub(super) fn at_block_header_attribute(&self, block_name: &str) -> bool {
         let TokenKind::Identifier(name) = self.current_kind() else {
             return false;
         };
-        self.peek_kind() == Some(&TokenKind::Assign)
-            && self
-                .block_header_attributes
-                .get(block_name)
-                .is_some_and(|declared| declared.contains(name))
+        if self.peek_kind() != Some(&TokenKind::Assign) {
+            return false;
+        }
+        if self
+            .block_header_attributes
+            .get(block_name)
+            .is_some_and(|declared| declared.contains(name))
+        {
+            return true;
+        }
+        // `(name = "value")+ :` — only a block header looks like this.
+        let mut at = self.cursor;
+        let mut pairs = 0;
+        while matches!(
+            (
+                self.tokens.get(at).map(|t| &t.kind),
+                self.tokens.get(at + 1).map(|t| &t.kind),
+                self.tokens.get(at + 2).map(|t| &t.kind),
+            ),
+            (
+                Some(TokenKind::Identifier(_)),
+                Some(TokenKind::Assign),
+                Some(TokenKind::StringLiteral(_)),
+            )
+        ) {
+            pairs += 1;
+            at += 3;
+        }
+        pairs > 0 && self.tokens.get(at).map(|t| &t.kind) == Some(&TokenKind::Colon)
     }
 
     /// The `name="value"` header attributes between a plugin block's name
@@ -1107,6 +1136,20 @@ impl TokenParser {
             }
             let name = name.clone();
             let location = self.current().location.clone();
+            if attributes
+                .iter()
+                .any(|a: &FrameworkAttribute| a.name == name)
+            {
+                return Err(CompilerError::syntax_error_with_code(
+                    format!(
+                        "`{}` is given twice in the header of the `{}` block",
+                        name, block_name
+                    ),
+                    Some(format!("Remove one of the `{}=\"...\"` attributes", name)),
+                    Some(location),
+                    "SYN002",
+                ));
+            }
             let declared = self
                 .block_header_attributes
                 .get(block_name)

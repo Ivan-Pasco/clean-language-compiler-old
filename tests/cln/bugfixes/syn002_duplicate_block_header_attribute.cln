@@ -1,0 +1,18 @@
+// Test: bugfixes/syn002_duplicate_block_header_attribute
+// Grammar: framework_block header attributes (plugin-contract.md 1.1 [blocks.<name>].attributes)
+// Semantic: SYN002 — a header attribute given twice in one plugin block header is rejected instead of silently keeping both
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[SYN002]
+//   `var` is given twice in the header of the `html` block
+//
+// Regression: the duplicate was accepted and compiled.
+
+plugins:
+	frame.ui
+
+start:
+	html var="out" var="o2":
+		<p>hi</p>
+	print(out)

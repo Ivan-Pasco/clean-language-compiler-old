@@ -1,0 +1,18 @@
+// Test: bugfixes/syn002_undeclared_block_header_attribute
+// Grammar: framework_block header attributes (plugin-contract.md 1.1 [blocks.<name>].attributes)
+// Semantic: SYN002 — a `name=` in a plugin block header that the block does not declare is SYN002, not a generic SYN001 about the colon
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[SYN002]
+//   `foo` is not a header attribute of the `html` block
+//
+// Regression: reported as SYN001 "Expected a new line after the statement, found Colon".
+
+plugins:
+	frame.ui
+
+start:
+	html foo="out":
+		<p>hi</p>
+	print(out)
