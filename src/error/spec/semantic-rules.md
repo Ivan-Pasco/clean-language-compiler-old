@@ -407,7 +407,7 @@ The string literal passed to `.matches()` does not refer to a built-in pattern n
 
 **Built-in names:** `"email"`, `"url"`, `"uuid"`, `"phone"`, `"date"`, `"integer"`, `"number"`, `"alphanumeric"`.
 
-There are no other pattern names. Pattern packs (`import: validate.patterns.financial`, mentioned in `grammar.ebnf` §8) are not implemented: that import is a syntax error (finding A8-16).
+There are no other pattern names. Pattern packs (`import: validate.patterns.financial`, mentioned in `grammar.ebnf` §7.7) are not implemented: that import is a syntax error (finding A8-16).
 
 **Example (fails — SEM010):**
 ```clean
