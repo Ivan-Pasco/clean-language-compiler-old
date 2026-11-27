@@ -4969,26 +4969,6 @@ impl<'a> TypeInference<'a> {
             self.check_any_method_call(method, tast_arguments.len(), location);
         }
 
-        // SEM004: joining a list is a namespace utility (`list.join(items, sep)`);
-        // the method form is not part of the language (method-style syntax:
-        // "every operation has one name").
-        if matches!(resolved_receiver_type, ConcreteType::Array(_)) && method == "join" {
-            self.errors.push(CompilerError::Type {
-                context: Box::new(
-                    crate::error::ErrorContext::new(
-                        "`join` is not a list method".to_string(),
-                        Some(
-                            "Join a list with the namespace function: `list.join(items, sep)`"
-                                .to_string(),
-                        ),
-                        crate::error::ErrorType::Type,
-                        Some(location.clone()),
-                    )
-                    .with_error_code("SEM004"),
-                ),
-            });
-        }
-
         // FUNC002 / SEM001: a class method's arguments must match its parameters.
         if matches!(resolved_receiver_type, ConcreteType::Class { .. })
             && matches!(
@@ -6983,20 +6963,29 @@ impl<'a> TypeInference<'a> {
             _ => return,
         };
         let Some(signature) = Self::builtin_method_signature(receiver, method) else {
-            let registered = Self::is_method_style_utility(receiver, method)
-                || self
-                    .symbol_table
-                    .lookup_symbol(&format!("{}.{}", type_name, method))
-                    .is_some();
+            // `join` is a namespace utility (`list.join(items, sep)`,
+            // `string.join(parts, sep)`); the method form is not part of the
+            // language (method-style syntax: "every operation has one name"),
+            // although the namespace functions are registered as `type.join`.
+            let namespace_only = method == "join";
+            let registered = !namespace_only
+                && (Self::is_method_style_utility(receiver, method)
+                    || self
+                        .symbol_table
+                        .lookup_symbol(&format!("{}.{}", type_name, method))
+                        .is_some());
             if !registered {
                 let qualified = format!("{}.{}", type_name, method);
-                let hint = crate::error::ErrorUtils::legacy_builtin_hint(&qualified)
-                    .unwrap_or_else(|| {
+                let hint = if namespace_only {
+                    "Join a list with the namespace function: `list.join(items, sep)`".to_string()
+                } else {
+                    crate::error::ErrorUtils::legacy_builtin_hint(&qualified).unwrap_or_else(|| {
                         format!(
                             "See the {} methods in the standard library reference",
                             type_name
                         )
-                    });
+                    })
+                };
                 self.errors.push(CompilerError::semantic_error_with_code(
                     format!("Method '{}' not found on a {} value", method, type_name),
                     Some(hint),

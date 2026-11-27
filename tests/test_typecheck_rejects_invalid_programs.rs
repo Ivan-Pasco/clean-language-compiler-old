@@ -150,7 +150,7 @@ fn adding_a_wrong_typed_value_to_a_list_is_rejected() {
     );
 }
 
-/// SEM004: joining a list is the namespace function `list.join(items, sep)`;
+/// FUNC001: joining a list is the namespace function `list.join(items, sep)`;
 /// the method form `items.join(sep)` is not part of the language
 /// (method-style syntax: every operation has one name). It used to compile
 /// and print "null" at runtime.
@@ -159,7 +159,7 @@ fn list_join_method_form_is_rejected() {
     expect_rejected(
         "list_join_method",
         "start:\n\tlist<string> items = [\"a\", \"b\"]\n\tprint(items.join(\", \"))\n",
-        &["SEM004"],
+        &["FUNC001"],
     );
 }
 

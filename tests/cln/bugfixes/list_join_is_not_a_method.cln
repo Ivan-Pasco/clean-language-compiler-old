@@ -1,0 +1,10 @@
+// Test: bugfixes/list_join_is_not_a_method
+// Semantic: FUNC001 join on a list is the namespace function, the method form does not exist (was SEM004)
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   error[FUNC001]: Method 'join' not found on a list value
+
+start:
+	list<string> l = ["a", "b"]
+	print(l.join(","))
