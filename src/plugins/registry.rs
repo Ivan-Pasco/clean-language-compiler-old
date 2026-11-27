@@ -1281,10 +1281,18 @@ impl PluginRegistryBuilder {
                     declared_by.insert(bridge.name.as_str(), (declaring_plugin, bridge));
                     continue;
                 };
-                if first.params != bridge.params
-                    || first.returns != bridge.returns
-                    || first.expand_strings != bridge.expand_strings
-                {
+                // Compare the WASM-level shape, not the spelling: `string`
+                // and `ptr` (and `any`) are the same i32 pointer, so
+                // frame.server's `_req_cookie -> string` and frame.auth's
+                // `_req_cookie -> ptr` import the same function.
+                use crate::plugins::registry_loader::{normalize_return, params_to_wasm_shape};
+                let shape = |f: &BridgeFunction| {
+                    (
+                        params_to_wasm_shape(&f.params, f.expand_strings),
+                        normalize_return(&f.returns),
+                    )
+                };
+                if shape(first) != shape(bridge) {
                     let describe = |f: &BridgeFunction| {
                         format!(
                             "({}) -> {}{}",
@@ -1300,7 +1308,7 @@ impl PluginRegistryBuilder {
                     return Err(PluginError::ValidationFailed {
                         plugin_name: declaring_plugin.clone(),
                         message: format!(
-                            "PLUGIN002: bridge function `{}` is declared by both `{}` {} and `{}` {} with different signatures. Plugins may share a bridge function only when they declare the same signature.",
+                            "PLUGIN002: bridge function `{}` is declared by both `{}` {} and `{}` {} with incompatible signatures. Plugins may share a bridge function only when its WASM signature is the same (`string`, `ptr` and `any` are the same pointer).",
                             bridge.name,
                             first_plugin,
                             describe(first),

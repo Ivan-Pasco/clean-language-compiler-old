@@ -3133,10 +3133,16 @@ mod tests {
         assert_eq!(targets, COMPILE_TARGETS.to_vec());
         assert!(schema.runtimes.is_empty());
         let flags: Vec<&str> = schema.flags.iter().map(|f| f.id.as_str()).collect();
-        for real in ["release", "strict_hosts", "verbose", "quiet", "json"] {
+        // `--strict-hosts` is a hidden no-op kept for other components' scripts
+        // (issue #82), so it is not a real compile option.
+        for real in ["release", "verbose", "quiet", "json"] {
             assert!(flags.contains(&real), "{real} missing from {flags:?}");
         }
         assert!(!flags.contains(&"debug"), "cln compile has no --debug");
+        assert!(
+            !flags.contains(&"strict_hosts"),
+            "--strict-hosts has no effect"
+        );
         assert_eq!(schema.optimizations.len(), 4);
         assert!(schema.optimizations[2].default);
     }

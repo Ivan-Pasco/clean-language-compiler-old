@@ -223,7 +223,7 @@ declaration from this plugin.",
 /// (both single i32 pointing at a length-prefixed buffer); the registry
 /// uses "ptr" mechanistically while plugin authors often write "string"
 /// semantically. We treat them as the same shape for validation.
-fn normalize_return(t: &str) -> &'static str {
+pub(crate) fn normalize_return(t: &str) -> &'static str {
     // Clean Language `integer` is i32 (foundation/spec/type-system.md §"Primitive
     // types": unqualified `integer` = Signed 32-bit integer = I32). Functions that
     // genuinely need 64-bit range declare `"i64"` explicitly in the registry
@@ -262,7 +262,7 @@ fn normalize_return(t: &str) -> &'static str {
 ///   prefixed string already in memory. No wrapper, no unpacking.
 ///
 /// All other primitives expand 1:1.
-fn params_to_wasm_shape(params: &[String], expand_strings: bool) -> Vec<&'static str> {
+pub(crate) fn params_to_wasm_shape(params: &[String], expand_strings: bool) -> Vec<&'static str> {
     // See `normalize_return` above for the `integer` → i32 rationale (SYNC-PLUGIN-DRIFT).
     let mut shape = Vec::with_capacity(params.len() * 2);
     for p in params {
