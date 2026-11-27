@@ -1,0 +1,17 @@
+// Test: bugfixes/same_public_name_file_path_clash
+// Grammar: import_block, import_item (file path import)
+// Semantic: SEM003 - files joined by file-path imports are one namespace, so
+//   the same public name in both is still a redefinition (spec decision
+//   2026-11-27: only modules imported by name get separate namespaces)
+// Fixed in: compiler 0.33.194
+// Expected output:
+// Expected error:
+//   SEM003
+//   Function 'message' is defined in
+
+import:
+	"same_public_name_file_path_a.cln"
+	"same_public_name_file_path_b.cln"
+
+start:
+	print(message())

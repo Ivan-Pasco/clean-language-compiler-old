@@ -1,0 +1,28 @@
+// Test: bugfixes/same_public_name_two_modules
+// Grammar: import_block, import_item
+// Semantic: spec decision 2026-11-27 (same public name in two imported modules):
+//   modules imported by name may each declare the same public function and
+//   public state name; the qualified names reach their own member
+// Fixed in: compiler 0.33.194
+// Fixed: was SEM003 "Function 'message' is defined in ... and again in ..."
+// Expected output:
+//   farewells loaded
+//   greetings loaded
+//   hello
+//   bye
+//   11
+//   21
+//   11
+//   21
+
+import:
+	same_public_name_greetings as greetings
+	same_public_name_farewells as farewells
+
+start:
+	print(greetings.message())
+	print(farewells.message())
+	print(greetings.bump())
+	print(farewells.bump())
+	print(greetings.count)
+	print(farewells.count)

@@ -1,0 +1,13 @@
+// Test: bugfixes/same_public_name_file_path_a
+// Semantic: file joined by same_public_name_file_path_clash.cln (`import: "x.cln"`)
+// Fixed in: compiler 0.33.194
+// Expected output:
+//   a loaded
+
+start:
+	print("a loaded")
+
+functions:
+	public:
+		string message()
+			return "a"

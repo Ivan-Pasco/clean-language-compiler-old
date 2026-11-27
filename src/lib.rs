@@ -1970,6 +1970,14 @@ fn run_multi_file_frontend(
             use crate::hir::private_scope::{plan_renames, ModuleDeclarations};
             let mut ids = Vec::new();
             let mut declarations = Vec::new();
+            // Modules joined into another file's namespace by a file-path
+            // import.
+            let file_joined: std::collections::HashSet<_> = unit
+                .compilation_order
+                .iter()
+                .filter_map(|id| unit.get_module(*id))
+                .flat_map(|m| m.file_imports.iter().copied())
+                .collect();
             for module_id in &unit.compilation_order {
                 let Some(module) = unit.get_module(*module_id) else {
                     continue;
@@ -1988,6 +1996,7 @@ fn run_multi_file_frontend(
                     hir,
                     &qualifier,
                     module.is_entry,
+                    !module.shared && !file_joined.contains(module_id),
                     |f| ast::is_user_source_location(&f.location),
                 ));
             }

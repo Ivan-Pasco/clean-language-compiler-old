@@ -41,6 +41,11 @@ pub struct ModuleDeclarations {
     /// Entry-module privates keep their names; other modules are renamed
     /// around them.
     pub is_entry: bool,
+    /// The module is reached only through by-name imports (not a `shared:`
+    /// folder file, not a file-path import): its public names are its own
+    /// namespace, so a public name another file also declares gets an
+    /// internal name too (spec decision 2026-11-27).
+    pub namespaced: bool,
     pub functions: Vec<(String, bool)>,
     pub state: Vec<(String, bool)>,
 }
@@ -52,6 +57,7 @@ impl ModuleDeclarations {
         hir: &HirProgram,
         qualifier: &str,
         is_entry: bool,
+        namespaced: bool,
         is_user_source: impl Fn(&HirFunction) -> bool,
     ) -> Self {
         let functions = hir
@@ -72,14 +78,18 @@ impl ModuleDeclarations {
         Self {
             qualifier: qualifier.to_string(),
             is_entry,
+            namespaced,
             functions,
             state,
         }
     }
 }
 
-/// Decide, per module, which private names need an internal name: a private
-/// name of a non-entry module that any other module also declares.
+/// Decide, per module, which names need an internal name: a private name of
+/// a non-entry module that any other module also declares, and a public name
+/// of a by-name-imported module (`namespaced`) that any other module also
+/// declares. Public names of files joined into one namespace are never
+/// renamed: a clash there stays a SEM003.
 pub fn plan_renames(modules: &[ModuleDeclarations]) -> Vec<PrivateRenames> {
     // name -> number of modules declaring it (function or state).
     let mut declared_in: HashMap<&str, usize> = HashMap::new();
@@ -101,12 +111,16 @@ pub fn plan_renames(modules: &[ModuleDeclarations]) -> Vec<PrivateRenames> {
             }
             let internal = |name: &str| format!("{}__{}", name, module.qualifier);
             for (name, is_private) in &module.functions {
-                if *is_private && declared_in.get(name.as_str()).copied().unwrap_or(0) > 1 {
+                if (*is_private || module.namespaced)
+                    && declared_in.get(name.as_str()).copied().unwrap_or(0) > 1
+                {
                     renames.functions.insert(name.clone(), internal(name));
                 }
             }
             for (name, is_private) in &module.state {
-                if *is_private && declared_in.get(name.as_str()).copied().unwrap_or(0) > 1 {
+                if (*is_private || module.namespaced)
+                    && declared_in.get(name.as_str()).copied().unwrap_or(0) > 1
+                {
                     renames.state.insert(name.clone(), internal(name));
                 }
             }
@@ -178,7 +192,9 @@ impl<'a> Walker<'a> {
 
     fn function(&mut self, function: &mut HirFunction) {
         if let Some(new) = self.renames.functions.get(&function.name) {
-            if function.is_private && function.owner_screen.is_none() {
+            if (function.is_private || crate::ast::is_user_source_location(&function.location))
+                && function.owner_screen.is_none()
+            {
                 function.name = new.clone();
             }
         }
@@ -236,10 +252,8 @@ impl<'a> Walker<'a> {
 
     fn state_block(&mut self, block: &mut HirStateBlock) {
         for decl in &mut block.declarations {
-            if decl.is_private {
-                if let Some(new) = self.renames.state.get(&decl.name) {
-                    decl.name = new.clone();
-                }
+            if let Some(new) = self.renames.state.get(&decl.name) {
+                decl.name = new.clone();
             }
             self.expression(&mut decl.initializer);
             if let Some(guard) = &mut decl.guard {

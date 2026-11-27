@@ -1,7 +1,8 @@
 //! Multi-file import diagnostics.
 //!
-//! * Two imported files that define a function with the same name are a
-//!   SEM003 redefinition. The merge used to keep whichever came first
+//! * Two files joined into one namespace (file-path imports, `shared:`)
+//!   that define a function with the same name are a SEM003 redefinition;
+//!   modules imported by name may each declare the same public name. The merge used to keep whichever came first
 //!   (HashMap order), so one module silently called the other's function.
 //! * An import cycle names the modules and points at the import that closes
 //!   the cycle, instead of printing `CompilationModuleId(1) -> ...` at 1:1.
@@ -33,18 +34,47 @@ fn compile_errors(dir: &Path, entry: &str) -> Vec<String> {
 }
 
 #[test]
-fn same_function_in_two_imported_modules_is_sem003() {
+fn same_function_in_two_imported_modules_coexist() {
+    // Fixed: this test expected SEM003. Spec decision 2026-11-27 (same public
+    // name in two imported modules): modules imported by name are separate
+    // namespaces, so `greetings.message()` and `farewells.message()` coexist.
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
         dir.path().join("main.cln"),
-        "import:\n\tgreetings\n\tfarewells\n\nstart:\n\tprintl(greetings.message())\n",
+        "import:\n\tgreetings\n\tfarewells\n\nstart:\n\tprintl(greetings.message())\n\tprintl(farewells.message())\n",
     )
     .unwrap();
-    // Fixed: spec 18 (2026-11-27) requires module.fn for import: modules.
-    // Fixed: the functions were private (no `public:`). Spec 18 "Visibility
-    // Model" lets two files each declare a private `message`, so only public
-    // duplicates are a SEM003 redefinition; the private case is covered by
-    // `private_function_of_two_imported_modules_is_sem005` below.
+    for (module, text) in [("greetings", "hello"), ("farewells", "bye")] {
+        std::fs::write(
+            dir.path().join(format!("{module}.cln")),
+            format!("functions:\n\tpublic:\n\t\tstring message()\n\t\t\treturn \"{text}\"\n"),
+        )
+        .unwrap();
+    }
+    let (wasm, _) = compile_multi_file_with_memory_tier(
+        dir.path().join("main.cln"),
+        vec![dir.path().to_path_buf()],
+        0,
+        None,
+        MemoryTier::Standard,
+        false,
+    )
+    .expect("both modules' message() must compile side by side");
+    // Each qualified call reaches its own module's string literal.
+    let has = |needle: &[u8]| wasm.windows(needle.len()).any(|w| w == needle);
+    assert!(has(b"hello") && has(b"bye"));
+}
+
+#[test]
+fn same_function_in_two_file_path_imports_is_sem003() {
+    // Files joined by file-path imports are one namespace (spec 18), so the
+    // same public name in both stays a redefinition.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("main.cln"),
+        "import:\n\t\"greetings.cln\"\n\t\"farewells.cln\"\n\nstart:\n\tprintl(message())\n",
+    )
+    .unwrap();
     for (module, text) in [("greetings", "hello"), ("farewells", "bye")] {
         std::fs::write(
             dir.path().join(format!("{module}.cln")),
