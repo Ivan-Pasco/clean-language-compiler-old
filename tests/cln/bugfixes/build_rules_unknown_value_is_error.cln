@@ -1,0 +1,14 @@
+// Test: bugfixes/build_rules_unknown_value_is_error
+// Grammar: build_block · build_rules_value
+// Semantic: 09-build-configuration.md "Rules options": the values are true, false and
+//   "development"; any other string is an error.
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   Unknown value "production" for build rules
+
+build:
+	rules = "production"
+
+start:
+	print("x")

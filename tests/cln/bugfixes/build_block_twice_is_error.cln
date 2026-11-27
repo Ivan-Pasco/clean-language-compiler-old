@@ -1,0 +1,16 @@
+// Test: bugfixes/build_block_twice_is_error
+// Grammar: build_block
+// Semantic: 09-build-configuration.md "Rules for build:": only one `build:` block per file.
+// Fixed in: compiler 0.33.195
+// Expected output:
+// Expected error:
+//   A file has at most one `build:` block
+
+build:
+	rules = true
+
+build:
+	rules = false
+
+start:
+	print("x")

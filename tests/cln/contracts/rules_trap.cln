@@ -1,3 +1,7 @@
+// Fixed: was missing the `build:` block that spec 09 requires for state `rules:`
+build:
+	rules = true
+
 start:
 	count = 15
 	print("Rules checked after this...")

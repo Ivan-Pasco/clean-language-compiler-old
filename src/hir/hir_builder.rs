@@ -215,6 +215,12 @@ pub struct HirBuilder {
     /// line; without it, errors such as an unknown function (SEM007)
     /// pointed at 0:0.
     statement_location: Option<SourceLocation>,
+    /// True for `cln compile --release`: `build: rules = "development"` then
+    /// leaves the state `rules:` unchecked (specification 1.0 §09).
+    release_mode: bool,
+    /// Whether this file's state `rules:` are checked, as its `build:` block
+    /// settles it. Set at the start of `build_hir`.
+    rules_checked: bool,
 }
 
 /// One `state:` declaration as `reset` needs it: name, initializer and the
@@ -272,7 +278,16 @@ impl HirBuilder {
             carryover_counter: 0,
             generic_instance_classes: std::collections::HashMap::new(),
             statement_location: None,
+            release_mode: false,
+            rules_checked: true,
         }
+    }
+
+    /// Build for `cln compile --release`: `build: rules = "development"`
+    /// then turns the state rules off.
+    pub fn with_release_mode(mut self, release: bool) -> Self {
+        self.release_mode = release;
+        self
     }
 
     /// Install the plugin generic shorthand table (plugin-contract.md §4.5),
@@ -507,6 +522,81 @@ impl HirBuilder {
         }
     }
 
+    /// Apply the file's `build:` block (specification 1.0 §09) and report
+    /// whether its state `rules:` are checked in this build.
+    ///
+    /// `build:` is required when a `state:` has `rules:`; it appears at most
+    /// once, before `start:`; `rules = true` always checks, `rules = false`
+    /// never checks and `rules = "development"` checks except in a release
+    /// build. Without a `build:` block the rules are checked (and a file
+    /// that has rules but no block is an error).
+    fn resolve_build_rules(&self, program: &Program) -> Result<bool, CompilerError> {
+        let mut builds = program.statements.iter().filter_map(|s| match s {
+            Statement::BuildBlock {
+                rules_enabled,
+                location,
+            } => Some((rules_enabled, location)),
+            _ => None,
+        });
+        let first = builds.next();
+        if let Some((_, location)) = builds.next() {
+            return Err(CompilerError::syntax_error(
+                "A file has at most one `build:` block",
+                Some("Merge the settings into the first `build:` block.".to_string()),
+                location.clone(),
+            ));
+        }
+
+        let screen_states = program.screen_blocks.iter().filter_map(|stmt| match stmt {
+            Statement::ScreenBlockStmt { state, .. } => state.as_ref(),
+            _ => None,
+        });
+        let rules_location = program.state.iter().chain(screen_states).find_map(|state| {
+            state
+                .rules
+                .as_ref()
+                .filter(|r| !r.rules.is_empty())
+                .map(|r| r.location.clone().or_else(|| state.location.clone()))
+        });
+
+        let Some((rules_enabled, build_location)) = first else {
+            return match rules_location {
+                Some(location) => Err(CompilerError::syntax_error(
+                    "State `rules:` need a `build:` block before `start:`",
+                    Some(
+                        "Add `build:` with `rules = true`, `rules = false` or \
+                         `rules = \"development\"` above `start:`."
+                            .to_string(),
+                    ),
+                    location,
+                )),
+                None => Ok(true),
+            };
+        };
+
+        if let (Some(start), Some(build)) = (
+            program
+                .start_function
+                .as_ref()
+                .and_then(|f| f.location.as_ref()),
+            build_location.as_ref(),
+        ) {
+            if build.file == start.file && build.line > start.line {
+                return Err(CompilerError::syntax_error(
+                    "`build:` must appear before `start:`",
+                    Some("Move the `build:` block above `start:`.".to_string()),
+                    build_location.clone(),
+                ));
+            }
+        }
+
+        Ok(match rules_enabled {
+            Expression::Literal(Value::Boolean(checked)) => *checked,
+            Expression::Literal(Value::String(mode)) if mode == "development" => !self.release_mode,
+            _ => true,
+        })
+    }
+
     /// Validate that the five core program sections appear in the required order:
     /// import → start → state → class → functions.
     ///
@@ -598,6 +688,7 @@ impl HirBuilder {
     pub fn build_hir(&mut self, program: Program) -> Result<HirValidationResult, CompilerError> {
         // Enforce the spec-mandated section ordering before any other processing.
         Self::validate_section_order(&program)?;
+        self.rules_checked = self.resolve_build_rules(&program)?;
 
         // Pre-scan phase: populate the named-argument signature registry so that
         // named args can be validated and reordered when expressions are lowered.
@@ -728,9 +819,8 @@ impl HirBuilder {
                         location.clone(),
                     ));
                 }
-                // `build: rules = ...` is parsed but its setting is not applied:
-                // state `rules:` are checked in every non-release build
-                // (specification 1.0 §09 describes the setting).
+                // `build: rules = ...` is applied by `resolve_build_rules`
+                // before any state block is lowered.
                 Statement::BuildBlock { .. } => {}
                 other => {
                     return Err(CompilerError::syntax_error(
@@ -2982,7 +3072,7 @@ impl HirBuilder {
             .collect::<Result<Vec<_>, _>>()?;
 
         // Convert rules from AST to HIR expressions
-        let rules = if let Some(ref rules_block) = state_block.rules {
+        let rules = if let (true, Some(rules_block)) = (self.rules_checked, &state_block.rules) {
             rules_block
                 .rules
                 .iter()
