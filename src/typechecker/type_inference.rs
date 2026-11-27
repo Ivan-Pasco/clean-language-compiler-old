@@ -6154,62 +6154,6 @@ impl<'a> TypeInference<'a> {
         }
     }
 
-    /// Whether two operand types may be compared with `==`, `!=` or `is`
-    /// (06-expressions.md §Comparison Operators, spec decision C1): the same
-    /// type, numeric types with each other, `T` with `T?`, anything with
-    /// `none`, a class with its parent or child, and `any` with anything.
-    /// Types that are not yet resolved (generics, unknown, unions,
-    /// interfaces, functions) are never reported here.
-    fn equality_operands_related(&self, left: &ConcreteType, right: &ConcreteType) -> bool {
-        use ConcreteType as T;
-        if left == right {
-            return true;
-        }
-        match (left, right) {
-            (T::Optional(l), r) => self.equality_operands_related(l, r),
-            (l, T::Optional(r)) => self.equality_operands_related(l, r),
-            (T::Any | T::Null | T::Undefined | T::Unknown, _)
-            | (_, T::Any | T::Null | T::Undefined | T::Unknown) => true,
-            (T::Generic { .. } | T::Union(_) | T::Interface { .. }, _)
-            | (_, T::Generic { .. } | T::Union(_) | T::Interface { .. }) => true,
-            (T::Function { .. } | T::Handler | T::Namespace, _)
-            | (_, T::Function { .. } | T::Handler | T::Namespace) => true,
-            (l, r) if l.is_numeric() && r.is_numeric() => true,
-            (T::Array(l), T::Array(r)) | (T::Matrix(l), T::Matrix(r)) => {
-                self.equality_operands_related(l, r)
-            }
-            (T::Pairs(lk, lv), T::Pairs(rk, rv)) => {
-                self.equality_operands_related(lk, rk) && self.equality_operands_related(lv, rv)
-            }
-            (T::Class { symbol_id: l, .. }, T::Class { symbol_id: r, .. }) => {
-                l == r || self.class_inherits(*l, *r) || self.class_inherits(*r, *l)
-            }
-            _ => false,
-        }
-    }
-
-    /// Whether class `child` inherits (directly or not) from class `ancestor`.
-    fn class_inherits(&self, child: SymbolId, ancestor: SymbolId) -> bool {
-        let mut current = child;
-        // The loop is bounded by the symbol count so a cyclic hierarchy
-        // (reported elsewhere) cannot hang the checker.
-        for _ in 0..self.symbol_table.all_symbols().len() + 1 {
-            match self.symbol_table.get_symbol(current).map(|s| &s.kind) {
-                Some(crate::resolver::SymbolKind::Class {
-                    parent: Some(parent),
-                    ..
-                }) => {
-                    if *parent == ancestor {
-                        return true;
-                    }
-                    current = *parent;
-                }
-                _ => return false,
-            }
-        }
-        false
-    }
-
     /// Infer result type of binary operation
     fn infer_binary_operation(
         &mut self,
@@ -6437,29 +6381,7 @@ impl<'a> TypeInference<'a> {
             }
 
             HirBinaryOp::Equal | HirBinaryOp::NotEqual | HirBinaryOp::Is => {
-                // 06-expressions.md §Comparison Operators: `==`, `!=` and `is`
-                // compare values of the same type or of types that convert to
-                // each other; unrelated types are SEM001 (spec decision C1).
-                if !self.equality_operands_related(left_type, right_type) {
-                    let symbol = match operator {
-                        HirBinaryOp::Equal => "==",
-                        HirBinaryOp::NotEqual => "!=",
-                        _ => "is",
-                    };
-                    return Err(CompilerError::type_error(
-                        format!(
-                            "Cannot compare '{}' {} '{}': the types are unrelated",
-                            left_type, symbol, right_type
-                        ),
-                        Some(
-                            "`==`, `!=` and `is` need operands of the same type, numeric types, \
-                             a class and its parent, or a `T?` and a `T`/none. Convert one side \
-                             first, e.g. with toString() or toInteger()"
-                                .to_string(),
-                        ),
-                        Some(location.clone()),
-                    ));
-                }
+                // Equality/identity can compare any types
                 Ok(ConcreteType::Boolean)
             }
 
