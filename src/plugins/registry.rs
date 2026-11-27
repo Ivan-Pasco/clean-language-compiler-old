@@ -115,7 +115,7 @@ impl fmt::Display for PluginError {
             } => {
                 write!(
                     f,
-                    "Registration conflict for '{}:': already handled by '{}', cannot register '{}'",
+                    "PLUGIN002: Registration conflict for '{}:': already handled by '{}', cannot register '{}'",
                     block_name, existing_plugin, new_plugin
                 )
             }
@@ -1266,6 +1266,51 @@ impl PluginRegistryBuilder {
 
             registered_plugins.push(plugin_name);
             plugins.push(plugin);
+        }
+
+        // plugin-contract.md §1.2 rule 6: a bridge function name declared by
+        // two plugins must carry one signature. Differing signatures make the
+        // type checker and the code generator pick different declarations and
+        // produce invalid WASM, so the build stops here, naming both plugins.
+        // Identical redeclarations (the shipped frame.* plugins share several
+        // host functions such as `_env_get`) stay accepted.
+        let mut declared_by: HashMap<&str, (&String, &BridgeFunction)> = HashMap::new();
+        for (declaring_plugin, manifest) in &self.manifests {
+            for bridge in &manifest.bridge.functions {
+                let Some((first_plugin, first)) = declared_by.get(bridge.name.as_str()) else {
+                    declared_by.insert(bridge.name.as_str(), (declaring_plugin, bridge));
+                    continue;
+                };
+                if first.params != bridge.params
+                    || first.returns != bridge.returns
+                    || first.expand_strings != bridge.expand_strings
+                {
+                    let describe = |f: &BridgeFunction| {
+                        format!(
+                            "({}) -> {}{}",
+                            f.params.join(", "),
+                            f.returns,
+                            if f.expand_strings {
+                                " [expand_strings]"
+                            } else {
+                                ""
+                            }
+                        )
+                    };
+                    return Err(PluginError::ValidationFailed {
+                        plugin_name: declaring_plugin.clone(),
+                        message: format!(
+                            "PLUGIN002: bridge function `{}` is declared by both `{}` {} and `{}` {} with different signatures. Plugins may share a bridge function only when they declare the same signature.",
+                            bridge.name,
+                            first_plugin,
+                            describe(first),
+                            declaring_plugin,
+                            describe(bridge),
+                        ),
+                        location: None,
+                    });
+                }
+            }
         }
 
         // Plugin Contracts v2 — validate callback contracts.

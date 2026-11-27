@@ -330,8 +330,9 @@ fn infer_expected_behavior(error: &crate::error::CompilerError) -> &'static str 
 ///   names, redeclarations, SEM011, ...). Never a bug, except when the
 ///   location is code a plugin generated (`<plugin:NAME>`).
 /// - `PluginError` — a bug (in the plugin or the compiler that ran it),
-///   except PLUGIN001: a plugin named in `plugins:` that is not installed
-///   or cannot be loaded for this build is the project's configuration.
+///   except PLUGIN001 and PLUGIN002: a plugin named in `plugins:` that is not
+///   installed, cannot be loaded for this build, or conflicts with another
+///   plugin of the project is the project's configuration.
 /// - Everything else — `Module` errors are imports that name a missing
 ///   module or form a cycle; syntax/type/lex errors are the compiler
 ///   correctly rejecting bad user code; IO errors are the user's
@@ -345,7 +346,9 @@ fn is_likely_compiler_bug(error: &crate::error::CompilerError) -> bool {
         // only when it points into code a plugin generated (`<plugin:NAME>`),
         // which the user did not write.
         Validation { .. } => component_override_from_location(location_of(error)).is_some(),
-        PluginError { message, .. } => !message.contains("PLUGIN001"),
+        PluginError { message, .. } => {
+            !message.contains("PLUGIN001") && !message.contains("PLUGIN002")
+        }
         _ => false,
     }
 }

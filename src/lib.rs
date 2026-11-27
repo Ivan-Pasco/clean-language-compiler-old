@@ -588,6 +588,18 @@ pub fn type_check_with_external_plugins(
     })
 }
 
+/// The message for a plugin that failed to load: PLUGIN002 when two plugins
+/// conflict (plugin-contract.md §1.2 rules 5 and 6), PLUGIN001 otherwise.
+fn plugin_load_failure(error: &anyhow::Error) -> String {
+    let text = error.to_string();
+    let code = if text.contains("PLUGIN002") {
+        "PLUGIN002"
+    } else {
+        "PLUGIN001"
+    };
+    format!("[{}] Failed to load plugins: {}", code, text)
+}
+
 /// Load the named plugins from the installed plugin directory (or a
 /// `--plugin-override`) into a registry.
 fn load_plugin_registry(
@@ -601,7 +613,7 @@ fn load_plugin_registry(
     })?;
     loader.load_plugins(plugin_names).map_err(|e| {
         vec![CompilerError::PluginError {
-            message: format!("[PLUGIN001] Failed to load plugins: {}", e),
+            message: plugin_load_failure(&e),
             location: None,
         }]
     })
@@ -1909,7 +1921,7 @@ fn run_multi_file_frontend(
             .load_plugins_with_build_state(&plugin_names, Arc::clone(bs))
             .map_err(|e| {
                 vec![CompilerError::PluginError {
-                    message: format!("[PLUGIN001] Failed to load plugins: {}", e),
+                    message: plugin_load_failure(&e),
                     location: None,
                 }]
             })?;
