@@ -1696,15 +1696,27 @@ impl TokenParser {
                             break;
                         }
                     }
-                    let behavior = match (has_line, has_unique, has_pile) {
+                    // A queue (.line) and a stack (.pile) are opposite
+                    // behaviours; a list cannot be both (spec decision
+                    // 2026-11-27, round 4).
+                    let behavior = match (has_line, has_pile, has_unique) {
+                        (true, true, _) => {
+                            return Err(CompilerError::parse_error(
+                                "A list cannot be both .line and .pile".to_string(),
+                                Some(self.current().location.clone()),
+                                Some(
+                                    "Use .line for a queue or .pile for a stack, not both; \
+                                     .unique can be combined with either"
+                                        .to_string(),
+                                ),
+                            ));
+                        }
                         (false, false, false) => ListBehavior::Default,
                         (true, false, false) => ListBehavior::Line,
-                        (false, true, false) => ListBehavior::Unique,
-                        (false, false, true) => ListBehavior::Pile,
-                        (true, true, false) => ListBehavior::LineUnique,
-                        (true, false, true) => ListBehavior::LinePile,
+                        (false, true, false) => ListBehavior::Pile,
+                        (false, false, true) => ListBehavior::Unique,
+                        (true, false, true) => ListBehavior::LineUnique,
                         (false, true, true) => ListBehavior::PileUnique,
-                        (true, true, true) => ListBehavior::LineUniquePile,
                     };
                     Type::List(Box::new(inner_type), behavior)
                 } else {

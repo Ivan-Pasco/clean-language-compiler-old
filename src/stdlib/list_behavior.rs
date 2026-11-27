@@ -896,10 +896,8 @@ pub fn behavior_to_string(behavior: ListBehavior) -> &'static str {
         ListBehavior::Line => "line",
         ListBehavior::Pile => "pile",
         ListBehavior::Unique => "unique",
-        ListBehavior::LinePile => "line-pile",
         ListBehavior::LineUnique => "line-unique",
         ListBehavior::PileUnique => "pile-unique",
-        ListBehavior::LineUniquePile => "line-unique-pile",
     }
 }
 

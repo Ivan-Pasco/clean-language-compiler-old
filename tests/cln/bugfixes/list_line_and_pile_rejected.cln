@@ -1,0 +1,12 @@
+// Test: bugfixes/list_line_and_pile_rejected
+// Grammar: list_type, list_behavior (grammar.ebnf)
+// Semantic: a list cannot carry both `.line` (queue) and `.pile` (stack)
+//   (spec decision 2026-11-27, round 4)
+// Fixed in: compiler 0.33.193
+// Expected output:
+// Expected error:
+//   cannot be both .line and .pile
+
+start:
+	list<integer>.line.pile jobs = [1, 2, 3]
+	print(jobs.length())

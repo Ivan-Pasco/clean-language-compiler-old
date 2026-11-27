@@ -110,14 +110,12 @@ pub enum Value {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize)]
 pub enum ListBehavior {
-    Default,        // Standard list behavior
-    Line,           // Queue behavior (FIFO)
-    Pile,           // Stack behavior (LIFO)
-    Unique,         // Set behavior (no duplicates)
-    LinePile,       // Combined line + pile (not typical, but allowed)
-    LineUnique,     // Queue with unique elements
-    PileUnique,     // Stack with unique elements
-    LineUniquePile, // All three combined
+    Default,    // Standard list behavior
+    Line,       // Queue behavior (FIFO)
+    Pile,       // Stack behavior (LIFO)
+    Unique,     // Set behavior (no duplicates)
+    LineUnique, // Queue with unique elements
+    PileUnique, // Stack with unique elements
 }
 
 impl ListBehavior {
@@ -129,10 +127,8 @@ impl ListBehavior {
             ListBehavior::Line => 0x01,
             ListBehavior::Pile => 0x02,
             ListBehavior::Unique => 0x04,
-            ListBehavior::LinePile => 0x01 | 0x02,
             ListBehavior::LineUnique => 0x01 | 0x04,
             ListBehavior::PileUnique => 0x02 | 0x04,
-            ListBehavior::LineUniquePile => 0x01 | 0x02 | 0x04,
         }
     }
 }
