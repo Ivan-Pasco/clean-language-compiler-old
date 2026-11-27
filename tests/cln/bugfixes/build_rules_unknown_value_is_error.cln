@@ -5,7 +5,7 @@
 // Fixed in: compiler 0.33.195
 // Expected output:
 // Expected error:
-//   Unknown value "production" for build rules
+//   error[BLD001]: Unknown value "production" for build rules
 
 build:
 	rules = "production"

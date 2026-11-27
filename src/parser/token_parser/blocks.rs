@@ -1897,28 +1897,30 @@ impl TokenParser {
                             let token = self.current().clone();
                             self.bump();
                             if s != "development" {
-                                return Err(CompilerError::parse_error(
+                                return Err(CompilerError::syntax_error_with_code(
                                     format!(
                                         "Unknown value \"{s}\" for build rules: the only string value is \"development\""
                                     ),
-                                    Some(token.location.clone()),
                                     Some(
                                         "Use `rules = true`, `rules = false` or `rules = \"development\"`."
                                             .to_string(),
                                     ),
+                                    Some(token.location.clone()),
+                                    "BLD001",
                                 ));
                             }
                             Expression::Literal(Value::String(s))
                         }
                         _ => {
                             let token = self.current().clone();
-                            return Err(CompilerError::parse_error(
+                            return Err(CompilerError::syntax_error_with_code(
                                 format!(
                                     "Expected true, false, or \"development\" for 'build rules', found '{}'",
                                     self.current_kind()
                                 ),
-                                Some(token.location.clone()),
                                 None,
+                                Some(token.location.clone()),
+                                "BLD001",
                             ));
                         }
                     };

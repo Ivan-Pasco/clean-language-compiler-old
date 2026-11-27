@@ -5,7 +5,7 @@
 // Fixed in: compiler 0.33.195
 // Expected output:
 // Expected error:
-//   State `rules:` need a `build:` block before `start:`
+//   error[BLD001]: State `rules:` need a `build:` block before `start:`
 
 start:
 	count = 1

@@ -540,10 +540,11 @@ impl HirBuilder {
         });
         let first = builds.next();
         if let Some((_, location)) = builds.next() {
-            return Err(CompilerError::syntax_error(
+            return Err(CompilerError::syntax_error_with_code(
                 "A file has at most one `build:` block",
                 Some("Merge the settings into the first `build:` block.".to_string()),
                 location.clone(),
+                "SYN007",
             ));
         }
 
@@ -561,7 +562,7 @@ impl HirBuilder {
 
         let Some((rules_enabled, build_location)) = first else {
             return match rules_location {
-                Some(location) => Err(CompilerError::syntax_error(
+                Some(location) => Err(CompilerError::syntax_error_with_code(
                     "State `rules:` need a `build:` block before `start:`",
                     Some(
                         "Add `build:` with `rules = true`, `rules = false` or \
@@ -569,6 +570,7 @@ impl HirBuilder {
                             .to_string(),
                     ),
                     location,
+                    "BLD001",
                 )),
                 None => Ok(true),
             };
@@ -582,10 +584,11 @@ impl HirBuilder {
             build_location.as_ref(),
         ) {
             if build.file == start.file && build.line > start.line {
-                return Err(CompilerError::syntax_error(
+                return Err(CompilerError::syntax_error_with_code(
                     "`build:` must appear before `start:`",
                     Some("Move the `build:` block above `start:`.".to_string()),
                     build_location.clone(),
+                    "SYN007",
                 ));
             }
         }
