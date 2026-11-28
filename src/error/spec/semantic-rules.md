@@ -1,8 +1,8 @@
 # Clean Language Semantic Rules
 
 **Authority:** This file is the single source of truth for semantic rules (Principle 3).
-**Version:** 1.2.0
-**Date:** 2026-11-26
+**Version:** 1.3.0
+**Date:** 2026-11-27
 
 Every rule has a numbered code. When the compiler rejects code for a semantic reason, the error message must include the rule code. A diagnostic without a code is incomplete (Principle 4).
 
@@ -10,7 +10,7 @@ Every rule has a numbered code. When the compiler rejects code for a semantic re
 
 ## Error Code Ranges
 
-These are the codes this file defines a rule for, by category. `error-codes.md` is the full registry; codes PLUGIN006–PLUGIN016 are defined in the typed-emission contract (`framework/contracts/typed-emission.md`), not here.
+These are the codes this file defines a rule for, by category. `error-codes.md` is the full registry; codes PLUGIN006–PLUGIN016 are defined in the typed-emission contract (`framework/contracts/typed-emission.md`), not here. CONC001 is retired: a `state:` variable may be used in a `background` line (specification 19), so there is no rule for it.
 
 | Codes | Category | Phase |
 |-------|----------|-------|
@@ -22,8 +22,9 @@ These are the codes this file defines a rule for, by category. `error-codes.md` 
 | IDX001–IDX004 | Index access rules | Type checker |
 | STATE001–STATE005 | State rules | Type checker, runtime |
 | IMPORT001–IMPORT004 | Import rules | Module resolver |
-| PLUGIN001, PLUGIN002, PLUGIN018 | Plugin rules | Plugin loader, plugin expansion |
+| PLUGIN001–PLUGIN003, PLUGIN018 | Plugin rules | Plugin loader, plugin expansion |
 | COM001–COM006 | Compilation (codegen, module) | Code generation |
+| BLD001 | Build configuration (`build:` block) | HIR validation |
 | BLD-LAYOUT, BLD-MANIFEST | Build (multi-file) | Project layout discovery |
 | RUN001–RUN006 | Runtime (execution) | WASM execution |
 
@@ -75,7 +76,9 @@ comes before every other core section.  Auxiliary sections (`tests:`, `external:
 
 Two more sections have fixed places (specification §08 "File Structure"): `build:`
 comes before `start:` and appears at most once per file (§09), and `source:` comes at
-the top of the file (§21).
+the top of the file (§21). A `build:` block after `start:`, or a second `build:` block
+in the same file, is SYN007. (A bad `build:` setting, or state `rules:` without a
+`build:` block, is BLD001.)
 
 **Message:** `"'{section}' section is out of order — it must appear before '{other}'"`
 
@@ -380,10 +383,8 @@ The registry first described SEM007 as a generic-type error (bad type arguments,
 - A function or state variable a module does not define — `"Function '{fn}' not found in module '{module}'"`, `"'{name}' not found in module '{module}'"`
 - `ns.name` where `ns` is not imported as a module — `"'{ns}' is not imported as a module, so '{ns}.{name}' is not in scope"`
 - `req`, `res` or `session` used as a bare variable outside a frame.server endpoint handler — `"Undefined variable '{name}' — '{name}' is provided by the frame.server plugin and is only available inside endpoint handler bodies …"`. (A call such as `req.param(...)` outside a handler is CONC002.)
-- An unknown pattern name in a `validate` block `match:` constraint — `"Unknown pattern name '{name}' in validate match constraint. Valid patterns: …"`, and the other `validate` constraint argument errors (a `length` argument that is not an integer, a bound that is not a number, `oneOf` values that are not string or integer literals)
+- A bad `validate` constraint argument (a `length` argument that is not an integer, a bound that is not a number, `oneOf` values that are not string or integer literals). An unknown pattern name in a `match:` constraint is SEM010
 - Any other validation error raised without its own code (for example `import:` inside a function, `break` or `continue` outside a loop, `base()` outside a class constructor)
-
-The unknown `validate` pattern overlaps SEM010 (unknown pattern name); the compiler is expected to move it there (review finding M-12).
 
 **Example (fails — SEM007):**
 ```clean
@@ -414,11 +415,13 @@ FooBar x = 42    // FooBar is not a defined type
 ---
 
 ### SEM010 — Unknown Pattern Name
-The string literal passed to `.matches()` does not refer to a built-in pattern name.
+The string literal passed to `.matches()`, or the name in a `validate` block `match:` constraint, does not refer to a built-in pattern name.
 
-**Condition:** The argument to `.matches()` must be a string literal (not a variable), and its value must be a known pattern name. This is validated at compile time; no runtime lookup is performed.
+**Condition:** The argument to `.matches()` must be a string literal (not a variable), and its value must be a known pattern name. The name after `match:` in a `validate` block must be a known validator pattern name. Both are validated at compile time; no runtime lookup is performed.
 
-**Built-in names:** `"email"`, `"url"`, `"uuid"`, `"phone"`, `"date"`, `"integer"`, `"number"`, `"alphanumeric"`.
+**Built-in names:** `"email"`, `"url"`, `"uuid"`, `"phone"`, `"date"`, `"integer"`, `"number"`, `"alphanumeric"`. A `validate` `match:` constraint also accepts `slug`, `numeric` and `alpha` (`stdlib-validator.md` §Patterns).
+
+**Message (`validate`):** `"Unknown pattern name '{name}' in validate match constraint. Valid patterns: …"`
 
 There are no other pattern names. Pattern packs (`import: validate.patterns.financial`, mentioned in `grammar.ebnf` §7.7) are not implemented: that import is a syntax error (finding A8-16).
 
@@ -434,6 +437,12 @@ boolean ok = someString.matches("notapattern") // no such built-in pattern
 ```clean
 string pat = "email"
 boolean ok = someString.matches(pat)   // variable not allowed — must be a literal
+```
+
+**Also fails — SEM010:** an unknown pattern in a `validate` block:
+```clean
+validate signup:
+    email: string required match: emial   // "emial" is not a pattern name
 ```
 
 ---
@@ -1031,6 +1040,13 @@ A plugin attempts to register a function or block handler that conflicts with an
 
 Two plugins that declare the same bridge function with an identical signature are accepted; the function is registered once.
 
+### PLUGIN003 — Plugin Expansion Failed
+A plugin could not expand a block: its `expand` export (or its optional `validate` export) returned an error for the block (plugin-contract.md §5.2, §5.3). The message is the plugin's own error text.
+
+**Location:** the diagnostic points at the user's block — its file, line and column, moved by the `line` / `column` the plugin gave, when it gave them — not at the top of the file (plugin-contract.md §5.4). It is a plugin error, not a syntax error.
+
+A plugin that keeps producing framework blocks is PLUGIN011; a trap in a typed-emission call is PLUGIN009.
+
 ### PLUGIN018 — Assemble-Typed Illegal Bridge
 A structural typed-emission bridge (`_emit_function`, `_emit_class_full`, `_emit_stmt_from_source`, `_emit_expr_from_source`, `_emit_statement_into_start`, `_emit_statement_inline`, `_emit_external`, `_emit_state_block`, `_emit_route`, `_emit_helpers_batch`, `_emit_class_methods_from_spec`, or any `batch.*` builder) was called from inside a plugin's `assemble_typed` hook. Inside `assemble_typed`, only `_inject_source_file` is legal. See [`framework/contracts/assemble.md`](framework/contracts/assemble.md) §6.2 for the full illegal-bridge list and the rationale. Emitted at the first illegal call site; the sticky-error flag (typed-emission.md §3.15) prevents cascading duplicates.
 
@@ -1059,6 +1075,37 @@ A function that passed semantic analysis could not be located during code genera
 ---
 
 ## Build Rules (BLD)
+
+### BLD001 — Invalid Build Configuration
+
+The `build:` block (specification §09) holds compiler settings for its file. BLD001 is
+emitted when:
+
+- `rules` has a value other than `true`, `false` or `"development"` — for example
+  `rules = "production"` or `rules = 1`;
+- a file declares state `rules:` but has no `build:` block.
+
+How the values work: rules are checked when `rules = true`, or when
+`rules = "development"` and the build is not `--release`. They are never checked when
+`rules = false`.
+
+A `build:` block after `start:`, or a second `build:` block, is SYN007, not BLD001.
+
+**Example (fails — BLD001):**
+```clean
+build:
+    rules = "always"        // not true, false or "development"
+
+start:
+    count = 5
+
+state:
+    integer count = 0
+    rules:
+        count >= 0
+```
+
+**Severity:** Error.
 
 ### BLD-LAYOUT — Obsolete Render Target Layout
 

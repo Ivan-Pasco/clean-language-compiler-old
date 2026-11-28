@@ -1,7 +1,7 @@
 # Clean Language Error Code Registry
 
 **Authority:** This file is the master index of every diagnostic the compiler can emit.
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Date:** 2026-11-27
 
 Every diagnostic the compiler emits carries a unique code. This file provides a navigable index of all codes, their categories, severity levels, and cross-references. For full rule definitions — conditions, examples, and messages — see `spec/semantic-rules.md`.
@@ -21,9 +21,10 @@ Every diagnostic the compiler emits carries a unique code. This file provides a 
 | STATE001–STATE099 | State | HIR validation and runtime — state management |
 | IMPORT001–IMPORT099 | Import | Module resolver — imports and dependencies |
 | PLUGIN001–PLUGIN099 | Plugin | Plugin loader — plugin registration and expansion |
-| CONC001–CONC099 | Concurrency | HIR validation — background work and request context |
+| CONC001–CONC099 | Concurrency | HIR validation — request context (CONC001 is retired) |
 | COM001–COM099 | Compilation | Code generation — WASM emission |
 | RUN001–RUN099 | Runtime | WASM execution — runtime assertion failures |
+| BLD001–BLD099 | Build configuration | HIR validation — the `build:` block |
 | BLD-* | Build | Multi-file compiler — project layout and discovery |
 
 ---
@@ -52,7 +53,7 @@ Emitted during parsing. No semantic information is available at this stage — t
 | SYN004 | `UnterminatedConstruct` | String literal, comment, or block not closed before end of file | Error | semantic-rules.md §SYN004 |
 | SYN005 | `MalformedConstruct` | Partial syntax structure is missing required elements | Error | semantic-rules.md §SYN005 |
 | SYN006 | `IndentationError` | Tab/space mixing detected, or indentation level is wrong for the block | Error | semantic-rules.md §SYN006 |
-| SYN007 | `SectionOutOfOrder` | Core top-level sections appear out of the required order: `import → plugins → start → state → class/can → functions` (`import:` before every other core section) | Error | semantic-rules.md §SYN007 |
+| SYN007 | `SectionOutOfOrder` | Core top-level sections appear out of the required order: `import → plugins → start → state → class/can → functions` (`import:` before every other core section); a `build:` block after `start:`, or a second `build:` block in a file | Error | semantic-rules.md §SYN007 |
 | SYN008 | `InvalidPrintBlock` | `print:` block contains no expressions, or a non-expression item | Error | semantic-rules.md §SYN008 |
 | SYN100 | `MissingSpecPath` | `spec` AI-metadata statement is missing its string-literal path | Error | semantic-rules.md §SYN100 |
 | SYN101 | `MissingIntentDescription` | `intent` AI-metadata statement is missing its string-literal description | Error | semantic-rules.md §SYN101 |
@@ -69,10 +70,10 @@ Emitted during HIR validation, name resolution, and type checking.
 | SEM004 | `InvalidOperationForType` | Operator or operation applied to an unsupported type; a list type with both `.line` and `.pile` | Error | semantic-rules.md §SEM004 |
 | SEM005 | `AccessViolation` | Private member accessed from outside its allowed scope | Error | semantic-rules.md §SEM005 |
 | SEM006 | `InheritanceError` | A method override is invalid: its signature differs from the parent's public method, or it is not under `public:` | Error | semantic-rules.md §SEM006 |
-| SEM007 | `UnresolvedName` | A name out of reach where it is written: the short name of a function or state of a module imported whole (write `utils.add()`), a function a module does not define, a namespace that is not imported; `req` / `res` / `session` outside an endpoint handler; an unknown `validate` pattern or bad `validate` constraint argument; another validation error with no specific code | Error | semantic-rules.md §SEM007 |
+| SEM007 | `UnresolvedName` | A name out of reach where it is written: the short name of a function or state of a module imported whole (write `utils.add()`), a function a module does not define, a namespace that is not imported; `req` / `res` / `session` outside an endpoint handler; a bad `validate` constraint argument; another validation error with no specific code | Error | semantic-rules.md §SEM007 |
 | SEM008 | `InheritanceCycle` | Class inherits from itself directly or indirectly | Error | semantic-rules.md §SEM008 |
 | SEM009 | `InvalidTypeSpecification` | Type name does not refer to a valid type (`Undefined type '{name}'`) | Error | semantic-rules.md §SEM009 |
-| SEM010 | `InvalidMatchPattern` | Argument to `string.matches()` is not one of the allowed pattern names | Error | semantic-rules.md §SEM010 |
+| SEM010 | `InvalidMatchPattern` | Argument to `string.matches()` is not one of the allowed pattern names, or a `validate` block `match:` constraint names an unknown pattern | Error | semantic-rules.md §SEM010 |
 | SEM011 | `MissingCapabilityMethod` | A class claims `can C` but does not implement one of C's required methods | Error | semantic-rules.md §SEM011 |
 | SEM012 | `UndefinedCapability` | A class claims a capability that is not declared | Error | semantic-rules.md §SEM012 |
 | SEM013 | `CapabilityMethodSignatureMismatch` | A class implements a capability method with the wrong signature | Error | semantic-rules.md §SEM013 |
@@ -167,6 +168,8 @@ Emitted by the plugin loader.
 |------|------|-------------------|----------|------------|
 | PLUGIN001 | `PluginNotFound` | Referenced plugin is not installed | Error | semantic-rules.md §PLUGIN001 |
 | PLUGIN002 | `PluginRegistrationConflict` | Two plugins handle the same block name, or declare the same bridge function name with different signatures (params, return type or `expand_strings`); the message names both plugins and the function. Identical redeclarations are accepted | Error | semantic-rules.md §PLUGIN002, plugin-contract.md §1.2 |
+| PLUGIN003 | `PluginExpansionFailed` | A plugin could not expand a block: its `expand` (or `validate`) export returned an error for the block. The diagnostic points at the user's block (file, line and column), not at the top of the file | Error | semantic-rules.md §PLUGIN003, plugin-contract.md §5.4 |
+| PLUGIN004 | `ArtifactBuildCycle` | Building a plugin artifact would build itself again (a nested artifact build cycle); the build stops and names the plugin | Error | plugin-contract.md §5 |
 | PLUGIN006 | `UnsupportedExpansionVersion` | Plugin declares `expansion_version` higher than the compiler's `HIGHEST_SUPPORTED_EXPANSION_VERSION`; the compiler refuses to load it rather than silently falling back to a wrong ABI | Error | typed-emission.md §14 |
 | PLUGIN007 | `BridgeHostClassMismatchInEmission` | `_emit_external` was called with a `host_class_lp` that does not match the active build target (e.g. a server-only bridge emitted for a browser build) | Error | typed-emission.md §14 |
 | PLUGIN008 | `ConsumedHandleReuse` | A plugin passed a handle to a constructor that had already consumed it; typed-emission enforces single-ownership on every arena node | Error | typed-emission.md §14 |
@@ -187,10 +190,8 @@ Emitted during HIR validation.
 
 | Code | Name | Short Description | Severity | Defined In |
 |------|------|-------------------|----------|------------|
-| CONC001 | `UnsynchronisedStateInBackground` | A module-level `state:` variable is read or written inside the expression of a `background` statement: `` "Shared state variable '{name}' is accessed inside a `background:` block without synchronisation — this is an unsynchronised concurrent access (CONC001). Capture the value before the `background:` call or use an atomic/mutex wrapper." `` | Error | — (no rule in the specification; see note) |
+| CONC001 | — | **Retired.** A `state:` variable may be used in a `background` line: a program runs one task at a time and the call's arguments are taken where the line stands (specification 19). The code is not reused. | — | — |
 | CONC002 | `RequestContextOutsideHandler` | A request-context call (`req.*`, `res.*`, `session.*`) outside a request handler: `"Request-context builtin '{ns}.{fn}' is used outside a request handler (CONC002). ..."`. A function is a handler when it is a generated route wrapper, has a parameter named `req` / `request` or of type `Request`, or is registered through a bridge that declares `registers_handler_at_arg`. A local variable of that name shadows the namespace. (A bare `req` / `res` / `session` variable outside a handler is SEM007.) | Error | plugin-contract.md §3.6 |
-
-> **Note on CONC001.** Specification 19 says a program runs one task at a time and `background f()` runs later, in order; specification 23 says state updates from background calls stay sequential. CONC001 is emitted by the compiler but is not described there.
 
 ### Compilation Codes (COM)
 
@@ -207,10 +208,11 @@ Emitted during WASM code generation.
 
 ### Build Codes (BLD)
 
-Emitted by the multi-file compiler during project layout discovery.
+BLD001 is emitted during HIR validation of the `build:` block; the `BLD-*` codes are emitted by the multi-file compiler during project layout discovery.
 
 | Code | Name | Short Description | Severity | Defined In |
 |------|------|-------------------|----------|------------|
+| BLD001 | `InvalidBuildConfiguration` | A `build:` block setting has a value the compiler does not accept (an unknown `rules` value: only `true`, `false` and `"development"` are allowed), or a file uses state `rules:` without a `build:` block | Error | semantic-rules.md §BLD001 |
 | BLD-LAYOUT | `ObsoleteRenderTargetLayout` | Project still uses the pre-frame.ui-2.7 `app/web/` folder convention while the active plugins describe the nested `app/ui/web/` layout | Error | semantic-rules.md §BLD-LAYOUT |
 | BLD-MANIFEST | `CodeAfterPackageManifest` | A `package:` manifest file contains a top-level line (`start:`, `functions:`, ...) after the manifest; that code would never be compiled | Error | semantic-rules.md §BLD-MANIFEST |
 
@@ -262,7 +264,7 @@ error[SEM001]: Type annotation 'integer' contradicts the inferred type 'string' 
 
 With `--json` (for example `cln check --json file.cln`), each diagnostic is an object with `severity`, `message`, `file`, `line`, `column`, `code` and, when known, `byte_start`.
 
-Every compiler-produced diagnostic must include a code. A diagnostic without a code is incomplete and violates Principle 4. Known gaps: plugin errors carry their code inside the message text and `code` is `null` in JSON (finding A8-8). A failure reported by a plugin's own expansion has no registry code; it is located at the user's block (plugin-contract.md §5.4), not at the top of the file.
+Every compiler-produced diagnostic must include a code. A diagnostic without a code is incomplete and violates Principle 4. Known gaps: plugin errors carry their code inside the message text and `code` is `null` in JSON (finding A8-8). A failure reported by a plugin's own expansion is PLUGIN003; it is located at the user's block (plugin-contract.md §5.4), not at the top of the file.
 
 ---
 
@@ -282,7 +284,9 @@ The following code numbers are reserved for future use. Do not assign them witho
 | IDX005–IDX099 | Reserved |
 | STATE006–STATE099 | Reserved |
 | IMPORT005–IMPORT099 | Reserved |
-| PLUGIN003–PLUGIN005 | Reserved |
+| PLUGIN003 | Assigned — `PluginExpansionFailed` (plugin-contract.md §5.4) |
+| PLUGIN004 | Assigned — `ArtifactBuildCycle` (nested plugin artifact build) |
+| PLUGIN005 | Reserved |
 | PLUGIN006–PLUGIN010 | Assigned — typed-emission ABI errors (sub-cycle 2, typed-emission.md §14) |
 | PLUGIN011 | Assigned — `ExpansionCycle` (plugin-contract.md §5.5) |
 | PLUGIN012 | Assigned — `ExpressionInStatementContext` (typed-emission.md §3.11) |
@@ -293,6 +297,8 @@ The following code numbers are reserved for future use. Do not assign them witho
 | PLUGIN018 | Assigned — `AssembleTypedIllegalBridge` (assemble.md §6.2) |
 | PLUGIN017 | Assigned — `InvalidEmissionArgument` (typed-emission.md §3.1, §3.18) |
 | PLUGIN019–PLUGIN099 | Reserved |
+| CONC001 | Retired (state variables are allowed in `background` lines, specification 19); never reassigned |
 | CONC003–CONC099 | Reserved |
+| BLD002–BLD099 | Reserved |
 | COM007–COM099 | Reserved |
 | RUN007–RUN099 | Reserved |

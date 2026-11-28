@@ -25,7 +25,9 @@ state:
 |-------|----------|
 | `true` | Always check rules |
 | `false` | Never check rules (production optimization) |
-| `"development"` | Check only in development builds |
+| `"development"` | Check only in development builds (not with `--release`) |
+
+These are the only values. Any other value (`rules = "production"`, `rules = 1`) is error BLD001.
 
 **Example for production apps:**
 ```clean
@@ -42,16 +44,23 @@ state:
 ```
 
 **CLI behavior:**
+
+Rules are checked when `rules = true`, or when `rules = "development"` and the build is not a release build. They are never checked when `rules = false`.
+
 ```bash
-cln compile app.cln              # Development: rules ON
-cln compile app.cln --release    # Production: follows build: setting
+# with build: rules = "development"
+cln compile app.cln              # Development build: rules ON
+cln compile app.cln --release    # Release build: rules OFF
+
+# with build: rules = true  -> rules ON in both builds
+# with build: rules = false -> rules OFF in both builds
 ```
 
 **Rules for `build:`:**
-- Must appear at the top level, before `start:`
-- Only one `build:` block per file
+- Must appear at the top level, before `start:` — a `build:` block after `start:` is error SYN007
+- Only one `build:` block per file — a second `build:` block is error SYN007
 - Only required when using state `rules:`
-- If you use `rules:` in your state but don't have a `build:` block, the compiler will show an error
+- If you use `rules:` in your state but don't have a `build:` block, the compiler reports error BLD001
 
 ---
 

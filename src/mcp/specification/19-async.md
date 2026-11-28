@@ -98,6 +98,25 @@ start:
 	print("done")                          // printed before logAction runs
 ```
 
+State variables may be used in a `background` line. Because a program runs
+one task at a time, there is no unsafe shared access: the arguments are taken
+where the line stands, and the call runs later, in order.
+
+```clean
+start:
+	count = 5
+	background report(count)      // count is taken now: 5
+	count = 6
+	print(count)                  // prints 6, then report runs with 5
+
+state:
+	integer count = 0
+
+functions:
+	void report(integer n)
+		print("count was " + n.toString())
+```
+
 An error in a task stops that task only. A `later` variable whose call
 failed reads the zero value of its type (`0`, `0.0`, `false`, `""`, or
 `none`), unless an `onError` on the call gives a value:
@@ -111,7 +130,7 @@ failed reads the zero value of its type (`0`, `0.0`, `false`, `""`, or
 - A `later` binding is a future — a placeholder for the result of a call that has not run yet.
 - Reading a `later` binding runs its call if it has not run yet; every read gets the same value.
 - Calls not yet run (`background` calls and unread `later` calls) run in order after the current entry point returns.
-- A program runs one task at a time. Deferred calls run later, not in parallel, so they never change state at the same time as other code.
+- A program runs one task at a time. Deferred calls run later, not in parallel, so they never change state at the same time as other code. State variables may be used in `background` lines.
 - An error in a deferred call stops that call only. It does not reach the code that deferred it: handle it inside the function, or attach `onError` to the call in the `later` declaration.
 
 ---

@@ -218,6 +218,8 @@ The compiler passes **one JSON string** containing the block name, raw content, 
 { "error": "Descriptive message", "line": 2, "column": 5 }
 ```
 
+When a plugin returns an error, the compiler reports error PLUGIN003 (the plugin could not expand the block). The diagnostic points at the user's block — its file, line and column, moved by `line` / `column` when the plugin gives them — not at the top of the file.
+
 The `statements` value is re-parsed as Clean Language source and inserted at the block's location. **Generated code may contain nested framework blocks; the compiler recursively expands until no framework blocks remain.** See [`spec/framework/plugin-contract.md`](../../spec/framework/plugin-contract.md) §5.1 for the authoritative ABI.
 
 > **Warning:** Older documents showed a Clean-level signature like `expand_block(name: string, attributes: string, body: string) -> string` or a Rust `impl FrameworkPlugin` trait. Both are incorrect. The real ABI is a single JSON string in, a single JSON string out.
